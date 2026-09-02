@@ -2,9 +2,37 @@
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/doable-team/heyflare)
 
-A self-hosted, HEY-style email client that runs entirely on Cloudflare. Connect Gmail accounts and mailboxes on your own
-domains, screen first-time senders, and read a calm, unified Imbox. Single owner, minimal black-and-white UI, tailor-made
+A self-hosted, HEY-style email client that runs entirely on Cloudflare — **with a built-in AI agent** that reads, triages and
+drafts for you. Connect Gmail accounts and mailboxes on your own domains, screen first-time senders, and read a calm, unified Imbox. Single owner, minimal black-and-white UI, tailor-made
 mobile app UI, no external services beyond Google's APIs and Cloudflare.
+
+## Built-in AI agent
+
+heyflare ships with an **agent inside the product** — not a CLI bolted on the side. Open it from the sidebar or with `⌘J`; it
+lives in a resizable side panel and can see the thread you're reading.
+
+- **Talk to your mail.** "What's new for me today?", "Anything waiting in the Screener?", "Find the invoice from Stripe", "Summarise this thread".
+- **Acts, with tools.** Search and read threads, screen senders in or out, move to Imbox / Feed / Paper Trail, Reply Later, Set Aside, Bubble Up, labels, collections, clips, bundles, contacts.
+- **Writes, you decide.** It drafts replies and forwards; you press Send. (You can allow autonomous sending if you want it.)
+- **Reply with AI** on any thread: type what you want to say, pick a tone, and the reply opens in the composer prefilled after the agent reads the whole thread.
+- **Memory that learns.** It studies the mail you send to learn your tone (greetings, sign-offs, length, phrasing), facts about you, preferences and per-contact notes — a compact set you can read, edit or wipe in Settings → AI. Reply drafts use it.
+- **Bring your own model.** Anthropic, OpenAI, xAI (Grok), OpenRouter, Google Gemini, or any OpenAI-compatible endpoint (Ollama, Groq, Mistral, LM Studio…). Keys are stored encrypted on your Worker; mail is sent to the provider only when you use an AI feature.
+
+## Screenshots
+
+> Captured from a local instance seeded with fictional data.
+
+| Imbox | Screener |
+|---|---|
+| ![Imbox](docs/screenshots/imbox.png) | ![Screener](docs/screenshots/screener.png) |
+
+| Thread with the AI assistant | The Feed |
+|---|---|
+| ![Assistant](docs/screenshots/assistant.png) | ![Feed](docs/screenshots/feed.png) |
+
+| Paper Trail | Mobile |
+|---|---|
+| ![Paper Trail](docs/screenshots/paper-trail.png) | <img src="docs/screenshots/mobile-imbox.png" width="260" /> <img src="docs/screenshots/mobile-thread.png" width="260" /> |
 
 ## Features
 
