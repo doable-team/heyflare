@@ -15,6 +15,8 @@ export interface Env {
   WORKER_NAME?: string;
   /** Resend API key: outbound fallback for custom-domain mailboxes. */
   RESEND_API_KEY?: string;
+  /** "1" enables the hidden mock AI provider (local testing only). */
+  AI_MOCK?: string;
   /** Cloudflare Email Sending binding (`send_email`), when enabled on the account. */
   EMAIL?: { send(msg: any): Promise<any> };
 }

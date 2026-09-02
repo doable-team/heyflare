@@ -5,12 +5,13 @@ import type { z } from "zod";
 import type { Env } from "../env";
 import { decryptSecret } from "./crypto";
 import { OpenAiCompatibleProvider, OpenAiApiError, describeOpenAiError } from "./openai";
+import { MockProvider } from "./mock";
 
 /* ---------- presets ---------- */
 
-export type ProviderKind = "anthropic" | "openai_compatible";
+export type ProviderKind = "anthropic" | "openai_compatible" | "mock";
 export interface Preset {
-  id: "anthropic" | "openai" | "xai" | "openrouter" | "gemini" | "custom";
+  id: "anthropic" | "openai" | "xai" | "openrouter" | "gemini" | "custom" | "mock";
   label: string;
   kind: ProviderKind;
   base_url: string;
@@ -31,7 +32,11 @@ export const PRESETS: Preset[] = [
 export const DEFAULT_MODEL = "claude-opus-5";
 export const MODELS = PRESETS[0].models.map((id) => ({ id, label: id }));
 
+/** Hidden test provider: streams a canned answer and calls one tool. Only usable when env.AI_MOCK === "1". */
+export const MOCK_PRESET: Preset = { id: "mock", label: "Mock (testing)", kind: "mock", base_url: "", default_model: "mock-1", models: ["mock-1"], key_placeholder: "not needed" };
+
 export function presetById(id: string): Preset {
+  if (id === "mock") return MOCK_PRESET;
   return PRESETS.find((p) => p.id === id) ?? PRESETS[0];
 }
 
@@ -69,6 +74,10 @@ export async function loadAiConfig(env: Env, userId: string): Promise<AiConfig |
   const row = await loadAiSettings(env, userId);
   if (!row) return null;
   const preset = presetById(row.preset || (row.provider === "anthropic" ? "anthropic" : "custom"));
+  if (preset.kind === "mock") {
+    if (env.AI_MOCK !== "1") return null;
+    return { provider: "mock", preset: "mock", baseUrl: "", apiKey: "", model: row.model || preset.default_model, learn: !!row.learn, autoSend: !!row.auto_send };
+  }
   const apiKey = row.api_key_enc ? await decryptSecret(env.SESSION_SECRET, row.api_key_enc) : "";
   const baseUrl = preset.id === "custom" ? row.base_url.replace(/\/+$/, "") : preset.base_url;
   if (preset.kind === "anthropic" && !apiKey) return null;
@@ -114,6 +123,7 @@ export interface LlmProvider {
 }
 
 export function makeProvider(cfg: AiConfig): LlmProvider {
+  if (cfg.provider === "mock") return new MockProvider(cfg.model);
   if (cfg.provider === "anthropic") return new AnthropicProvider(cfg);
   return new OpenAiCompatibleProvider(cfg);
 }

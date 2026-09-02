@@ -3,7 +3,7 @@ import type { AppEnv } from "../env";
 import type { AccountRow, ThreadRow } from "../db";
 import { uid, now, accountForThread } from "../db";
 import { encryptSecret } from "../ai/crypto";
-import { PRESETS, presetById, loadAiSettings, loadAiConfig, makeProvider, describeApiError, AiNotConfigured } from "../ai/provider";
+import { PRESETS, MOCK_PRESET, presetById, loadAiSettings, loadAiConfig, makeProvider, describeApiError, AiNotConfigured } from "../ai/provider";
 import { listMemory, addMemory, updateMemory, deleteMemory, clearMemory, learnFromMail, type MemoryKind } from "../ai/memory";
 import { runChatTurn, generateReply, summarizeThread, threadToText, type ChatDeps, type ReplyTone, type SseEvent } from "../ai/chat";
 import { loadThreadDetail } from "./mail";
@@ -35,7 +35,8 @@ ai.get("/settings", async (c) => {
   const row = await loadAiSettings(c.env, user.id);
   const state = await c.env.DB.prepare(`SELECT last_learned_at FROM ai_learning_state WHERE user_id = ?`).bind(user.id).first<{ last_learned_at: number | null }>();
   const preset = presetById(row?.preset ?? "anthropic");
-  const configured = !!row && (preset.kind === "anthropic" ? !!row.api_key_enc : preset.id === "custom" ? !!row.base_url : true);
+  const mockOk = c.env.AI_MOCK === "1";
+  const configured = !!row && (preset.kind === "mock" ? mockOk : preset.kind === "anthropic" ? !!row.api_key_enc : preset.id === "custom" ? !!row.base_url : true);
   return c.json({
     configured,
     provider: preset.kind,
@@ -45,7 +46,7 @@ ai.get("/settings", async (c) => {
     model: row?.model || preset.default_model,
     learn: row ? !!row.learn : true,
     auto_send: row ? !!row.auto_send : false,
-    presets: PRESETS,
+    presets: mockOk ? [...PRESETS, MOCK_PRESET] : PRESETS,
     last_learned_at: state?.last_learned_at ?? null,
     server_ready: !!c.env.SESSION_SECRET,
   });
@@ -55,7 +56,9 @@ ai.put("/settings", async (c) => {
   const user = c.get("user");
   const b = await c.req.json<{ preset?: string; base_url?: string; api_key?: string | null; model?: string; learn?: boolean; auto_send?: boolean }>().catch(() => ({}) as any);
   const cur = await loadAiSettings(c.env, user.id);
-  const preset = presetById(typeof b.preset === "string" ? b.preset : cur?.preset ?? "anthropic");
+  const wantedPreset = typeof b.preset === "string" ? b.preset : cur?.preset ?? "anthropic";
+  if (wantedPreset === "mock" && c.env.AI_MOCK !== "1") return c.json({ error: "unknown_preset" }, 400);
+  const preset = presetById(wantedPreset);
   let enc = cur?.api_key_enc ?? "";
   let hint = cur?.key_hint ?? "";
   if (typeof b.api_key === "string") {

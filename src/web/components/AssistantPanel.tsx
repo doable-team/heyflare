@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { Check, ChevronDown, Sparkles, SquarePen, Trash2, X } from "lucide-react";
+import {Check, ChevronDown, Bot, SquarePen, Trash2, X, PanelRight, Minimize2 } from "lucide-react";
 import { toast } from "sonner";
 import type { AiConversation } from "@shared/types";
 import { useAiConversations, useAiMutations, useBundle, useThread } from "../api";
 import { assistant, useAssistant, type ContextChip } from "../lib/assistantStore";
 import { AssistantChat } from "./AssistantChat";
+import { cn } from "@/lib/utils";
 import { ThreadPicker } from "./Pickers";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -93,9 +94,9 @@ export function AssistantPanel() {
             type="button"
             onClick={() => assistant.open()}
             aria-label="Assistant"
-            className="fixed bottom-4 right-4 z-40 size-10 rounded-full bg-foreground text-background shadow-md flex items-center justify-center hover:opacity-90 active:scale-95 transition-transform outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="fixed bottom-4 right-4 z-40 size-10 rounded-lg bg-foreground text-background shadow-md flex items-center justify-center hover:opacity-90 active:scale-95 transition-transform outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <Sparkles className="size-[18px]" />
+            <Bot className="size-[18px]" />
           </button>
         </TooltipTrigger>
         <TooltipContent side="left">
@@ -110,8 +111,13 @@ export function AssistantPanel() {
       ref={panelRef}
       role="dialog"
       aria-label="Assistant"
-      className="fixed bottom-4 right-4 z-50 w-[400px] max-w-[calc(100vw-32px)] flex flex-col rounded-xl border border-border bg-popover text-popover-foreground shadow-lg"
-      style={{ height: "min(560px, calc(100vh - 32px))" }}
+      className={cn(
+        "fixed z-50 flex flex-col text-popover-foreground",
+        st.mode === "dock"
+          ? "top-0 right-0 bottom-0 w-[400px] max-w-[100vw] border-l border-border bg-background"
+          : "bottom-4 right-4 w-[400px] max-w-[calc(100vw-32px)] rounded-xl border border-border bg-popover shadow-lg"
+      )}
+      style={st.mode === "dock" ? undefined : { height: "min(560px, calc(100vh - 32px))" }}
     >
       {/* header */}
       <div className="h-11 shrink-0 flex items-center gap-1 pl-2 pr-1.5 border-b border-border">
@@ -168,6 +174,14 @@ export function AssistantPanel() {
           </TooltipTrigger>
           <TooltipContent>New chat</TooltipContent>
         </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button size="icon-sm" variant="ghost" className="text-muted-foreground" aria-label={st.mode === "dock" ? "Float" : "Dock to side"} onClick={() => assistant.toggleMode()}>
+              {st.mode === "dock" ? <Minimize2 /> : <PanelRight />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{st.mode === "dock" ? "Float" : "Dock to side"}</TooltipContent>
+        </Tooltip>
         <Button size="icon-sm" variant="ghost" className="text-muted-foreground" aria-label="Close" onClick={() => assistant.close()}>
           <X />
         </Button>
@@ -176,7 +190,6 @@ export function AssistantPanel() {
       {/* body */}
       <div className="flex-1 min-h-0 relative">
         <AssistantChat
-          key={st.conversationId ?? "new"}
           conversationId={st.conversationId ?? undefined}
           onConversationId={(id) => assistant.setConversation(id)}
           compact

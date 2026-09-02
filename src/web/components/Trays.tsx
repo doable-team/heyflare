@@ -67,7 +67,8 @@ function Pile({ threads, label, icon, link, linkLabel, removeLabel, onRemove, al
 /** Reply Later (left) and Set Aside (right) piles, pinned to the bottom of the Imbox like HEY. */
 export function Piles({ replyLater, setAside }: { replyLater: ThreadSummary[]; setAside: ThreadSummary[] }) {
   const bulk = useBulkAction();
-  const assistantOpen = useAssistant().open;
+  const aState = useAssistant();
+  const assistantOpen = aState.open && aState.mode === "float";
   if (replyLater.length === 0 && setAside.length === 0) return null;
   return (
     <div className={cn("sticky bottom-0 z-20 mt-auto pt-8 pb-4 pointer-events-none flex justify-center transition-[padding] duration-150", assistantOpen && "md:pr-[416px]")}>

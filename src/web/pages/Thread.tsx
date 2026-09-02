@@ -184,14 +184,20 @@ function MessageRow({ m, expanded, onToggle, onReply, onClip, onMarkUnread, isLa
 function useMainColumn() {
   const [pos, setPos] = useState<{ left: number; width: number } | null>(null);
   // When the floating assistant panel is open (desktop), keep the bar centred in the space it leaves free.
-  const assistantOpen = useAssistant().open;
+  const aState = useAssistant();
+  const assistantOpen = aState.open && aState.mode === "float";
+  const docked = aState.open && aState.mode === "dock";
   useEffect(() => {
     const main = document.querySelector("main");
     if (!main) return;
     const upd = () => {
+      // `main` here is the SidebarInset (it renders a <main>); use its content box so a docked assistant's padding counts.
       const r = main.getBoundingClientRect();
+      const cs = getComputedStyle(main);
+      const padL = parseFloat(cs.paddingLeft) || 0;
+      const padR = parseFloat(cs.paddingRight) || 0;
       const reserve = assistantOpen && window.innerWidth >= 768 ? 416 : 0;
-      setPos({ left: r.left, width: Math.max(320, r.width - reserve) });
+      setPos({ left: r.left + padL, width: Math.max(320, r.width - padL - padR - reserve) });
     };
     upd();
     const ro = new ResizeObserver(upd);
@@ -201,8 +207,8 @@ function useMainColumn() {
       ro.disconnect();
       window.removeEventListener("resize", upd);
     };
-  }, [assistantOpen]);
-  return pos ? { ...pos, compact: assistantOpen } : pos;
+  }, [assistantOpen, docked]);
+  return pos ? { ...pos, compact: assistantOpen || docked } : pos;
 }
 
 const bucketIcon = { imbox: <Inbox />, feed: <Rss />, paper_trail: <ScrollText /> } as const;

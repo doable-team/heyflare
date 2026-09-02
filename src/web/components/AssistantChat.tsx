@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowUp, Check, Loader2, Paperclip, PenSquare, Plus, Send, Sparkles, Square, TriangleAlert, X } from "lucide-react";
+import {ArrowUp, Check, Loader2, Paperclip, PenSquare, Plus, Send, Bot, Square, TriangleAlert, X } from "lucide-react";
 import { toast } from "sonner";
 import type { AiDraftCard } from "@shared/types";
 import { aiChatStream, api, useAiConversation, useAiSettings, type AiSseEvent } from "../api";
@@ -44,6 +44,16 @@ export function Prose({ text, className }: { text: string; className?: string })
         }
         return <p key={i}>{lines.map((l, j) => <span key={j}>{j > 0 && <br />}{inline(l)}</span>)}</p>;
       })}
+    </div>
+  );
+}
+
+function ThinkingDots() {
+  return (
+    <div className="flex items-center gap-1 h-6" aria-label="Thinking">
+      {[0, 1, 2].map((i) => (
+        <span key={i} className="size-1.5 rounded-full bg-muted-foreground/60 animate-pulse" style={{ animationDelay: `${i * 160}ms` }} />
+      ))}
     </div>
   );
 }
@@ -182,7 +192,13 @@ export function AssistantChat({
   const conv = useAiConversation(conversationId);
   const qc = useQueryClient();
   const [turns, setTurns] = useState<Turn[]>([]);
-  const [live, setLive] = useState<Turn | null>(null);
+  const [live, setLiveState] = useState<Turn | null>(null);
+  const liveRef = useRef<Turn | null>(null);
+  /** Keep the streaming turn in a ref too, so events (which arrive outside React's batching) never race a stale closure. */
+  const setLive = (next: Turn | null | ((l: Turn | null) => Turn | null)) => {
+    liveRef.current = typeof next === "function" ? next(liveRef.current) : next;
+    setLiveState(liveRef.current);
+  };
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -240,10 +256,9 @@ export function AssistantChat({
     } catch (e) {
       if (!ac.signal.aborted) setLive((l) => (l ? { ...l, error: (e as Error).message } : { ...assistant, error: (e as Error).message }));
     }
-    setLive((l) => {
-      if (l) setTurns((t) => [...t, l]);
-      return null;
-    });
+    const finished = liveRef.current;
+    if (finished) setTurns((t) => [...t, finished]);
+    setLive(null);
     busyRef.current = false;
     setBusy(false);
     abortRef.current = null;
@@ -262,7 +277,7 @@ export function AssistantChat({
       <div className={cn("flex-1 min-h-0 overflow-y-auto", compact ? "px-4" : "px-2")}>
         {all.length === 0 && (
           <div className={cn("pb-6 text-center", compact ? "pt-6" : "pt-10")}>
-            <Sparkles className="size-6 mx-auto text-muted-foreground" />
+            <Bot className="size-6 mx-auto text-muted-foreground" />
             <div className="mt-3 text-[15px] font-medium">What can I do for you?</div>
             <div className="text-[13px] text-muted-foreground mt-1">I can read, search and organise your mail, screen senders, and write drafts for you to send.</div>
             {notConfigured && (
@@ -299,7 +314,7 @@ export function AssistantChat({
               ) : (
                 <div className="max-w-[92%] min-w-0">
                   {t.tools.length > 0 && <div className="mb-1">{t.tools.map((x) => <ToolLine key={x.id} status={x.status} summary={x.summary} />)}</div>}
-                  {t.text ? <Prose text={t.text} /> : t === live && !t.error ? <div className="flex items-center gap-2 text-[13px] text-muted-foreground"><Loader2 className="size-3.5 animate-spin" /> Thinking…</div> : null}
+                  {t.text ? <Prose text={t.text} /> : t === live && !t.error ? <ThinkingDots /> : null}
                   {t.drafts.map((d) => <DraftCard key={d.draft_id} d={d} sentThreadId={t.sent[d.draft_id]} />)}
                   {t.error && <div className="mt-2 flex items-start gap-2 rounded-md bg-muted/60 px-3 py-2 text-[13px]"><TriangleAlert className="size-4 shrink-0 mt-0.5 text-muted-foreground" /><span>{t.error}{/API key/i.test(t.error) && <> · <Link to="/settings#ai" className="underline underline-offset-2">Settings → AI</Link></>}</span></div>}
                 </div>

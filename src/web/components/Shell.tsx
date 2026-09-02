@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { ArrowUpCircle, Bookmark, CalendarClock, Check, ChevronDown, ChevronRight, Clock, Eye, FileText, Files, FolderOpen, Inbox, Keyboard, Layers, LogOut, Mail, Monitor, Moon, PenSquare, Plus, Rss, Scissors, Search, Send, Settings, Shield, ShieldOff, Sun, Tag, Trash2, Users, Sparkles } from "lucide-react";
+import {ArrowUpCircle, Bookmark, CalendarClock, Check, ChevronDown, ChevronRight, Clock, Eye, FileText, Files, FolderOpen, Inbox, Keyboard, Layers, LogOut, Mail, Monitor, Moon, PenSquare, Plus, Rss, Scissors, Search, Send, Settings, Shield, ShieldOff, Sun, Tag, Trash2, Users, Bot } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { Mark } from "./Logo";
@@ -12,7 +12,7 @@ import { useKeys } from "../lib/keys";
 import { Avatar } from "./Avatar";
 import { CommandPalette } from "./CommandPalette";
 import { AssistantPanel } from "./AssistantPanel";
-import { assistant } from "../lib/assistantStore";
+import { assistant, useAssistant } from "../lib/assistantStore";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar,
@@ -54,6 +54,8 @@ export function Shell() {
   const { user, loading, error } = useAccount();
   const loc = useLocation();
   const [open, setOpen] = useState<boolean>(readOpen);
+  const aState = useAssistant();
+  const docked = aState.open && aState.mode === "dock";
   if (loading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-muted-foreground text-sm">
@@ -77,7 +79,7 @@ export function Shell() {
         }}
       >
         <AppSidebar />
-        <SidebarInset className="min-w-0">
+        <SidebarInset className={cn("min-w-0 transition-[padding] duration-150", docked && "md:pr-[400px]")}>
           <TopBar />
           <main className="flex-1 w-full px-4 sm:px-8 pt-4 pb-24">
             <Outlet />
@@ -231,7 +233,7 @@ function AppSidebar() {
     { to: "/bubble-up", label: "Bubble Up", icon: <ArrowUpCircle />, kbd: "7" },
   ];
   const library: NavItem[] = [
-    { to: "/assistant", label: "Assistant", icon: <Sparkles />, kbd: "⌘J" },
+    { to: "/assistant", label: "Assistant", icon: <Bot />, kbd: "⌘J" },
     { to: "/previously-seen", label: "Previously Seen", icon: <Eye />, kbd: "8" },
     { to: "/contacts", label: "Contacts", icon: <Users />, kbd: "9" },
     { to: "/clips", label: "Clips", icon: <Scissors /> },

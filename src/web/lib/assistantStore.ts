@@ -6,8 +6,12 @@ export interface ContextChip {
   from: string;
 }
 
+export type AssistantMode = "float" | "dock";
+
 interface AssistantState {
   open: boolean;
+  /** float = compact window bottom-right; dock = full-height side panel that pushes the app content left. */
+  mode: AssistantMode;
   conversationId: string | null;
   context: ContextChip[];
 }
@@ -18,17 +22,17 @@ function load(): AssistantState {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const j = JSON.parse(raw) as Partial<AssistantState>;
-      return { open: !!j.open, conversationId: j.conversationId ?? null, context: [] };
+      return { open: !!j.open, mode: j.mode === "dock" ? "dock" : "float", conversationId: j.conversationId ?? null, context: [] };
     }
   } catch {}
-  return { open: false, conversationId: null, context: [] };
+  return { open: false, mode: "float", conversationId: null, context: [] };
 }
 
 let state: AssistantState = load();
 const listeners = new Set<() => void>();
 function emit() {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ open: state.open, conversationId: state.conversationId }));
+    localStorage.setItem(KEY, JSON.stringify({ open: state.open, mode: state.mode, conversationId: state.conversationId }));
   } catch {}
   listeners.forEach((l) => l());
 }
@@ -43,6 +47,8 @@ export const assistant = {
     set({ open: true, conversationId: conversationId === undefined ? state.conversationId : conversationId, context: context ?? state.context });
   },
   close: () => set({ open: false }),
+  setMode: (mode: AssistantMode) => set({ mode }),
+  toggleMode: () => set({ mode: state.mode === "dock" ? "float" : "dock" }),
   toggle: () => set({ open: !state.open }),
   setConversation: (id: string | null) => set({ conversationId: id, context: id === state.conversationId ? state.context : [] }),
   newChat: () => set({ conversationId: null, context: [] }),
