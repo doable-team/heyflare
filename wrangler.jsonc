@@ -1,0 +1,33 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Template config. Copy this file to wrangler.local.jsonc, fill in your values, and deploy with `npm run deploy:mine`.
+  "name": "heyflare",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2025-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/auth/*"]
+  },
+  // Point the Worker at your hostname. Either a Workers custom domain (needs a zone on your account with no existing
+  // DNS record for the host) or a zone route. Delete this block to use the *.workers.dev URL.
+  "routes": [
+    { "pattern": "mail.example.com", "custom_domain": true }
+  ],
+  "d1_databases": [
+    { "binding": "DB", "database_name": "heyflare-db", "database_id": "REPLACE_WITH_YOUR_D1_ID", "migrations_dir": "migrations" }
+  ],
+  // Every minute: Gmail incremental sync, bubble-ups, scheduled sends, contact photos.
+  "triggers": { "crons": ["* * * * *"] },
+  "vars": {
+    "APP_URL": "https://mail.example.com",
+    "APP_NAME": "heyflare",
+    "WORKER_NAME": "heyflare",
+    "CF_ACCOUNT_ID": "REPLACE_WITH_YOUR_CLOUDFLARE_ACCOUNT_ID"
+  },
+  // Outbound mail for custom-domain mailboxes via Cloudflare Email Sending (Workers Paid, domain onboarded in the dashboard):
+  // "send_email": [{ "name": "EMAIL" }],
+  "observability": { "enabled": true }
+}
