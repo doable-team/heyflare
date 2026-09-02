@@ -1,5 +1,7 @@
 # heyflare
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/doable-team/heyflare)
+
 A self-hosted, HEY-style email client that runs entirely on Cloudflare. Connect Gmail accounts and mailboxes on your own
 domains, screen first-time senders, and read a calm, unified Imbox. Single owner, minimal black-and-white UI, tailor-made
 mobile app UI, no external services beyond Google's APIs and Cloudflare.
@@ -20,7 +22,22 @@ mobile app UI, no external services beyond Google's APIs and Cloudflare.
 
 Cloudflare Workers (Hono) + D1 · React 19 + Vite + Tailwind v4 + shadcn/ui · Gmail REST API · postal-mime for inbound mail.
 
-## Deploy your own
+## One-click deploy
+
+Click **Deploy to Cloudflare** above. Cloudflare copies this repo into your GitHub/GitLab account, creates the Worker and a
+D1 database, fills in the database id, builds (`npm run build`) and deploys (`npx wrangler deploy`). The Worker applies its
+own database migrations on the first request, and generates its own encryption secret, so nothing else is needed to boot.
+The flow asks for the two Google OAuth values listed in `.dev.vars.example`; you can leave them empty and add them later.
+
+After the deploy:
+1. Open your `https://<worker>.<account>.workers.dev` URL → you land on `/setup` → create the owner login.
+2. Create the Google OAuth client (section 1 below) using that workers.dev URL (or your custom domain) as the origin and
+   `…/auth/google/callback` as the redirect URI, then add `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in
+   Workers → your Worker → Settings → Variables and Secrets (if you skipped them during the deploy).
+3. Connect Gmail from the sidebar. Optional secrets: `CF_API_TOKEN` (automatic custom-domain setup), `RESEND_API_KEY`.
+4. Want your own hostname? Add a custom domain under Workers → Settings → Domains & Routes (or a `routes` entry in the config).
+
+## Deploy manually
 
 Prerequisites: a Cloudflare account, Node 20+, and a Google Cloud project.
 
@@ -40,13 +57,15 @@ git clone https://github.com/doable-team/heyflare && cd heyflare
 npm install
 npx wrangler login
 npx wrangler d1 create heyflare-db          # copy the database_id
-cp wrangler.jsonc wrangler.local.jsonc      # fill in database_id, account id, your hostname/route, APP_URL
-npm run db:migrate:mine
+cp wrangler.jsonc wrangler.local.jsonc      # set database_id, optionally account_id, routes/custom domain, APP_URL var
 npx wrangler secret put GOOGLE_CLIENT_ID     -c wrangler.local.jsonc
 npx wrangler secret put GOOGLE_CLIENT_SECRET -c wrangler.local.jsonc
-npx wrangler secret put SESSION_SECRET       -c wrangler.local.jsonc   # any long random string
 npm run deploy:mine
 ```
+Migrations apply automatically on the Worker's first request (`npm run db:migrate:mine` is optional and stays compatible,
+it uses the same `d1_migrations` table). The AI-key encryption secret is generated on first use; set a `SESSION_SECRET`
+secret only if you want to control it yourself.
+
 `wrangler.local.jsonc` is git-ignored so your IDs never land in a fork. Use a Workers custom domain (a zone on your account,
 no existing DNS record for the host) or a zone route; or delete `routes` to use the `*.workers.dev` URL.
 

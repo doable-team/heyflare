@@ -3,7 +3,8 @@ import type { UserRow, AccountRow } from "./db";
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
-  APP_URL: string;
+  /** Public origin, e.g. https://mail.example.com. Optional: falls back to the request origin. */
+  APP_URL?: string;
   APP_NAME: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;

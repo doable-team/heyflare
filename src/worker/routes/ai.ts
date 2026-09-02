@@ -1,3 +1,4 @@
+import { getSessionSecret } from "../secrets";
 import { Hono } from "hono";
 import type { AppEnv } from "../env";
 import type { AccountRow, ThreadRow } from "../db";
@@ -48,7 +49,7 @@ ai.get("/settings", async (c) => {
     auto_send: row ? !!row.auto_send : false,
     presets: mockOk ? [...PRESETS, MOCK_PRESET] : PRESETS,
     last_learned_at: state?.last_learned_at ?? null,
-    server_ready: !!c.env.SESSION_SECRET,
+    server_ready: true,
   });
 });
 
@@ -66,7 +67,7 @@ ai.put("/settings", async (c) => {
     if (key) {
       if (key.length < 8) return c.json({ error: "invalid_key" }, 400);
       try {
-        enc = await encryptSecret(c.env.SESSION_SECRET, key);
+        enc = await encryptSecret(await getSessionSecret(c.env), key);
       } catch (e) {
         return c.json({ error: (e as Error).message }, 500);
       }

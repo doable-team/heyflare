@@ -19,6 +19,7 @@ import aiRoutes from "./routes/ai";
 import { runLearning } from "./ai/memory";
 import domainRoutes from "./routes/domains";
 import { handleInboundEmail } from "./inbound";
+import { ensureMigrations } from "./migrations";
 
 const app = new Hono<AppEnv>();
 
@@ -100,10 +101,24 @@ async function runCron(env: Env) {
 }
 
 export default {
-  fetch: (request: Request, env: Env, ctx: ExecutionContext) => app.fetch(request, env, ctx),
+  fetch: async (request: Request, env: Env, ctx: ExecutionContext) => {
+    const { pathname } = new URL(request.url);
+    // Static assets never need the database; everything else gets a migrated schema first (cached after the first call).
+    if (pathname.startsWith("/api/") || pathname.startsWith("/auth/")) {
+      try {
+        await ensureMigrations(env);
+      } catch (e) {
+        return Response.json({ error: "migration_failed", message: (e as Error).message?.slice(0, 300) }, { status: 500 });
+      }
+    }
+    return app.fetch(request, env, ctx);
+  },
   scheduled: (_event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {
-    ctx.waitUntil(runCron(env));
+    ctx.waitUntil(ensureMigrations(env).then(() => runCron(env)));
   },
   // Cloudflare Email Routing → custom-domain mailboxes.
-  email: (message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext) => handleInboundEmail(message, env),
+  email: async (message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext) => {
+    await ensureMigrations(env);
+    return handleInboundEmail(message, env);
+  },
 };

@@ -1,33 +1,32 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // Template config. Copy this file to wrangler.local.jsonc, fill in your values, and deploy with `npm run deploy:mine`.
+  // Template config used by the "Deploy to Cloudflare" button and by `npm run deploy`.
+  // Cloudflare fills in the D1 database id when it provisions the database. For a manual setup, copy this file to
+  // wrangler.local.jsonc, set your own ids/hostname there, and deploy with `npm run deploy:mine`.
   "name": "heyflare",
   "main": "src/worker/index.ts",
   "compatibility_date": "2025-09-01",
   "compatibility_flags": ["nodejs_compat"],
+  // Bundle migrations/*.sql as text so the Worker can apply them itself on first run.
+  "rules": [{ "type": "Text", "globs": ["**/*.sql"], "fallthrough": true }],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*", "/auth/*"]
   },
-  // Point the Worker at your hostname. Either a Workers custom domain (needs a zone on your account with no existing
-  // DNS record for the host) or a zone route. Delete this block to use the *.workers.dev URL.
-  "routes": [
-    { "pattern": "mail.example.com", "custom_domain": true }
-  ],
   "d1_databases": [
-    { "binding": "DB", "database_name": "heyflare-db", "database_id": "REPLACE_WITH_YOUR_D1_ID", "migrations_dir": "migrations" }
+    { "binding": "DB", "database_name": "heyflare-db", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
   ],
   // Every minute: Gmail incremental sync, bubble-ups, scheduled sends, contact photos.
   "triggers": { "crons": ["* * * * *"] },
   "vars": {
-    "APP_URL": "https://mail.example.com",
     "APP_NAME": "heyflare",
-    "WORKER_NAME": "heyflare",
-    "CF_ACCOUNT_ID": "REPLACE_WITH_YOUR_CLOUDFLARE_ACCOUNT_ID"
+    "WORKER_NAME": "heyflare"
   },
-  // Outbound mail for custom-domain mailboxes via Cloudflare Email Sending (Workers Paid, domain onboarded in the dashboard):
+  // Optional: a custom hostname instead of *.workers.dev (a zone on your account with no existing DNS record for the host):
+  // "routes": [{ "pattern": "mail.example.com", "custom_domain": true }],
+  // Optional: outbound mail for custom-domain mailboxes via Cloudflare Email Sending (Workers Paid, domain onboarded):
   // "send_email": [{ "name": "EMAIL" }],
   "observability": { "enabled": true }
 }

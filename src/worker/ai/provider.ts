@@ -1,4 +1,5 @@
 // Provider layer: a common stream/complete interface over Anthropic (official SDK) and OpenAI-compatible APIs.
+import { getSessionSecret } from "../secrets";
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { z } from "zod";
@@ -78,7 +79,7 @@ export async function loadAiConfig(env: Env, userId: string): Promise<AiConfig |
     if (env.AI_MOCK !== "1") return null;
     return { provider: "mock", preset: "mock", baseUrl: "", apiKey: "", model: row.model || preset.default_model, learn: !!row.learn, autoSend: !!row.auto_send };
   }
-  const apiKey = row.api_key_enc ? await decryptSecret(env.SESSION_SECRET, row.api_key_enc) : "";
+  const apiKey = row.api_key_enc ? await decryptSecret(await getSessionSecret(env), row.api_key_enc) : "";
   const baseUrl = preset.id === "custom" ? row.base_url.replace(/\/+$/, "") : preset.base_url;
   if (preset.kind === "anthropic" && !apiKey) return null;
   if (preset.kind === "openai_compatible" && !baseUrl) return null;
