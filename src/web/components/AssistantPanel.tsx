@@ -114,11 +114,42 @@ export function AssistantPanel() {
       className={cn(
         "fixed z-50 flex flex-col text-popover-foreground",
         st.mode === "dock"
-          ? "top-0 right-0 bottom-0 w-[400px] max-w-[100vw] border-l border-border bg-background"
+          ? "top-0 right-0 bottom-0 max-w-[100vw] border-l border-border bg-background"
           : "bottom-4 right-4 w-[400px] max-w-[calc(100vw-32px)] rounded-xl border border-border bg-popover shadow-lg"
       )}
-      style={st.mode === "dock" ? undefined : { height: "min(560px, calc(100vh - 32px))" }}
+      style={st.mode === "dock" ? { width: st.width } : { height: "min(560px, calc(100vh - 32px))" }}
     >
+      {/* resize handle (drag the left edge; double-click resets) */}
+      {st.mode === "dock" && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize assistant"
+          title="Drag to resize · double-click to reset"
+          className="absolute left-0 top-0 bottom-0 w-1.5 -ml-[3px] cursor-col-resize hover:bg-border active:bg-border z-10"
+          onDoubleClick={() => assistant.setWidth(400)}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            const startX = e.clientX;
+            const startW = st.width;
+            const target = e.currentTarget;
+            target.setPointerCapture(e.pointerId);
+            document.body.style.cursor = "col-resize";
+            document.body.style.userSelect = "none";
+            const move = (ev: PointerEvent) => assistant.setWidth(startW + (startX - ev.clientX));
+            const up = () => {
+              document.body.style.cursor = "";
+              document.body.style.userSelect = "";
+              target.removeEventListener("pointermove", move);
+              target.removeEventListener("pointerup", up);
+              target.removeEventListener("pointercancel", up);
+            };
+            target.addEventListener("pointermove", move);
+            target.addEventListener("pointerup", up);
+            target.addEventListener("pointercancel", up);
+          }}
+        />
+      )}
       {/* header */}
       <div className="h-11 shrink-0 flex items-center gap-1 pl-2 pr-1.5 border-b border-border">
         <DropdownMenu>

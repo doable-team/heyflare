@@ -12,6 +12,7 @@ interface AssistantState {
   open: boolean;
   /** float = compact window bottom-right; dock = full-height side panel that pushes the app content left. */
   mode: AssistantMode;
+  width: number;
   conversationId: string | null;
   context: ContextChip[];
 }
@@ -22,20 +23,27 @@ function load(): AssistantState {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const j = JSON.parse(raw) as Partial<AssistantState>;
-      return { open: !!j.open, mode: "dock", conversationId: j.conversationId ?? null, context: [] };
+      return { open: !!j.open, mode: "dock", width: clampWidth(j.width), conversationId: j.conversationId ?? null, context: [] };
     }
   } catch {}
-  return { open: false, mode: "dock", conversationId: null, context: [] };
+  return { open: false, mode: "dock", width: 400, conversationId: null, context: [] };
 }
 
 let state: AssistantState = load();
 const listeners = new Set<() => void>();
 function emit() {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ open: state.open, mode: state.mode, conversationId: state.conversationId }));
+    localStorage.setItem(KEY, JSON.stringify({ open: state.open, mode: state.mode, width: state.width, conversationId: state.conversationId }));
   } catch {}
   listeners.forEach((l) => l());
 }
+export const MIN_W = 320;
+export const MAX_W = 720;
+export function clampWidth(w: unknown): number {
+  const n = typeof w === "number" && Number.isFinite(w) ? w : 400;
+  return Math.min(MAX_W, Math.max(MIN_W, Math.round(n)));
+}
+
 function set(patch: Partial<AssistantState>) {
   state = { ...state, ...patch };
   emit();
@@ -49,6 +57,7 @@ export const assistant = {
   close: () => set({ open: false }),
   setMode: (mode: AssistantMode) => set({ mode }),
   toggleMode: () => set({ mode: "dock" }),
+  setWidth: (w: number) => set({ width: clampWidth(w) }),
   toggle: () => set({ open: !state.open }),
   setConversation: (id: string | null) => set({ conversationId: id, context: id === state.conversationId ? state.context : [] }),
   newChat: () => set({ conversationId: null, context: [] }),

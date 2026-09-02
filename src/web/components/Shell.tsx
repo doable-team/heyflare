@@ -79,7 +79,7 @@ export function Shell() {
         }}
       >
         <AppSidebar />
-        <SidebarInset className={cn("min-w-0 transition-[padding] duration-150", docked && "md:pr-[400px]")}>
+        <SidebarInset className="min-w-0 transition-[padding] duration-150" style={{ paddingRight: docked ? aState.width : undefined }}>
           <TopBar />
           <main className="flex-1 w-full px-4 sm:px-8 pt-4 pb-24">
             <Outlet />
