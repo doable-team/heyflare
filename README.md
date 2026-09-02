@@ -4,8 +4,6 @@ A self-hosted, HEY-style email client that runs entirely on Cloudflare. Connect 
 domains, screen first-time senders, and read a calm, unified Imbox. Single owner, minimal black-and-white UI, tailor-made
 mobile app UI, no external services beyond Google's APIs and Cloudflare.
 
-**Live example:** https://hey.far.hn
-
 ## Features
 
 - **The Screener** — every first-time sender waits for a yes/no. Decide once per person, across all your accounts.
