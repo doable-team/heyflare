@@ -22,10 +22,10 @@ function load(): AssistantState {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const j = JSON.parse(raw) as Partial<AssistantState>;
-      return { open: !!j.open, mode: j.mode === "dock" ? "dock" : "float", conversationId: j.conversationId ?? null, context: [] };
+      return { open: !!j.open, mode: "dock", conversationId: j.conversationId ?? null, context: [] };
     }
   } catch {}
-  return { open: false, mode: "float", conversationId: null, context: [] };
+  return { open: false, mode: "dock", conversationId: null, context: [] };
 }
 
 let state: AssistantState = load();
@@ -48,7 +48,7 @@ export const assistant = {
   },
   close: () => set({ open: false }),
   setMode: (mode: AssistantMode) => set({ mode }),
-  toggleMode: () => set({ mode: state.mode === "dock" ? "float" : "dock" }),
+  toggleMode: () => set({ mode: "dock" }),
   toggle: () => set({ open: !state.open }),
   setConversation: (id: string | null) => set({ conversationId: id, context: id === state.conversationId ? state.context : [] }),
   newChat: () => set({ conversationId: null, context: [] }),

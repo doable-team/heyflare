@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
-import {ArrowUpCircle, Bookmark, CalendarClock, Check, ChevronDown, ChevronRight, Clock, Eye, FileText, Files, FolderOpen, Inbox, Keyboard, Layers, LogOut, Mail, Monitor, Moon, PenSquare, Plus, Rss, Scissors, Search, Send, Settings, Shield, ShieldOff, Sun, Tag, Trash2, Users, Bot } from "lucide-react";
+import { ArrowUpCircle, Bookmark, CalendarClock, Check, ChevronDown, ChevronRight, Clock, Eye, FileText, Files, FolderOpen, Inbox, Keyboard, Layers, LogOut, Mail, Monitor, Moon, PenSquare, Plus, Rss, Scissors, Search, Send, Settings, Shield, ShieldOff, Sun, Tag, Trash2, Users, Sparkles } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { Mark } from "./Logo";
@@ -233,7 +233,7 @@ function AppSidebar() {
     { to: "/bubble-up", label: "Bubble Up", icon: <ArrowUpCircle />, kbd: "7" },
   ];
   const library: NavItem[] = [
-    { to: "/assistant", label: "Assistant", icon: <Bot />, kbd: "⌘J" },
+    { to: "/assistant", label: "Assistant", icon: <Sparkles />, kbd: "⌘J" },
     { to: "/previously-seen", label: "Previously Seen", icon: <Eye />, kbd: "8" },
     { to: "/contacts", label: "Contacts", icon: <Users />, kbd: "9" },
     { to: "/clips", label: "Clips", icon: <Scissors /> },

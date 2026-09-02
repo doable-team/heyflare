@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
-import {Check, ChevronDown, Bot, SquarePen, Trash2, X, PanelRight, Minimize2 } from "lucide-react";
+import { Check, ChevronDown, Sparkles, SquarePen, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import type { AiConversation } from "@shared/types";
 import { useAiConversations, useAiMutations, useBundle, useThread } from "../api";
@@ -94,9 +94,9 @@ export function AssistantPanel() {
             type="button"
             onClick={() => assistant.open()}
             aria-label="Assistant"
-            className="fixed bottom-4 right-4 z-40 size-10 rounded-lg bg-foreground text-background shadow-md flex items-center justify-center hover:opacity-90 active:scale-95 transition-transform outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="fixed bottom-4 right-4 z-40 size-10 rounded-full bg-foreground text-background shadow-md flex items-center justify-center hover:opacity-90 active:scale-95 transition-transform outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <Bot className="size-[18px]" />
+            <Sparkles className="size-[18px]" />
           </button>
         </TooltipTrigger>
         <TooltipContent side="left">
@@ -174,14 +174,7 @@ export function AssistantPanel() {
           </TooltipTrigger>
           <TooltipContent>New chat</TooltipContent>
         </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button size="icon-sm" variant="ghost" className="text-muted-foreground" aria-label={st.mode === "dock" ? "Float" : "Dock to side"} onClick={() => assistant.toggleMode()}>
-              {st.mode === "dock" ? <Minimize2 /> : <PanelRight />}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{st.mode === "dock" ? "Float" : "Dock to side"}</TooltipContent>
-        </Tooltip>
+        
         <Button size="icon-sm" variant="ghost" className="text-muted-foreground" aria-label="Close" onClick={() => assistant.close()}>
           <X />
         </Button>

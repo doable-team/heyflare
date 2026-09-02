@@ -1,5 +1,5 @@
 import { useNavigate, useParams } from "react-router-dom";
-import {MessageSquare, Plus, Bot, Trash2 } from "lucide-react";
+import { MessageSquare, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useAiConversations, useAiMutations } from "../api";
 import { AssistantChat } from "../components/AssistantChat";
 import { Screen } from "./Screen";
@@ -14,7 +14,7 @@ export function MobileAssistantList() {
     <Screen title="Assistant" largeTitle back="/more" backLabel="More" tabs titleRight={<Button size="icon" variant="ghost" aria-label="New conversation" className="size-11" onClick={() => nav("/assistant/new")}><Plus className="size-5!" /></Button>}>
       <div className="px-4">
         <button type="button" onClick={() => nav("/assistant/new")} className="w-full flex items-center gap-3 rounded-lg bg-muted/50 active:bg-muted px-3 py-3 text-left mb-4">
-          <Bot className="size-5 text-muted-foreground" />
+          <Sparkles className="size-5 text-muted-foreground" />
           <div>
             <div className="text-[15px] font-medium">New conversation</div>
             <div className="text-[13px] text-muted-foreground">Ask about your mail or have something written.</div>

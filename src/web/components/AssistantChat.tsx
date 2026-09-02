@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import {ArrowUp, Check, Loader2, Paperclip, PenSquare, Plus, Send, Bot, Square, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, Check, Loader2, Paperclip, PenSquare, Plus, Send, Sparkles, Square, TriangleAlert, X } from "lucide-react";
 import { toast } from "sonner";
 import type { AiDraftCard } from "@shared/types";
 import { aiChatStream, api, useAiConversation, useAiSettings, type AiSseEvent } from "../api";
@@ -277,7 +277,7 @@ export function AssistantChat({
       <div className={cn("flex-1 min-h-0 overflow-y-auto", compact ? "px-4" : "px-2")}>
         {all.length === 0 && (
           <div className={cn("pb-6 text-center", compact ? "pt-6" : "pt-10")}>
-            <Bot className="size-6 mx-auto text-muted-foreground" />
+            <Sparkles className="size-6 mx-auto text-muted-foreground" />
             <div className="mt-3 text-[15px] font-medium">What can I do for you?</div>
             <div className="text-[13px] text-muted-foreground mt-1">I can read, search and organise your mail, screen senders, and write drafts for you to send.</div>
             {notConfigured && (
