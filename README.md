@@ -22,15 +22,15 @@ lives in a resizable side panel and can see the thread you're reading.
 
 | Imbox | Screener |
 |---|---|
-| ![Imbox](docs/screenshots/imbox.png) | ![Screener](docs/screenshots/screener.png) |
+| ![Imbox](docs/screenshots/imbox-v2.png) | ![Screener](docs/screenshots/screener-v2.png) |
 
 | Thread with the AI assistant | The Feed |
 |---|---|
-| ![Assistant](docs/screenshots/assistant.png) | ![Feed](docs/screenshots/feed.png) |
+| ![Assistant](docs/screenshots/assistant-v2.png) | ![Feed](docs/screenshots/feed-v2.png) |
 
 | Paper Trail | Mobile |
 |---|---|
-| ![Paper Trail](docs/screenshots/paper-trail.png) | <img src="docs/screenshots/mobile-imbox.png" width="260" /> <img src="docs/screenshots/mobile-thread.png" width="260" /> |
+| ![Paper Trail](docs/screenshots/paper-trail-v2.png) | <img src="docs/screenshots/mobile-imbox-v2.png" width="260" /> <img src="docs/screenshots/mobile-thread-v2.png" width="260" /> |
 
 ## Features
 
