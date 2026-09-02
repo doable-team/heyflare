@@ -20,8 +20,6 @@ lives in a resizable side panel and can see the thread you're reading.
 
 ## Screenshots
 
-> Captured from a local instance seeded with fictional data.
-
 | Imbox | Screener |
 |---|---|
 | ![Imbox](docs/screenshots/imbox.png) | ![Screener](docs/screenshots/screener.png) |
