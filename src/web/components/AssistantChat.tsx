@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowUp, Check, Loader2, PenSquare, Send, Sparkles, Square, TriangleAlert } from "lucide-react";
+import { ArrowUp, Check, Loader2, Paperclip, PenSquare, Plus, Send, Sparkles, Square, TriangleAlert, X } from "lucide-react";
 import { toast } from "sonner";
 import type { AiDraftCard } from "@shared/types";
 import { aiChatStream, api, useAiConversation, useAiSettings, type AiSseEvent } from "../api";
 import { useCompose } from "../context/ComposeContext";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { ContextChip } from "../lib/assistantStore";
 
 /* ---------- rendering helpers ---------- */
 
@@ -100,6 +101,7 @@ interface Turn {
   id: string;
   role: "user" | "assistant";
   text: string;
+  context?: ContextChip[];
   tools: { id: string; status: "running" | "done" | "error"; summary: string }[];
   drafts: AiDraftCard[];
   sent: Record<string, string>;
@@ -111,8 +113,16 @@ function turnsFromStored(messages: { id: string; role: "user" | "assistant"; con
   for (const m of messages) {
     const blocks = Array.isArray(m.content) ? (m.content as any[]) : [];
     if (m.role === "user") {
-      const text = blocks.filter((b) => b.type === "text").map((b) => b.text).join("\n");
-      if (text.trim()) out.push({ id: m.id, role: "user", text, tools: [], drafts: [], sent: {} });
+      const ctx: ContextChip[] = [];
+      const texts: string[] = [];
+      for (const b of blocks) {
+        if (b.type !== "text" || typeof b.text !== "string") continue;
+        const m2 = /^\[\[context thread=([^\]]+)\]\] Subject: (.*?) · From: (.*?)(?:\n|$)/.exec(b.text);
+        if (m2) ctx.push({ id: m2[1], subject: m2[2], from: m2[3] });
+        else texts.push(b.text);
+      }
+      const text = texts.join("\n");
+      if (text.trim()) out.push({ id: m.id, role: "user", text, context: ctx, tools: [], drafts: [], sent: {} });
       continue;
     }
     const last = out[out.length - 1];
@@ -149,7 +159,25 @@ function toolLabel(name: string, input: any): string {
 
 export const SUGGESTIONS = ["What's new for me today?", "Anything waiting in the Screener?", "Summarise my unread mail", "Draft a reply to the latest email from …"];
 
-export function AssistantChat({ conversationId, onConversationId, compact }: { conversationId?: string; onConversationId: (id: string) => void; compact?: boolean }) {
+export function AssistantChat({
+  conversationId,
+  onConversationId,
+  compact,
+  context = [],
+  onRemoveContext,
+  onAddContext,
+  autoFocus,
+}: {
+  conversationId?: string;
+  onConversationId: (id: string) => void;
+  compact?: boolean;
+  /** Threads attached as context for the next message (panel mode). */
+  context?: ContextChip[];
+  onRemoveContext?: (id: string) => void;
+  /** Opens the thread picker ("+" button and typing "@"). */
+  onAddContext?: () => void;
+  autoFocus?: boolean;
+}) {
   const settings = useAiSettings();
   const conv = useAiConversation(conversationId);
   const qc = useQueryClient();
@@ -185,7 +213,8 @@ export function AssistantChat({ conversationId, onConversationId, compact }: { c
     setBusy(true);
     busyRef.current = true;
     if (conversationId) streamedConv.current = conversationId;
-    const userTurn: Turn = { id: `u-${Date.now()}`, role: "user", text: msg, tools: [], drafts: [], sent: {} };
+    const ctx = context.slice(0, 3);
+    const userTurn: Turn = { id: `u-${Date.now()}`, role: "user", text: msg, context: ctx, tools: [], drafts: [], sent: {} };
     const assistant: Turn = { id: `a-${Date.now()}`, role: "assistant", text: "", tools: [], drafts: [], sent: {} };
     setTurns((t) => [...t, userTurn]);
     setLive(assistant);
@@ -194,7 +223,7 @@ export function AssistantChat({ conversationId, onConversationId, compact }: { c
     let convId = conversationId;
     try {
       await aiChatStream(
-        { conversation_id: conversationId, message: msg },
+        { conversation_id: conversationId, message: msg, context_thread_ids: ctx.length ? ctx.map((c) => c.id) : undefined },
         (e: AiSseEvent) => {
           if (e.type === "start") {
             convId = e.conversation_id;
@@ -218,6 +247,7 @@ export function AssistantChat({ conversationId, onConversationId, compact }: { c
     busyRef.current = false;
     setBusy(false);
     abortRef.current = null;
+    if (onRemoveContext) for (const c of ctx) onRemoveContext(c.id);
     qc.invalidateQueries({ queryKey: ["ai", "conversations"] });
     if (convId) qc.invalidateQueries({ queryKey: ["ai", "conversation", convId] });
     qc.invalidateQueries({ predicate: (q) => ["imbox", "threads", "counts", "screener", "thread", "feed"].includes(String(q.queryKey[0])) });
@@ -231,7 +261,7 @@ export function AssistantChat({ conversationId, onConversationId, compact }: { c
     <div className="flex flex-col h-full min-h-0">
       <div className={cn("flex-1 min-h-0 overflow-y-auto", compact ? "px-4" : "px-2")}>
         {all.length === 0 && (
-          <div className="pt-10 pb-6 text-center">
+          <div className={cn("pb-6 text-center", compact ? "pt-6" : "pt-10")}>
             <Sparkles className="size-6 mx-auto text-muted-foreground" />
             <div className="mt-3 text-[15px] font-medium">What can I do for you?</div>
             <div className="text-[13px] text-muted-foreground mt-1">I can read, search and organise your mail, screen senders, and write drafts for you to send.</div>
@@ -253,7 +283,19 @@ export function AssistantChat({ conversationId, onConversationId, compact }: { c
           {all.map((t) => (
             <div key={t.id} className={cn("flex", t.role === "user" ? "justify-end" : "justify-start")}>
               {t.role === "user" ? (
-                <div className="max-w-[85%] rounded-2xl rounded-br-md bg-muted px-3.5 py-2 text-[14px] leading-6 whitespace-pre-wrap">{t.text}</div>
+                <div className="max-w-[85%]">
+                  {!!t.context?.length && (
+                    <div className="flex flex-wrap justify-end gap-1 mb-1">
+                      {t.context.map((c) => (
+                        <Link key={c.id} to={`/t/${c.id}`} className="inline-flex items-center gap-1 rounded-md bg-muted/60 px-2 h-6 text-[12px] text-muted-foreground max-w-[220px]">
+                          <Paperclip className="size-3 shrink-0" />
+                          <span className="truncate">{c.subject || "(no subject)"}</span>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                  <div className="rounded-2xl rounded-br-md bg-muted px-3.5 py-2 text-[14px] leading-6 whitespace-pre-wrap">{t.text}</div>
+                </div>
               ) : (
                 <div className="max-w-[92%] min-w-0">
                   {t.tools.length > 0 && <div className="mb-1">{t.tools.map((x) => <ToolLine key={x.id} status={x.status} summary={x.summary} />)}</div>}
@@ -274,11 +316,43 @@ export function AssistantChat({ conversationId, onConversationId, compact }: { c
           send(input);
         }}
       >
-        <div className="flex items-end gap-2 rounded-xl bg-muted/60 focus-within:bg-muted px-3 py-2">
+        <div className="rounded-xl bg-muted/60 focus-within:bg-muted px-3 py-2">
+          {context.length > 0 && (
+            <div className="flex flex-wrap gap-1 mb-1.5">
+              {context.map((c) => (
+                <span key={c.id} className="inline-flex items-center gap-1 rounded-md bg-background border border-border pl-2 pr-1 h-6 text-[12px] max-w-[240px]">
+                  <Paperclip className="size-3 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{c.subject || "(no subject)"}</span>
+                  <span className="truncate text-muted-foreground hidden sm:inline">· {c.from}</span>
+                  {onRemoveContext && (
+                    <button type="button" aria-label="Remove context" onClick={() => onRemoveContext(c.id)} className="size-4 rounded-sm flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted">
+                      <X className="size-3" />
+                    </button>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
+        <div className="flex items-end gap-2">
+          {onAddContext && (
+            <Button type="button" size="icon-sm" variant="ghost" className="text-muted-foreground shrink-0" onClick={onAddContext} aria-label="Add a thread as context" disabled={!!notConfigured}>
+              <Plus />
+            </Button>
+          )}
           <textarea
             ref={inputRef}
+            autoFocus={autoFocus}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              const v = e.target.value;
+              // Typing "@" opens the thread picker (panel mode) and doesn't leave the "@" behind.
+              if (onAddContext && v.endsWith("@") && !input.endsWith("@")) {
+                setInput(v.slice(0, -1));
+                onAddContext();
+                return;
+              }
+              setInput(v);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
@@ -286,7 +360,7 @@ export function AssistantChat({ conversationId, onConversationId, compact }: { c
               }
             }}
             rows={Math.min(6, Math.max(1, input.split("\n").length))}
-            placeholder={notConfigured ? "Add an API key in Settings → AI first" : "Ask about your mail, or tell me what to write…"}
+            placeholder={notConfigured ? "Add an API key in Settings → AI first" : onAddContext ? "Ask about your mail, @ for context" : "Ask about your mail, or tell me what to write…"}
             disabled={!!notConfigured}
             className="flex-1 resize-none bg-transparent outline-none text-[14px] leading-6 placeholder:text-muted-foreground max-h-40"
           />
@@ -295,6 +369,7 @@ export function AssistantChat({ conversationId, onConversationId, compact }: { c
           ) : (
             <Button type="submit" size="icon-sm" disabled={!input.trim() || !!notConfigured} aria-label="Send"><ArrowUp /></Button>
           )}
+        </div>
         </div>
         <div className="text-[11px] text-muted-foreground mt-1.5 px-1">Drafts are never sent without you{settings.data?.auto_send ? ", unless you allowed it in Settings → AI" : ""}. Enter to send, Shift+Enter for a new line.</div>
       </form>

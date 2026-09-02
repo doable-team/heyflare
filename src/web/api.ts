@@ -586,7 +586,7 @@ export type AiSseEvent =
   | { type: "error"; message: string };
 
 /** Streams one assistant turn. Resolves when the server sends `done` (or the stream ends). */
-export async function aiChatStream(body: { conversation_id?: string; message: string }, onEvent: (e: AiSseEvent) => void, signal?: AbortSignal): Promise<void> {
+export async function aiChatStream(body: { conversation_id?: string; message: string; context_thread_ids?: string[] }, onEvent: (e: AiSseEvent) => void, signal?: AbortSignal): Promise<void> {
   const res = await fetch("/api/ai/chat", { method: "POST", headers: { "Content-Type": "application/json", "X-Account-Id": getScope() }, credentials: "include", body: JSON.stringify(body), signal });
   if (!res.ok || !res.body) {
     let msg = res.statusText;

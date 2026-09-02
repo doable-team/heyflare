@@ -1,7 +1,7 @@
 import { startGoogleConnect } from "../lib/connect";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowUpCircle, Bookmark, CalendarClock, Clock, Eye, FileText, Files, FolderOpen, Inbox, Keyboard, Mail, Moon, PenSquare, Plus, Rss, Scissors, Send, Settings, Shield, ShieldOff, Sun, Tag, Trash2, Users } from "lucide-react";
+import { ArrowUpCircle, Bookmark, CalendarClock, Clock, Eye, FileText, Files, FolderOpen, Inbox, Keyboard, Mail, Moon, PenSquare, Plus, Rss, Scissors, Send, Settings, Shield, ShieldOff, Sun, Tag, Trash2, Users, Sparkles } from "lucide-react";
 import { useSearch } from "../api";
 import { fmtTime } from "../lib/format";
 import { Avatar } from "./Avatar";
@@ -45,6 +45,7 @@ export function CommandPalette({
   onCompose,
   onToggleTheme,
   onShortcuts,
+  onAssistant,
   theme,
   hasAccount,
 }: {
@@ -53,6 +54,7 @@ export function CommandPalette({
   onCompose: () => void;
   onToggleTheme: () => void;
   onShortcuts: () => void;
+  onAssistant?: () => void;
   theme: "light" | "dark" | "system";
   hasAccount?: boolean;
 }) {
@@ -67,11 +69,12 @@ export function CommandPalette({
   const actions = useMemo(
     () => [
       { id: "compose", label: "Compose a new message", icon: <PenSquare />, kbd: "c", run: onCompose, keywords: "write new email" },
+      ...(onAssistant ? [{ id: "assistant", label: "Open the Assistant", icon: <Sparkles />, kbd: "⌘J", run: onAssistant, keywords: "ai chat help" }] : []),
       { id: "connect", label: "Connect a Gmail account", icon: <Plus />, run: () => startGoogleConnect(), keywords: "google add account" },
       { id: "theme", label: theme === "dark" ? "Switch to light theme" : "Switch to dark theme", icon: theme === "dark" ? <Sun /> : <Moon />, run: onToggleTheme, keywords: "dark light mode appearance" },
       { id: "shortcuts", label: "Keyboard shortcuts", icon: <Keyboard />, kbd: "?", run: onShortcuts },
     ],
-    [onCompose, onToggleTheme, onShortcuts, theme],
+    [onCompose, onToggleTheme, onShortcuts, onAssistant, theme],
   );
   const mail = dq ? (search.data?.pages.flatMap((p) => p.threads) ?? []).slice(0, 8) : [];
   const go = (fn: () => void) => {

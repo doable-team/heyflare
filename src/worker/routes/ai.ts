@@ -159,7 +159,7 @@ ai.delete("/conversations/:id", async (c) => {
 /* ---------- chat (SSE) ---------- */
 
 ai.post("/chat", async (c) => {
-  const b = await c.req.json<{ conversation_id?: string; message?: string }>().catch(() => ({}) as any);
+  const b = await c.req.json<{ conversation_id?: string; message?: string; context_thread_ids?: string[] }>().catch(() => ({}) as any);
   const text = String(b.message ?? "").trim().slice(0, 20_000);
   if (!text) return c.json({ error: "message_required" }, 400);
   let d: ChatDeps;
@@ -167,6 +167,17 @@ ai.post("/chat", async (c) => {
     d = await deps(c);
   } catch (e) {
     return c.json({ error: describeApiError(e), code: "ai_not_configured" }, 400);
+  }
+  // Attached threads → compact context blocks (subject, participants, last 3 messages), max 3 threads.
+  const contextBlocks: string[] = [];
+  const ctxIds: string[] = Array.isArray(b.context_thread_ids) ? (b.context_thread_ids as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 3) : [];
+  for (const tid of ctxIds) {
+    const t = await threadForAi(c, d, tid).catch(() => null);
+    if (!t) continue;
+    const people = t.detail.participants.map((p) => (p.name ? `${p.name} <${p.email}>` : p.email)).join(", ");
+    const lastFrom = t.detail.last_from.name || t.detail.last_from.email;
+    const body = threadToText(t.detail.messages.slice(-3), 2000, 3);
+    contextBlocks.push(`[[context thread=${tid}]] Subject: ${t.detail.subject || "(no subject)"} · From: ${lastFrom}\nParticipants: ${people}\nAccount: ${t.acc.email}\n\n${body}`);
   }
   let convId = typeof b.conversation_id === "string" ? b.conversation_id : "";
   if (convId) {
@@ -196,7 +207,7 @@ ai.post("/chat", async (c) => {
   c.req.raw.signal?.addEventListener("abort", () => abort.abort());
   const run = (async () => {
     await send({ type: "start", conversation_id: convId });
-    await runChatTurn(d, convId, text, send, abort.signal);
+    await runChatTurn(d, convId, text, send, abort.signal, contextBlocks);
     closed = true;
     try {
       await writer.close();

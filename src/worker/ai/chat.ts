@@ -43,13 +43,14 @@ export async function buildSystemPrompt(d: ChatDeps): Promise<string> {
 export type SseEvent = { type: "start"; conversation_id: string } | { type: "text"; text: string } | { type: "tool"; name: string; status: "running" | "done" | "error"; summary: string; id: string } | { type: "draft"; draft: unknown } | { type: "sent"; draft_id: string; thread_id: string } | { type: "done"; conversation_id: string } | { type: "error"; message: string };
 
 /** Runs one user turn; streams SSE events through `send`, persists messages, returns when finished. */
-export async function runChatTurn(d: ChatDeps, conversationId: string, userText: string, send: (e: SseEvent) => Promise<void>, signal?: AbortSignal): Promise<void> {
+export async function runChatTurn(d: ChatDeps, conversationId: string, userText: string, send: (e: SseEvent) => Promise<void>, signal?: AbortSignal, contextBlocks: string[] = []): Promise<void> {
   const db = d.env.DB;
   const system = await buildSystemPrompt(d);
   // History from the DB (full content blocks so tool_use / tool_result pairs round-trip).
   const hist = await db.prepare(`SELECT role, content_json FROM ai_messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 200`).bind(conversationId).all<{ role: "user" | "assistant"; content_json: string }>();
   const messages: Anthropic.MessageParam[] = hist.results.map((r) => ({ role: r.role, content: JSON.parse(r.content_json) }));
-  const userBlock: Anthropic.MessageParam = { role: "user", content: [{ type: "text", text: userText }] };
+  // Context blocks (threads the user attached) go first, clearly labelled, then the user's own words.
+  const userBlock: Anthropic.MessageParam = { role: "user", content: [...contextBlocks.map((text) => ({ type: "text" as const, text })), { type: "text", text: userText }] };
   messages.push(userBlock);
   await db.prepare(`INSERT INTO ai_messages (id, conversation_id, role, content_json, created_at) VALUES (?, ?, 'user', ?, ?)`).bind(uid(), conversationId, JSON.stringify(userBlock.content), now()).run();
 

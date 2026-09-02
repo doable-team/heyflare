@@ -178,15 +178,15 @@ export function CollectionMenuItems({ current, onToggle, onManage }: { current: 
 }
 
 /** Search & pick threads (used for Merge). */
-export function ThreadPicker({ exclude, onPick }: { exclude: string[]; onPick: (t: ThreadSummary) => void }) {
+export function ThreadPicker({ exclude, onPick, placeholder = "Search threads to merge…", hint = "Type to find the thread you want to fold into this one." }: { exclude: string[]; onPick: (t: ThreadSummary) => void; placeholder?: string; hint?: string }) {
   const [q, setQ] = useState("");
   const res = useSearch(q);
   const threads = (res.data?.pages.flatMap((p) => p.threads) ?? []).filter((t) => !exclude.includes(t.id));
   return (
     <Command shouldFilter={false} className="bg-transparent" loop>
-      <CommandInput autoFocus placeholder="Search threads to merge…" value={q} onValueChange={setQ} />
+      <CommandInput autoFocus placeholder={placeholder} value={q} onValueChange={setQ} />
       <CommandList className="max-h-80">
-        {!q.trim() && <div className="py-8 text-center text-[13px] text-muted-foreground">Type to find the thread you want to fold into this one.</div>}
+        {!q.trim() && <div className="py-8 text-center text-[13px] text-muted-foreground">{hint}</div>}
         {q.trim() && res.isFetching && threads.length === 0 && <div className="flex justify-center py-8 text-muted-foreground"><Spinner /></div>}
         {q.trim() && res.isFetched && threads.length === 0 && !res.isFetching && <div className="py-8 text-center text-[13px] text-muted-foreground">No matches.</div>}
         {threads.length > 0 && (

@@ -179,3 +179,6 @@ iframe.email-body { display: block; width: 100%; border: 0; background: transpar
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+/* Thread action bar goes icon-only while the assistant panel is open, so it fits beside it. */
+[data-compact-bar] span.sm\:inline { display: none !important; }

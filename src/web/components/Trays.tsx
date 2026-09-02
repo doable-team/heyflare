@@ -7,6 +7,7 @@ import { Avatar, AvatarStack } from "./Avatar";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { useAssistant } from "../lib/assistantStore";
 
 /** One HEY-style pile: a literal stack of the latest cards, fanned out on click. */
 function Pile({ threads, label, icon, link, linkLabel, removeLabel, onRemove, align }: {
@@ -66,9 +67,10 @@ function Pile({ threads, label, icon, link, linkLabel, removeLabel, onRemove, al
 /** Reply Later (left) and Set Aside (right) piles, pinned to the bottom of the Imbox like HEY. */
 export function Piles({ replyLater, setAside }: { replyLater: ThreadSummary[]; setAside: ThreadSummary[] }) {
   const bulk = useBulkAction();
+  const assistantOpen = useAssistant().open;
   if (replyLater.length === 0 && setAside.length === 0) return null;
   return (
-    <div className="sticky bottom-0 z-20 mt-auto pt-8 pb-4 pointer-events-none flex justify-center">
+    <div className={cn("sticky bottom-0 z-20 mt-auto pt-8 pb-4 pointer-events-none flex justify-center transition-[padding] duration-150", assistantOpen && "md:pr-[416px]")}>
       <div className="pointer-events-auto inline-flex items-center gap-0.5 p-1 rounded-full bg-background border border-border shadow-sm">
         {replyLater.length > 0 && (
           <Pile threads={replyLater} label="Reply later" icon={<Clock size={13} />} link="/reply-later" linkLabel="Focus & Reply" removeLabel="Done" align="start" onRemove={(id) => bulk.mutate({ thread_ids: [id], action: "reply_later", on: false })} />

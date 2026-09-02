@@ -11,6 +11,8 @@ import { api, useCounts, useMeMutations } from "../api";
 import { useKeys } from "../lib/keys";
 import { Avatar } from "./Avatar";
 import { CommandPalette } from "./CommandPalette";
+import { AssistantPanel } from "./AssistantPanel";
+import { assistant } from "../lib/assistantStore";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar,
@@ -82,6 +84,7 @@ export function Shell() {
           </main>
         </SidebarInset>
         <Overlays />
+        <AssistantPanel />
       </SidebarProvider>
   );
 }
@@ -145,7 +148,7 @@ function Overlays() {
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
         e.preventDefault();
-        nav("/assistant");
+        assistant.toggle();
       }
     };
     window.addEventListener("keydown", fn);
@@ -154,7 +157,7 @@ function Overlays() {
 
   return (
     <>
-      <CommandPalette open={palette} onClose={() => setOverlay({ palette: false })} onCompose={() => openCompose()} onToggleTheme={toggleTheme} onShortcuts={() => setOverlay({ help: true })} theme={theme} hasAccount={!!account || accounts.length > 0} />
+      <CommandPalette open={palette} onClose={() => setOverlay({ palette: false })} onCompose={() => openCompose()} onToggleTheme={toggleTheme} onShortcuts={() => setOverlay({ help: true })} onAssistant={() => assistant.open()} theme={theme} hasAccount={!!account || accounts.length > 0} />
       <ShortcutsOverlay open={help} onClose={() => setOverlay({ help: false })} />
     </>
   );
@@ -249,7 +252,15 @@ function AppSidebar() {
   const Item = ({ n }: { n: NavItem }) => (
     <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={isActive(n)} tooltip={n.kbd ? `${n.label}  ${n.kbd}` : n.label} className="h-7 text-sm [&>svg]:text-muted-foreground data-[active=true]:font-medium data-[active=true]:[&>svg]:text-foreground">
-        <Link to={n.to}>
+        <Link
+          to={n.to}
+          onClick={(e) => {
+            if (n.to === "/assistant") {
+              e.preventDefault();
+              assistant.open();
+            }
+          }}
+        >
           {n.icon}
           <span className="flex-1 truncate">{n.label}</span>
           {!!n.count && <span className="text-xs text-muted-foreground tnum">{n.count}</span>}

@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowUpCircle, Bookmark, Check, ChevronDown, ChevronsDownUp,
 import { toast } from "sonner";
 import type { Address, Message, ThreadDetail } from "@shared/types";
 import { cn } from "@/lib/utils";
+import { useAssistant } from "../lib/assistantStore";
 import { attachmentUrl, useClipMutations, useThread, useThreadAction } from "../api";
 import { useAccount } from "../context/AccountContext";
 import { HtmlBody } from "../components/HtmlBody";
@@ -182,12 +183,15 @@ function MessageRow({ m, expanded, onToggle, onReply, onClip, onMarkUnread, isLa
 /** Keeps a fixed element horizontally centered within the <main> column rather than the viewport. */
 function useMainColumn() {
   const [pos, setPos] = useState<{ left: number; width: number } | null>(null);
+  // When the floating assistant panel is open (desktop), keep the bar centred in the space it leaves free.
+  const assistantOpen = useAssistant().open;
   useEffect(() => {
     const main = document.querySelector("main");
     if (!main) return;
     const upd = () => {
       const r = main.getBoundingClientRect();
-      setPos({ left: r.left, width: r.width });
+      const reserve = assistantOpen && window.innerWidth >= 768 ? 416 : 0;
+      setPos({ left: r.left, width: Math.max(320, r.width - reserve) });
     };
     upd();
     const ro = new ResizeObserver(upd);
@@ -197,8 +201,8 @@ function useMainColumn() {
       ro.disconnect();
       window.removeEventListener("resize", upd);
     };
-  }, []);
-  return pos;
+  }, [assistantOpen]);
+  return pos ? { ...pos, compact: assistantOpen } : pos;
 }
 
 const bucketIcon = { imbox: <Inbox />, feed: <Rss />, paper_trail: <ScrollText /> } as const;
@@ -532,7 +536,7 @@ export default function Thread() {
 
       {/* Docked action bar (hidden while the reply composer is open; it has its own Send) */}
       <div className={cn("fixed z-40 bottom-4 flex justify-center pointer-events-none px-3", reply && "hidden")} style={col ? { left: col.left, width: col.width } : { left: 0, right: 0 }}>
-        <div className="pointer-events-auto flex items-center gap-1 rounded-lg bg-background/90 backdrop-blur ring-1 ring-border shadow-md p-1 max-w-full overflow-x-auto">
+        <div data-compact-bar={col?.compact || undefined} className="pointer-events-auto flex items-center gap-1 rounded-lg bg-background/90 backdrop-blur ring-1 ring-border shadow-md p-1 max-w-full overflow-x-auto">
           <ButtonGroup>
             <Button size="sm" onClick={() => openReply("reply")}><Reply /> Reply</Button>
             <Bar label="Reply all"><Button size="sm" variant="outline" onClick={() => openReply("replyAll")}><ReplyAll /><span className="hidden sm:inline">All</span></Button></Bar>
