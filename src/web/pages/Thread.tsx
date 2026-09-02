@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft, ArrowUpCircle, Bookmark, Check, ChevronDown, ChevronsDownUp, Clock, Download, FileText, FolderOpen, Forward, GitMerge, Inbox, Mail, MoreHorizontal, Paperclip, Pencil, Pin, Reply, ReplyAll, Rss, Scissors, ScrollText, StickyNote, Tag, Trash2, X, Layers } from "lucide-react";
+import { ArrowLeft, ArrowUpCircle, Bookmark, Check, ChevronDown, ChevronsDownUp, Clock, Download, FileText, FolderOpen, Forward, GitMerge, Inbox, Mail, MoreHorizontal, Paperclip, Pencil, Pin, Reply, ReplyAll, Rss, Scissors, ScrollText, StickyNote, Tag, Trash2, X, Layers, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import type { Address, Message, ThreadDetail } from "@shared/types";
 import { cn } from "@/lib/utils";
@@ -23,6 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { AiReplyButton, AiSummaryPanel, useThreadSummary } from "../components/AiReply";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -227,7 +228,8 @@ export default function Thread() {
   const account = accountFor(t?.account_id);
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [reply, setReply] = useState<{ mode: ReplyMode; m: Message; key: number } | null>(null);
+  const [reply, setReply] = useState<{ mode: ReplyMode; m: Message; key: number; body_html?: string } | null>(null);
+  const summ = useThreadSummary(id ?? "");
   const [renaming, setRenaming] = useState(false);
   const [subjectDraft, setSubjectDraft] = useState("");
   const [noteOpen, setNoteOpen] = useState(false);
@@ -463,6 +465,9 @@ export default function Thread() {
         </div>
       )}
 
+      {summ.summary && <AiSummaryPanel summary={summ.summary} onClose={summ.clear} className="mt-4" />}
+      {summ.pending && !summ.summary && <div className="mt-4 flex items-center gap-2 text-[13px] text-muted-foreground"><Sparkles className="size-3.5" /> Summarising…</div>}
+
       {/* Messages */}
       <div className="mt-5">
         {t.messages.length > 2 && (
@@ -513,7 +518,7 @@ export default function Thread() {
                 <X />
               </Button>
             </div>
-            <Composer key={reply.key} inline initial={replyInitial(t, reply.m, reply.mode, account?.email)} onDone={() => setReply(null)} onCancel={() => setReply(null)} />
+            <Composer key={reply.key} inline initial={{ ...replyInitial(t, reply.m, reply.mode, account?.email), ...(reply.body_html ? { body_html: reply.body_html } : {}) }} onDone={() => setReply(null)} onCancel={() => setReply(null)} />
           </div>
         ) : (
           <button type="button" onClick={() => openReply("reply")} className="w-full flex items-center gap-2.5 rounded-md px-2 h-10 text-left hover:bg-muted group">
@@ -532,6 +537,7 @@ export default function Thread() {
             <Button size="sm" onClick={() => openReply("reply")}><Reply /> Reply</Button>
             <Bar label="Reply all"><Button size="sm" variant="outline" onClick={() => openReply("replyAll")}><ReplyAll /><span className="hidden sm:inline">All</span></Button></Bar>
             <Bar label="Forward" kbd="f"><Button size="sm" variant="outline" onClick={() => openReply("forward")}><Forward /><span className="hidden sm:inline">Forward</span></Button></Bar>
+            <AiReplyButton threadId={t.id} onResult={(r) => { if (lastIncoming) { setReply({ mode: "reply", m: lastIncoming, key: Date.now(), body_html: r.body_html }); setTimeout(() => document.getElementById("reply-box")?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 60); } }} />
           </ButtonGroup>
           <ButtonGroup>
             <Bar label={t.reply_later ? "Remove from Reply Later" : "Reply later"} kbd="l">
@@ -574,6 +580,7 @@ export default function Thread() {
                   </DropdownMenuItem>
                 ))}
               <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => summ.run()} disabled={summ.pending}><Sparkles /> {summ.pending ? "Summarising…" : "Summarise with AI"}</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => { setSubjectDraft(t.subject); setRenaming(true); }}><Pencil /> Rename subject</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setNoteOpen(true)}><StickyNote /> {t.note ? "Edit note" : "Stick a note on it"} <DropdownMenuShortcut>n</DropdownMenuShortcut></DropdownMenuItem>
               <DropdownMenuSub>

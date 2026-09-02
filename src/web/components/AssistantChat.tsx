@@ -1,0 +1,303 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import { ArrowUp, Check, Loader2, PenSquare, Send, Sparkles, Square, TriangleAlert } from "lucide-react";
+import { toast } from "sonner";
+import type { AiDraftCard } from "@shared/types";
+import { aiChatStream, api, useAiConversation, useAiSettings, type AiSseEvent } from "../api";
+import { useCompose } from "../context/ComposeContext";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+
+/* ---------- rendering helpers ---------- */
+
+function textToHtml(text: string): string {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return text.trim().split(/\n{2,}/).map((p) => `<p>${esc(p).replace(/\n/g, "<br>")}</p>`).join("");
+}
+
+/** Tiny markdown: paragraphs, "- " bullets, **bold**, `code`. */
+export function Prose({ text, className }: { text: string; className?: string }) {
+  const blocks = useMemo(() => text.replace(/\r/g, "").split(/\n{2,}/).filter((b) => b.trim()), [text]);
+  const inline = (s: string) => {
+    const parts = s.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+    return parts.map((p, i) => (p.startsWith("**") ? <strong key={i} className="font-semibold">{p.slice(2, -2)}</strong> : p.startsWith("`") ? <code key={i} className="font-mono text-[12px] bg-muted rounded px-1">{p.slice(1, -1)}</code> : <span key={i}>{p}</span>));
+  };
+  return (
+    <div className={cn("text-[14px] leading-6 space-y-2", className)}>
+      {blocks.map((b, i) => {
+        const lines = b.split("\n");
+        if (lines.every((l) => /^\s*[-*]\s+/.test(l))) {
+          return (
+            <ul key={i} className="space-y-1 pl-4 list-disc marker:text-muted-foreground">
+              {lines.map((l, j) => <li key={j}>{inline(l.replace(/^\s*[-*]\s+/, ""))}</li>)}
+            </ul>
+          );
+        }
+        if (lines.every((l) => /^\s*\d+[.)]\s+/.test(l))) {
+          return (
+            <ol key={i} className="space-y-1 pl-5 list-decimal marker:text-muted-foreground">
+              {lines.map((l, j) => <li key={j}>{inline(l.replace(/^\s*\d+[.)]\s+/, ""))}</li>)}
+            </ol>
+          );
+        }
+        return <p key={i}>{lines.map((l, j) => <span key={j}>{j > 0 && <br />}{inline(l)}</span>)}</p>;
+      })}
+    </div>
+  );
+}
+
+function ToolLine({ status, summary }: { status: "running" | "done" | "error"; summary: string }) {
+  return (
+    <div className="flex items-center gap-2 text-[12px] text-muted-foreground py-0.5">
+      {status === "running" ? <Loader2 className="size-3 animate-spin" /> : status === "error" ? <TriangleAlert className="size-3" /> : <Check className="size-3" />}
+      <span className="truncate">{summary}</span>
+    </div>
+  );
+}
+
+export function DraftCard({ d, sentThreadId }: { d: AiDraftCard; sentThreadId?: string }) {
+  const { openCompose } = useCompose();
+  const qc = useQueryClient();
+  const [state, setState] = useState<"idle" | "sending" | "sent">(sentThreadId ? "sent" : "idle");
+  const send = async () => {
+    setState("sending");
+    try {
+      await api.post("/api/send", { draft_id: d.draft_id, account_id: d.account_id, thread_id: d.thread_id, to: d.to, cc: d.cc, subject: d.subject, body_html: textToHtml(d.body_text) });
+      setState("sent");
+      toast("Sent");
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== "me" });
+    } catch (e) {
+      setState("idle");
+      toast.error((e as Error).message);
+    }
+  };
+  return (
+    <div className="my-2 rounded-lg bg-muted/50 p-3 text-[13px]">
+      <div className="flex items-center gap-2 text-muted-foreground mb-1">
+        <PenSquare className="size-3.5" />
+        <span className="truncate">Draft · from {d.from} · to {d.to.map((a) => a.name || a.email).join(", ")}{d.cc.length ? ` · cc ${d.cc.map((a) => a.email).join(", ")}` : ""}</span>
+      </div>
+      <div className="font-medium mb-1">{d.subject}</div>
+      <Prose text={d.body_text} className="text-[13px] leading-5 text-foreground/90 max-h-56 overflow-y-auto" />
+      <div className="flex items-center gap-2 mt-3">
+        {state === "sent" ? (
+          <span className="inline-flex items-center gap-1 text-muted-foreground"><Check className="size-3.5" /> Sent{sentThreadId ? <> · <Link className="underline underline-offset-2" to={`/t/${sentThreadId}`}>open</Link></> : null}</span>
+        ) : (
+          <>
+            <Button size="sm" onClick={send} disabled={state === "sending"}>{state === "sending" ? <Loader2 className="animate-spin" /> : <Send />} Send</Button>
+            <Button size="sm" variant="ghost" onClick={() => openCompose({ draft_id: d.draft_id, account_id: d.account_id, thread_id: d.thread_id, to: d.to, cc: d.cc, subject: d.subject, body_html: textToHtml(d.body_text) })}>Open in composer</Button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- message model ---------- */
+
+interface Turn {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  tools: { id: string; status: "running" | "done" | "error"; summary: string }[];
+  drafts: AiDraftCard[];
+  sent: Record<string, string>;
+  error?: string;
+}
+
+function turnsFromStored(messages: { id: string; role: "user" | "assistant"; content: unknown[] }[]): Turn[] {
+  const out: Turn[] = [];
+  for (const m of messages) {
+    const blocks = Array.isArray(m.content) ? (m.content as any[]) : [];
+    if (m.role === "user") {
+      const text = blocks.filter((b) => b.type === "text").map((b) => b.text).join("\n");
+      if (text.trim()) out.push({ id: m.id, role: "user", text, tools: [], drafts: [], sent: {} });
+      continue;
+    }
+    const last = out[out.length - 1];
+    const target = last && last.role === "assistant" ? last : (out.push({ id: m.id, role: "assistant", text: "", tools: [], drafts: [], sent: {} }), out[out.length - 1]);
+    for (const b of blocks) {
+      if (b.type === "text") target.text += (target.text ? "\n\n" : "") + b.text;
+      else if (b.type === "tool_use") target.tools.push({ id: b.id, status: "done", summary: toolLabel(b.name, b.input) });
+    }
+  }
+  return out;
+}
+
+function toolLabel(name: string, input: any): string {
+  switch (name) {
+    case "search_mail": return `Searched mail for “${input?.query ?? ""}”`;
+    case "list_threads": return `Listed ${String(input?.bucket ?? "").replace("_", " ")}`;
+    case "read_thread": return "Read a thread";
+    case "list_screener": return "Checked the Screener";
+    case "screen_sender": return `Screened a sender → ${String(input?.decision ?? "").replace("_", " ")}`;
+    case "thread_action": return `Organised · ${String(input?.action ?? "").replace("_", " ")}`;
+    case "create_draft": return `Drafted “${input?.subject ?? "a message"}”`;
+    case "send_draft": return "Sent a draft";
+    case "remember": return `Remembered: ${input?.content ?? ""}`;
+    case "forget": return "Forgot a memory entry";
+    case "find_contact": return `Looked up “${input?.query ?? ""}”`;
+    case "save_clip": return "Saved a clip";
+    case "create_collection": return `Created collection “${input?.name ?? ""}”`;
+    case "add_to_collection": return "Added to a collection";
+    default: return name.replace(/_/g, " ");
+  }
+}
+
+/* ---------- the chat ---------- */
+
+export const SUGGESTIONS = ["What's new for me today?", "Anything waiting in the Screener?", "Summarise my unread mail", "Draft a reply to the latest email from …"];
+
+export function AssistantChat({ conversationId, onConversationId, compact }: { conversationId?: string; onConversationId: (id: string) => void; compact?: boolean }) {
+  const settings = useAiSettings();
+  const conv = useAiConversation(conversationId);
+  const qc = useQueryClient();
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [live, setLive] = useState<Turn | null>(null);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  /** Conversation whose turns are held locally (streamed here); server data must not overwrite them mid-flight or drop transient errors. */
+  const streamedConv = useRef<string | null>(null);
+  const busyRef = useRef(false);
+
+  useEffect(() => {
+    if (busyRef.current) return;
+    if (conv.data) {
+      if (conv.data.conversation.id === streamedConv.current) return;
+      setTurns(turnsFromStored(conv.data.messages as any));
+    } else if (!conversationId) {
+      streamedConv.current = null;
+      setTurns([]);
+    }
+  }, [conv.data, conversationId]);
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ block: "end" });
+  }, [turns, live?.text, live?.tools.length]);
+
+  const send = async (text: string) => {
+    const msg = text.trim();
+    if (!msg || busy) return;
+    setInput("");
+    setBusy(true);
+    busyRef.current = true;
+    if (conversationId) streamedConv.current = conversationId;
+    const userTurn: Turn = { id: `u-${Date.now()}`, role: "user", text: msg, tools: [], drafts: [], sent: {} };
+    const assistant: Turn = { id: `a-${Date.now()}`, role: "assistant", text: "", tools: [], drafts: [], sent: {} };
+    setTurns((t) => [...t, userTurn]);
+    setLive(assistant);
+    const ac = new AbortController();
+    abortRef.current = ac;
+    let convId = conversationId;
+    try {
+      await aiChatStream(
+        { conversation_id: conversationId, message: msg },
+        (e: AiSseEvent) => {
+          if (e.type === "start") {
+            convId = e.conversation_id;
+            streamedConv.current = e.conversation_id;
+            if (!conversationId) onConversationId(e.conversation_id);
+          } else if (e.type === "text") setLive((l) => (l ? { ...l, text: l.text + e.text } : l));
+          else if (e.type === "tool") setLive((l) => (l ? { ...l, tools: l.tools.some((x) => x.id === e.id) ? l.tools.map((x) => (x.id === e.id ? { ...x, status: e.status, summary: e.summary } : x)) : [...l.tools, { id: e.id, status: e.status, summary: e.summary }] } : l));
+          else if (e.type === "draft") setLive((l) => (l ? { ...l, drafts: [...l.drafts, e.draft] } : l));
+          else if (e.type === "sent") setLive((l) => (l ? { ...l, sent: { ...l.sent, [e.draft_id]: e.thread_id } } : l));
+          else if (e.type === "error") setLive((l) => (l ? { ...l, error: e.message } : l));
+        },
+        ac.signal
+      );
+    } catch (e) {
+      if (!ac.signal.aborted) setLive((l) => (l ? { ...l, error: (e as Error).message } : { ...assistant, error: (e as Error).message }));
+    }
+    setLive((l) => {
+      if (l) setTurns((t) => [...t, l]);
+      return null;
+    });
+    busyRef.current = false;
+    setBusy(false);
+    abortRef.current = null;
+    qc.invalidateQueries({ queryKey: ["ai", "conversations"] });
+    if (convId) qc.invalidateQueries({ queryKey: ["ai", "conversation", convId] });
+    qc.invalidateQueries({ predicate: (q) => ["imbox", "threads", "counts", "screener", "thread", "feed"].includes(String(q.queryKey[0])) });
+  };
+
+  const stop = () => abortRef.current?.abort();
+  const notConfigured = settings.data && !settings.data.configured;
+  const all = live ? [...turns, live] : turns;
+
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className={cn("flex-1 min-h-0 overflow-y-auto", compact ? "px-4" : "px-2")}>
+        {all.length === 0 && (
+          <div className="pt-10 pb-6 text-center">
+            <Sparkles className="size-6 mx-auto text-muted-foreground" />
+            <div className="mt-3 text-[15px] font-medium">What can I do for you?</div>
+            <div className="text-[13px] text-muted-foreground mt-1">I can read, search and organise your mail, screen senders, and write drafts for you to send.</div>
+            {notConfigured && (
+              <div className="mt-4 text-[13px]">
+                <Link to="/settings#ai" className="underline underline-offset-2">Add your Anthropic API key</Link> to get started.
+              </div>
+            )}
+            {!notConfigured && (
+              <div className="mt-5 flex flex-wrap justify-center gap-2">
+                {SUGGESTIONS.map((s) => (
+                  <button key={s} type="button" onClick={() => { setInput(s); inputRef.current?.focus(); }} className="rounded-full bg-muted/60 hover:bg-muted px-3 h-8 text-[13px] text-foreground/80">{s}</button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        <div className="py-4 space-y-5">
+          {all.map((t) => (
+            <div key={t.id} className={cn("flex", t.role === "user" ? "justify-end" : "justify-start")}>
+              {t.role === "user" ? (
+                <div className="max-w-[85%] rounded-2xl rounded-br-md bg-muted px-3.5 py-2 text-[14px] leading-6 whitespace-pre-wrap">{t.text}</div>
+              ) : (
+                <div className="max-w-[92%] min-w-0">
+                  {t.tools.length > 0 && <div className="mb-1">{t.tools.map((x) => <ToolLine key={x.id} status={x.status} summary={x.summary} />)}</div>}
+                  {t.text ? <Prose text={t.text} /> : t === live && !t.error ? <div className="flex items-center gap-2 text-[13px] text-muted-foreground"><Loader2 className="size-3.5 animate-spin" /> Thinking…</div> : null}
+                  {t.drafts.map((d) => <DraftCard key={d.draft_id} d={d} sentThreadId={t.sent[d.draft_id]} />)}
+                  {t.error && <div className="mt-2 flex items-start gap-2 rounded-md bg-muted/60 px-3 py-2 text-[13px]"><TriangleAlert className="size-4 shrink-0 mt-0.5 text-muted-foreground" /><span>{t.error}{/API key/i.test(t.error) && <> · <Link to="/settings#ai" className="underline underline-offset-2">Settings → AI</Link></>}</span></div>}
+                </div>
+              )}
+            </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
+      </div>
+      <form
+        className={cn("shrink-0 pt-2", compact ? "px-4 pb-3" : "px-2 pb-2")}
+        onSubmit={(e) => {
+          e.preventDefault();
+          send(input);
+        }}
+      >
+        <div className="flex items-end gap-2 rounded-xl bg-muted/60 focus-within:bg-muted px-3 py-2">
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                send(input);
+              }
+            }}
+            rows={Math.min(6, Math.max(1, input.split("\n").length))}
+            placeholder={notConfigured ? "Add an API key in Settings → AI first" : "Ask about your mail, or tell me what to write…"}
+            disabled={!!notConfigured}
+            className="flex-1 resize-none bg-transparent outline-none text-[14px] leading-6 placeholder:text-muted-foreground max-h-40"
+          />
+          {busy ? (
+            <Button type="button" size="icon-sm" variant="ghost" onClick={stop} aria-label="Stop"><Square className="size-3.5" /></Button>
+          ) : (
+            <Button type="submit" size="icon-sm" disabled={!input.trim() || !!notConfigured} aria-label="Send"><ArrowUp /></Button>
+          )}
+        </div>
+        <div className="text-[11px] text-muted-foreground mt-1.5 px-1">Drafts are never sent without you{settings.data?.auto_send ? ", unless you allowed it in Settings → AI" : ""}. Enter to send, Shift+Enter for a new line.</div>
+      </form>
+    </div>
+  );
+}

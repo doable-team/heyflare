@@ -119,7 +119,7 @@ export default function Imbox() {
             threads: d?.new_threads ?? [],
             bundles: (d?.bundles ?? []).filter((b) => b.status === "open"),
             emptyNode: (
-              <div className="min-h-[20vh] flex flex-col items-center justify-center text-center px-2">
+              <div className="min-h-[20vh] px-2 pt-2">
                 <div className="text-[14px] text-foreground">Nothing new. Go enjoy your day.</div>
                 <div className="text-[13px] text-muted-foreground mt-1">Mail from people you've screened in shows up here.</div>
               </div>

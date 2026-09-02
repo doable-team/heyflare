@@ -31,6 +31,8 @@ import FilesPage from "./pages/Files";
 import Labels from "./pages/Labels";
 import LabelThreads from "./pages/LabelThreads";
 import SettingsPage from "./pages/Settings";
+import Assistant from "./pages/Assistant";
+import { MobileAssistantList, MobileAssistantChat } from "./mobile/MobileAssistant";
 import SearchPage from "./pages/Search";
 import NotFound from "./pages/NotFound";
 import { MobileShell } from "./mobile/MobileShell";
@@ -41,7 +43,7 @@ import MobileThread from "./mobile/MobileThread";
 import MobileMore from "./mobile/MobileMore";
 import { MobileBucketScreen, MobileLabelThreads, MobileSearch, BUCKETS } from "./mobile/MobileListScreen";
 import { MobilePageWrap } from "./mobile/MobilePageWrap";
-import MobileSettings, { MobileSettingsAccountDetail, MobileSettingsAccounts, MobileSettingsDomainDetail, MobileSettingsDomains, MobileSettingsPreferences, MobileSettingsProfile, MobileSettingsSecurity } from "./mobile/MobileSettings";
+import MobileSettings, { MobileSettingsAccountDetail, MobileSettingsAccounts, MobileSettingsDomainDetail, MobileSettingsDomains, MobileSettingsPreferences, MobileSettingsProfile, MobileSettingsSecurity, MobileSettingsAi } from "./mobile/MobileSettings";
 
 /** Desktop keeps hash tabs; mobile deep links like /settings/accounts map onto them. */
 function SettingsRedirect() {
@@ -83,6 +85,8 @@ function DesktopRoutes() {
         <Route path="/collections" element={<Collections />} />
         <Route path="/collections/:id" element={<CollectionDetail />} />
         <Route path="/files" element={<FilesPage />} />
+        <Route path="/assistant" element={<Assistant />} />
+        <Route path="/assistant/:id" element={<Assistant />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/settings/*" element={<SettingsRedirect />} />
         <Route path="/search" element={<SearchPage />} />
@@ -134,6 +138,9 @@ function MobileRoutes() {
         <Route path="/settings/domains" element={<MobileSettingsDomains />} />
         <Route path="/settings/domains/:id" element={<MobileSettingsDomainDetail />} />
         <Route path="/settings/security" element={<MobileSettingsSecurity />} />
+        <Route path="/settings/ai" element={<MobileSettingsAi />} />
+        <Route path="/assistant" element={<MobileAssistantList />} />
+        <Route path="/assistant/:id" element={<MobileAssistantChat />} />
         <Route path="/search" element={<MobileSearch />} />
         <Route path="*" element={wrap("", <NotFound />)} />
       </Route>

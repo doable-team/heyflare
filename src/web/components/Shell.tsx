@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { ArrowUpCircle, Bookmark, CalendarClock, Check, ChevronDown, ChevronRight, Clock, Eye, FileText, Files, FolderOpen, Inbox, Keyboard, Layers, LogOut, Mail, Monitor, Moon, PenSquare, Plus, Rss, Scissors, Search, Send, Settings, Shield, ShieldOff, Sun, Tag, Trash2, Users } from "lucide-react";
+import { ArrowUpCircle, Bookmark, CalendarClock, Check, ChevronDown, ChevronRight, Clock, Eye, FileText, Files, FolderOpen, Inbox, Keyboard, Layers, LogOut, Mail, Monitor, Moon, PenSquare, Plus, Rss, Scissors, Search, Send, Settings, Shield, ShieldOff, Sun, Tag, Trash2, Users, Sparkles } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { Mark } from "./Logo";
@@ -32,7 +32,7 @@ const TITLES: [string, string][] = [
   ["/feed", "The Feed"], ["/paper-trail", "Paper Trail"], ["/screener", "Screener"], ["/screened-out", "Screened out"], ["/reply-later", "Reply Later"],
   ["/set-aside", "Set Aside"], ["/bubble-up", "Bubble Up"], ["/previously-seen", "Previously Seen"], ["/contacts", "Contacts"], ["/clips", "Clips"],
   ["/collections", "Collections"], ["/files", "Files"], ["/labels", "Labels"], ["/sent", "Sent"], ["/drafts", "Drafts"], ["/scheduled", "Scheduled"],
-  ["/everything", "Everything"], ["/trash", "Trash"], ["/settings", "Settings"], ["/search", "Search"], ["/compose", "New message"], ["/t/", "Thread"], ["/bundle/", "Bundle"],
+  ["/everything", "Everything"], ["/trash", "Trash"], ["/settings", "Settings"], ["/search", "Search"], ["/compose", "New message"], ["/t/", "Thread"], ["/bundle/", "Bundle"], ["/assistant", "Assistant"],
 ];
 function pageTitle(path: string): string {
   if (path === "/") return "Imbox";
@@ -143,6 +143,10 @@ function Overlays() {
         e.preventDefault();
         setOverlay({ palette: !overlayState.palette });
       }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        nav("/assistant");
+      }
     };
     window.addEventListener("keydown", fn);
     return () => window.removeEventListener("keydown", fn);
@@ -224,6 +228,7 @@ function AppSidebar() {
     { to: "/bubble-up", label: "Bubble Up", icon: <ArrowUpCircle />, kbd: "7" },
   ];
   const library: NavItem[] = [
+    { to: "/assistant", label: "Assistant", icon: <Sparkles />, kbd: "⌘J" },
     { to: "/previously-seen", label: "Previously Seen", icon: <Eye />, kbd: "8" },
     { to: "/contacts", label: "Contacts", icon: <Users />, kbd: "9" },
     { to: "/clips", label: "Clips", icon: <Scissors /> },

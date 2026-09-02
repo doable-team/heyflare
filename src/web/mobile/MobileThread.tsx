@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ArrowUpCircle, Bookmark, Clock, Download, FileText, FolderOpen, Forward, GitMerge, Inbox, Mail, MoreHorizontal, Paperclip, Pencil, Pin, Reply, ReplyAll, Rss, Scissors, StickyNote, Tag, Trash2, X, Layers } from "lucide-react";
+import { ArrowUpCircle, Bookmark, Clock, Download, FileText, FolderOpen, Forward, GitMerge, Inbox, Mail, MoreHorizontal, Paperclip, Pencil, Pin, Reply, ReplyAll, Rss, Scissors, StickyNote, Tag, Trash2, X, Layers, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import type { Message } from "@shared/types";
 import { cn } from "@/lib/utils";
@@ -24,6 +24,7 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } f
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Screen } from "./Screen";
 import { ActionSheet } from "./ActionSheet";
+import { AiReplyDrawer, AiSummaryPanel, useThreadSummary } from "../components/AiReply";
 
 const BAR_H = 56;
 
@@ -118,6 +119,8 @@ export default function MobileThread() {
   const lastIncoming = useMemo(() => (t ? [...t.messages].reverse().find((m) => !m.is_from_me) ?? t.messages[t.messages.length - 1] : undefined), [t]);
   const run = (a: Parameters<typeof act.mutate>[0], msg?: string) => act.mutate(a, { onSuccess: () => msg && toast(msg), onError: (e) => toast.error((e as Error).message) });
   const reply = (mode: ReplyMode) => t && lastIncoming && openCompose(replyInitial(t, lastIncoming, mode, account?.email));
+  const [aiOpen, setAiOpen] = useState(false);
+  const summ = useThreadSummary(id ?? "");
 
   if (q.error)
     return (
@@ -193,6 +196,10 @@ export default function MobileThread() {
         )}
       </div>
 
+      {summ.summary && <AiSummaryPanel summary={summ.summary} onClose={summ.clear} className="mx-4 mt-3" />}
+      {summ.pending && !summ.summary && <div className="mx-4 mt-3 flex items-center gap-2 text-[13px] text-muted-foreground"><Sparkles className="size-3.5" /> Summarising…</div>}
+      <AiReplyDrawer threadId={t.id} open={aiOpen} onOpenChange={setAiOpen} onResult={(r) => { if (lastIncoming) openCompose({ ...replyInitial(t, lastIncoming, "reply", account?.email), body_html: r.body_html }); }} />
+
       <div className="mt-3 divide-y divide-border">
         {t.messages.map((m) => (
           <MessageBlock
@@ -223,6 +230,9 @@ export default function MobileThread() {
           <Button className="h-10 rounded-full px-4 text-[15px]" onClick={() => reply("reply")}>
             <Reply /> Reply
           </Button>
+          <Button variant="ghost" size="icon" aria-label="Reply with AI" className="size-11 text-muted-foreground" onClick={() => setAiOpen(true)}>
+            <Sparkles className="size-5!" />
+          </Button>
           <span className="flex-1" />
           <Button variant="ghost" size="icon" aria-label="Reply later" className={cn("size-11 text-muted-foreground", t.reply_later && "bg-muted text-foreground")} onClick={() => run({ action: "reply_later", on: !t.reply_later }, t.reply_later ? "Removed from Reply Later" : "Added to Reply Later")}>
             <Clock className="size-5!" />
@@ -246,6 +256,7 @@ export default function MobileThread() {
           { icon: <ReplyAll />, label: "Reply all", onSelect: () => reply("replyAll") },
           { icon: <Forward />, label: "Forward", onSelect: () => reply("forward") },
           ...(["imbox", "feed", "paper_trail"] as const).filter((b) => b !== t.bucket).map((b) => ({ icon: bucketIcon[b], label: `Move to ${bucketName(b)}`, onSelect: () => run({ action: "move", bucket: b }, `Moved to ${bucketName(b)}`) })),
+          { icon: <Sparkles />, label: "Summarise with AI", onSelect: () => summ.run() },
           { icon: <Pencil />, label: "Rename subject", onSelect: () => setRename(t.subject) },
           { icon: <StickyNote />, label: t.note ? "Edit note" : "Stick a note on it", onSelect: () => setNote(t.note) },
           { icon: <Tag />, label: "Labels", onSelect: () => setLabelsOpen(true) },

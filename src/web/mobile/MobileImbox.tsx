@@ -176,7 +176,7 @@ export default function MobileImbox() {
                 threads: d?.new_threads ?? [],
                 bundles: (d?.bundles ?? []).filter((b) => b.status === "open"),
                 emptyNode: (
-                  <div className="min-h-[16vh] flex flex-col items-center justify-center text-center px-4">
+                  <div className="min-h-[16vh] px-4 pt-2">
                     <div className="text-[15px] text-foreground">Nothing new. Go enjoy your day.</div>
                     <div className="text-[13px] text-muted-foreground mt-1">Mail from people you've screened in shows up here.</div>
                   </div>

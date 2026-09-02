@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { AlertTriangle, Check, ChevronDown, Copy, FileText, Globe, Inbox, KeyRound, Mail, Monitor, Moon, Plus, RefreshCw, Rss, ShieldCheck, SlidersHorizontal, Sun, Trash2, Unplug, User } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Copy, FileText, Globe, Inbox, KeyRound, Mail, Monitor, Moon, Plus, RefreshCw, Rss, ShieldCheck, SlidersHorizontal, Sun, Trash2, Unplug, User, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import type { Account, Domain, UserSettings } from "@shared/types";
 import { cn } from "@/lib/utils";
@@ -26,13 +26,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { AiSection } from "../components/AiSettingsSection";
 
-type Tab = "profile" | "preferences" | "accounts" | "domains" | "security";
+type Tab = "profile" | "preferences" | "accounts" | "domains" | "ai" | "security";
 const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
   { key: "profile", label: "Profile", icon: <User /> },
   { key: "preferences", label: "Preferences", icon: <SlidersHorizontal /> },
   { key: "accounts", label: "Accounts", icon: <Mail /> },
   { key: "domains", label: "Domains", icon: <Globe /> },
+  { key: "ai", label: "AI", icon: <Sparkles /> },
   { key: "security", label: "Security", icon: <KeyRound /> },
 ];
 
@@ -958,6 +960,7 @@ export default function SettingsPage() {
         <TabsContent value="preferences"><PreferencesSection /></TabsContent>
         <TabsContent value="accounts"><AccountsSection onNewMailbox={() => setTab("domains")} /></TabsContent>
         <TabsContent value="domains"><DomainsSection /></TabsContent>
+        <TabsContent value="ai"><AiSection /></TabsContent>
         <TabsContent value="security"><SecuritySection /></TabsContent>
       </Tabs>
     </div>

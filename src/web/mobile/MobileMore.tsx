@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowUpCircle, Bookmark, CalendarClock, ChevronRight, Clock, Eye, Files, FolderOpen, LogOut, Mail, Monitor, Moon, PenSquare, Scissors, Search, Send, Settings, ShieldOff, Sun, Tag, Trash2, Users } from "lucide-react";
+import { ArrowUpCircle, Bookmark, CalendarClock, ChevronRight, Clock, Eye, Files, FolderOpen, LogOut, Mail, Monitor, Moon, PenSquare, Scissors, Search, Send, Settings, ShieldOff, Sun, Tag, Trash2, Users, Sparkles } from "lucide-react";
 import { api, useCounts, useMeMutations } from "../api";
 import { useAccount } from "../context/AccountContext";
 import { Avatar } from "../components/Avatar";
@@ -61,6 +61,7 @@ export default function MobileMore() {
         <ChevronRight size={16} className="text-tertiary" />
       </Link>
       <Group>
+        <Row to="/assistant" icon={<Sparkles />} label="Assistant" />
         <Row to="/search" icon={<Search />} label="Search" />
         <Row icon={<PenSquare />} label="New message" onClick={() => nav("/compose")} />
       </Group>

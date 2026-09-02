@@ -248,3 +248,53 @@ export interface TwoFactorStatus {
   enabled: boolean;
   recovery_left: number;
 }
+
+/* ---------- AI assistant ---------- */
+export interface AiPreset {
+  id: "anthropic" | "openai" | "xai" | "openrouter" | "gemini" | "custom";
+  label: string;
+  kind: "anthropic" | "openai_compatible";
+  base_url: string;
+  default_model: string;
+  models: string[];
+  key_placeholder: string;
+  key_url?: string;
+}
+export interface AiSettings {
+  configured: boolean;
+  provider: "anthropic" | "openai_compatible";
+  preset: AiPreset["id"];
+  base_url: string;
+  key_hint: string;
+  model: string;
+  learn: boolean;
+  auto_send: boolean;
+  presets: AiPreset[];
+  last_learned_at: number | null;
+  server_ready: boolean;
+}
+export type AiMemoryKind = "profile" | "tone" | "fact" | "preference" | "contact";
+export interface AiMemoryEntry {
+  id: string;
+  kind: AiMemoryKind;
+  content: string;
+  source: "user" | "assistant" | "learned";
+  created_at: number;
+  updated_at: number;
+}
+export interface AiConversation {
+  id: string;
+  title: string;
+  created_at: number;
+  updated_at: number;
+}
+export interface AiDraftCard {
+  draft_id: string;
+  account_id: string;
+  from: string;
+  thread_id: string | null;
+  to: Address[];
+  cc: Address[];
+  subject: string;
+  body_text: string;
+}

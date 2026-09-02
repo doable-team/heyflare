@@ -15,6 +15,8 @@ import collectionRoutes from "./routes/collections";
 import clipRoutes from "./routes/clips";
 import composeRoutes from "./routes/compose";
 import bundleRoutes from "./routes/bundles";
+import aiRoutes from "./routes/ai";
+import { runLearning } from "./ai/memory";
 import domainRoutes from "./routes/domains";
 import { handleInboundEmail } from "./inbound";
 
@@ -39,6 +41,7 @@ api.use("*", requireUser);
 api.route("/me", meRoutes);
 api.route("/accounts", accountRoutes);
 api.route("/domains", domainRoutes);
+api.route("/ai", aiRoutes);
 
 
 const scoped = new Hono<AppEnv>();
@@ -74,6 +77,11 @@ async function runCron(env: Env) {
     await processScheduledSends(env);
   } catch (e) {
     console.error("scheduled sends failed", e);
+  }
+  try {
+    await runLearning(env);
+  } catch (e) {
+    console.error("ai learning failed", e);
   }
   const accounts = await db
     .prepare(

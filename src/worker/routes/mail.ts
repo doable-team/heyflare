@@ -316,7 +316,7 @@ mail.get("/threads/:id", async (c) => {
 });
 
 // ---------- Actions ----------
-type ActionBody = {
+export type ActionBody = {
   action: string;
   on?: boolean;
   at?: number | null;
@@ -571,5 +571,5 @@ mail.get("/files", async (c) => {
   return c.json({ files, next_page: hasMore ? page + 1 : null });
 });
 
-export { loadThreadDetail };
+export { loadThreadDetail, applyAction };
 export default mail;
