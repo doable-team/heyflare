@@ -27,6 +27,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { AiSection } from "../components/AiSettingsSection";
+import { useCardScroll } from "../lib/cardKeys";
 
 type Tab = "profile" | "preferences" | "accounts" | "domains" | "ai" | "security";
 const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
@@ -935,6 +936,7 @@ function TwoFactorBlock({ compact }: { compact?: boolean }) {
 /* ---------- Page ---------- */
 
 export default function SettingsPage() {
+  useCardScroll();
   const { user } = useAccount();
   const loc = useLocation();
   const nav = useNavigate();

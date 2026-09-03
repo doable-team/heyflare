@@ -8,6 +8,7 @@ import { EmptyState, ErrorState, PageHeader, SkeletonRows } from "../components/
 import { fmtDate } from "../lib/format";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useCardScroll } from "../lib/cardKeys";
 
 function ClipRow({ id, text, thread_id, thread_subject, created_at }: { id: string; text: string; thread_id: string; thread_subject?: string; created_at: number }) {
   const { remove } = useClipMutations();
@@ -62,6 +63,7 @@ function ClipRow({ id, text, thread_id, thread_subject, created_at }: { id: stri
 }
 
 export default function Clips() {
+  useCardScroll();
   const q = useClips();
   const list = q.data ?? [];
   return (

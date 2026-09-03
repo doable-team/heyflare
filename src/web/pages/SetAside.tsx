@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useCardScroll } from "../lib/cardKeys";
 
 const OUT_MS = 120;
 
@@ -80,6 +81,7 @@ function Card({ t, leaving, onDone }: { t: ThreadSummary; leaving: boolean; onDo
 }
 
 export default function SetAside() {
+  useCardScroll();
   const { accounts } = useAccount();
   const imbox = useImbox(accounts.length > 0);
   const bulk = useBulkAction();

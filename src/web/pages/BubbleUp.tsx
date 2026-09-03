@@ -13,10 +13,12 @@ import { useToast } from "../components/Toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useCardScroll } from "../lib/cardKeys";
 
 const OUT_MS = 120;
 
 export default function BubbleUp() {
+  useCardScroll();
   const { accounts, multi, glyphFor, accountFor } = useAccount();
   const q = useThreads("bubble_up", { enabled: accounts.length > 0 });
   const bulk = useBulkAction();

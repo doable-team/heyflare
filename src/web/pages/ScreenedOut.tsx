@@ -8,8 +8,10 @@ import { EmptyState, ErrorState, PageHeader, SkeletonRows } from "../components/
 import { useToast } from "../components/Toast";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useCardScroll } from "../lib/cardKeys";
 
 export default function ScreenedOut() {
+  useCardScroll();
   const q = useScreenedOut();
   const update = useUpdateContact();
   const { toast } = useToast();

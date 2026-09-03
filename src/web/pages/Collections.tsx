@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { useCardScroll } from "../lib/cardKeys";
 
 function CollectionRow({ c }: { c: Collection }) {
   return (
@@ -70,6 +71,7 @@ export function NewCollectionModal({ open, onClose, onCreated }: { open: boolean
 }
 
 export default function Collections() {
+  useCardScroll();
   const q = useCollections();
   const [open, setOpen] = useState(false);
   const list = q.data ?? [];

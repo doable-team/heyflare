@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { useBulkAction, useImbox, useThread } from "../api";
 import { useAccount } from "../context/AccountContext";
 import { useKeys } from "../lib/keys";
+import { useCardScroll } from "../lib/cardKeys";
 import { fmtFull, fmtTime } from "../lib/format";
 import { ConnectGmailCard } from "./Imbox";
 import { HtmlBody } from "../components/HtmlBody";
@@ -175,12 +176,14 @@ export default function ReplyLater() {
     bulk.mutate({ thread_ids: [t.id], action: "reply_later", on: false }, { onSuccess: () => toast("Done. Out of the pile.", { kind: "success" }) });
   };
 
+  useCardScroll();
+
   useKeys(
     {
       j: () => go(1),
       k: () => go(-1),
-      ArrowRight: () => go(1),
-      ArrowLeft: () => go(-1),
+      "]": () => go(1),
+      "[": () => go(-1),
       d: () => current && done(current),
     },
     list.length > 0,
@@ -227,7 +230,8 @@ export default function ReplyLater() {
           )}
           <p className="hidden md:flex items-center gap-1.5 justify-center mt-8 text-xs text-muted-foreground">
             <Kbd>j</Kbd>
-            <Kbd>k</Kbd> next / previous <span className="mx-1">·</span> <Kbd>d</Kbd> done
+            <Kbd>k</Kbd> next / previous <span className="mx-1">·</span> <Kbd>d</Kbd> done <span className="mx-1">·</span> <Kbd>↑</Kbd>
+            <Kbd>↓</Kbd> scroll
           </p>
         </>
       )}

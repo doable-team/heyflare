@@ -9,6 +9,7 @@ import { EmptyState, ErrorState, PageHeader, SkeletonRows } from "../components/
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useCardScroll } from "../lib/cardKeys";
 
 function preview(html: string): string {
   return html
@@ -69,6 +70,7 @@ function DraftRow({ d, mode, onOpen, onCancel, onDelete }: { d: Draft; mode: "dr
 }
 
 export default function Drafts({ mode }: { mode: "draft" | "scheduled" }) {
+  useCardScroll();
   const q = useDrafts();
   const m = useDraftMutations();
   const { openCompose } = useCompose();

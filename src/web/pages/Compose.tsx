@@ -1,8 +1,10 @@
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Composer } from "../components/Composer";
 import { parseAddresses } from "../components/AddressInput";
+import { useCardScroll } from "../lib/cardKeys";
 
 export default function ComposePage() {
+  useCardScroll();
   const nav = useNavigate();
   const [sp] = useSearchParams();
   return (

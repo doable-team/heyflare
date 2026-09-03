@@ -4,6 +4,7 @@ import type { Bundle, ThreadSummary } from "@shared/types";
 import { useBulkAction, useBundleMutations, type ThreadAction } from "../api";
 import { useKeys } from "../lib/keys";
 import { useFocusRegion } from "../lib/focusStore";
+import { scrollPageBy } from "../lib/cardKeys";
 import { monthKey } from "../lib/format";
 import { BulkBar } from "./BulkBar";
 import { BundleRow, bundleHref } from "./BundleRow";
@@ -161,12 +162,21 @@ export function ThreadList({
     nav(cur.kind === "thread" ? `/t/${cur.t.id}` : bundleHref(cur.b));
   };
 
+  // With nothing to walk (an empty list), the arrows scroll the page instead of doing nothing.
+  const step = (delta: number) => {
+    if (!items.length) {
+      scrollPageBy(delta * 0.25);
+      return;
+    }
+    setCursor((c) => Math.min(Math.max(c + delta, 0), items.length - 1));
+  };
+
   useKeys(
     {
-      j: () => setCursor((c) => Math.min(c + 1, items.length - 1)),
-      k: () => setCursor((c) => Math.max(c - 1, 0)),
-      ArrowDown: () => setCursor((c) => Math.min(c + 1, items.length - 1)),
-      ArrowUp: () => setCursor((c) => Math.max(c - 1, 0)),
+      j: () => step(1),
+      k: () => step(-1),
+      ArrowDown: () => step(1),
+      ArrowUp: () => step(-1),
       Enter: () => open(),
       o: () => open(),
       x: () => curThread && toggle(curThread.id, false),

@@ -19,7 +19,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Switch } from "@/components/ui/switch";
 import { Layers } from "lucide-react";
-import { useCardScroll } from "../lib/cardKeys";
 
 const OPTIONS: ScreenStatus[] = ["imbox", "feed", "paper_trail", "screened_out"];
 
@@ -41,7 +40,6 @@ function Property({ label, children, className }: { label: string; children: Rea
 }
 
 export default function ContactDetail() {
-  useCardScroll();
   const { id } = useParams();
   const nav = useNavigate();
   const q = useContact(id);

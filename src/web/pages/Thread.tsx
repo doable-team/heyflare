@@ -16,6 +16,7 @@ import { Avatar, AvatarStack, AccountGlyph } from "../components/Avatar";
 import { ErrorState } from "../components/EmptyState";
 import { useKeys } from "../lib/keys";
 import { useCardScroll } from "../lib/cardKeys";
+import { overlayOpen } from "../lib/focusStore";
 import { escapeHtml, fmtFull, fmtRelative, fmtSize, fmtTime, textToHtml } from "../lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -85,7 +86,7 @@ function AttachmentItem({ a }: { a: { id: string; message_id: string; filename: 
   );
 }
 
-function MessageRow({ m, expanded, onToggle, onReply, onClip, onMarkUnread, isLast }: { m: Message; expanded: boolean; onToggle: () => void; onReply: (mode: ReplyMode, m: Message) => void; onClip: (text: string) => void; onMarkUnread: () => void; isLast: boolean }) {
+function MessageRow({ m, expanded, focused, index, onToggle, onReply, onClip, onMarkUnread, isLast }: { m: Message; expanded: boolean; focused: boolean; index: number; onToggle: () => void; onReply: (mode: ReplyMode, m: Message) => void; onClip: (text: string) => void; onMarkUnread: () => void; isLast: boolean }) {
   const [plain, setPlain] = useState(false);
   const [mounted, setMounted] = useState(expanded);
   useEffect(() => {
@@ -95,7 +96,11 @@ function MessageRow({ m, expanded, onToggle, onReply, onClip, onMarkUnread, isLa
   const who = m.is_from_me ? "You" : m.from.name || m.from.email;
   const recipients = m.to.map((a) => a.name || a.email);
   return (
-    <article className={cn("py-3", !expanded && "cursor-pointer hover:bg-muted rounded-md px-2 -mx-2")} onClick={!expanded ? onToggle : undefined}>
+    <article
+      data-msg-index={index}
+      className={cn("py-3 scroll-mt-20", (!expanded || focused) && "rounded-md px-2 -mx-2", !expanded && "cursor-pointer hover:bg-muted", focused && "ring-1 ring-ring")}
+      onClick={!expanded ? onToggle : undefined}
+    >
       <header className="flex items-start gap-2.5">
         <Avatar email={m.from.email} name={m.from.name} src={m.from.avatar_url} size={24} strong={m.unread} className="mt-px" />
         <div className="flex-1 min-w-0 leading-tight">
@@ -239,6 +244,7 @@ export default function Thread() {
   const account = accountFor(t?.account_id);
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [msgCursor, setMsgCursor] = useState(-1);
   const [reply, setReply] = useState<{ mode: ReplyMode; m: Message; key: number; body_html?: string } | null>(null);
   const summ = useThreadSummary(id ?? "");
   const [renaming, setRenaming] = useState(false);
@@ -267,6 +273,9 @@ export default function Thread() {
     if (noteOpen) setTimeout(() => noteRef.current?.focus(), 30);
   }, [noteOpen]);
 
+  // Nothing is focused until the first arrow press; a new thread starts over.
+  useEffect(() => setMsgCursor(-1), [id]);
+
   const lastIncoming = useMemo(() => (t ? [...t.messages].reverse().find((m) => !m.is_from_me) ?? t.messages[t.messages.length - 1] : undefined), [t]);
   const openReply = (mode: ReplyMode, m?: Message) => {
     const msg = m ?? lastIncoming;
@@ -284,10 +293,37 @@ export default function Thread() {
   const toggleReplyLater = () => t && run({ action: "reply_later", on: !t.reply_later }, t.reply_later ? "Removed from Reply Later" : "Added to Reply Later");
   const toggleSetAside = () => t && run({ action: "set_aside", on: !t.set_aside }, t.set_aside ? "Removed from Set Aside" : "Set aside");
 
-  useCardScroll();
+  useCardScroll(true, { arrows: false });
+
+  const msgCount = t?.messages.length ?? 0;
+  const moveMsg = (delta: number) => {
+    if (overlayOpen() || msgCount === 0) return;
+    setMsgCursor((c) => {
+      const next = c < 0 ? (delta > 0 ? 0 : msgCount - 1) : Math.min(Math.max(c + delta, 0), msgCount - 1);
+      requestAnimationFrame(() => document.querySelector(`[data-msg-index="${next}"]`)?.scrollIntoView({ block: "nearest" }));
+      return next;
+    });
+  };
+  const toggleFocusedMsg = () => {
+    if (overlayOpen() || msgCursor < 0 || !t) return;
+    const m = t.messages[msgCursor];
+    if (!m) return;
+    setExpanded((prev) => {
+      const n = new Set(prev);
+      if (n.has(m.id)) n.delete(m.id);
+      else n.add(m.id);
+      return n;
+    });
+  };
 
   useKeys(
     {
+      ArrowDown: () => moveMsg(1),
+      ArrowUp: () => moveMsg(-1),
+      j: () => moveMsg(1),
+      k: () => moveMsg(-1),
+      Enter: toggleFocusedMsg,
+      o: toggleFocusedMsg,
       r: () => openReply("reply"),
       f: () => openReply("forward"),
       l: toggleReplyLater,
@@ -495,6 +531,8 @@ export default function Thread() {
             <MessageRow
               key={m.id}
               m={m}
+              index={i}
+              focused={i === msgCursor}
               isLast={i === t.messages.length - 1}
               expanded={expanded.has(m.id)}
               onToggle={() =>

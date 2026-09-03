@@ -6,6 +6,8 @@ import { cn } from "@/lib/utils";
 import { useScreener, useScreenerDecide, type ScreenerSender } from "../api";
 import { useAccount } from "../context/AccountContext";
 import { useKeys } from "../lib/keys";
+import { overlayOpen, useFocusRegion } from "../lib/focusStore";
+import { scrollPageBy } from "../lib/cardKeys";
 import { fmtTime } from "../lib/format";
 import { ConnectGmailCard } from "./Imbox";
 import { Avatar, AccountGlyph } from "../components/Avatar";
@@ -37,6 +39,7 @@ function reason(s: ScreenerSender): { text: string; icon: React.ReactNode } {
 
 function SenderCard({
   s,
+  index,
   focused,
   leaving,
   target,
@@ -45,6 +48,7 @@ function SenderCard({
   onFocus,
 }: {
   s: ScreenerSender;
+  index: number;
   focused: boolean;
   leaving: "yes" | "no" | null;
   target: Target;
@@ -60,10 +64,11 @@ function SenderCard({
   const acct = accountFor(s.contact.account_id);
   return (
     <article
+      data-screener-index={index}
       onMouseEnter={onFocus}
       onClick={onFocus}
       className={cn(
-        "relative flex flex-col min-w-0 rounded-md bg-muted/40 transition-opacity duration-100",
+        "relative flex flex-col min-w-0 rounded-md bg-muted/40 scroll-mt-20 transition-opacity duration-100",
         focused && "ring-1 ring-border",
         leaving && "opacity-0",
       )}
@@ -180,19 +185,30 @@ export default function Screener() {
   };
 
   const current = senders[cursor];
+  const region = useFocusRegion();
+  const move = (delta: number) => {
+    if (overlayOpen()) return;
+    setCursor((c) => {
+      const next = Math.min(Math.max(c + delta, 0), senders.length - 1);
+      // Nowhere left to go: let the arrows scroll the page instead of doing nothing.
+      if (next === c) scrollPageBy(delta * 0.25);
+      else requestAnimationFrame(() => document.querySelector(`[data-screener-index="${next}"]`)?.scrollIntoView({ block: "nearest" }));
+      return next;
+    });
+  };
   useKeys(
     {
-      j: () => setCursor((c) => Math.min(c + 1, senders.length - 1)),
-      k: () => setCursor((c) => Math.max(c - 1, 0)),
-      ArrowDown: () => setCursor((c) => Math.min(c + 1, senders.length - 1)),
-      ArrowUp: () => setCursor((c) => Math.max(c - 1, 0)),
+      j: () => move(1),
+      k: () => move(-1),
+      ArrowDown: () => move(1),
+      ArrowUp: () => move(-1),
       y: () => current && act(current, targetFor(current)),
       n: () => current && act(current, "screened_out"),
       "1": () => current && setTargets((t) => ({ ...t, [current.contact.id]: "imbox" })),
       "2": () => current && setTargets((t) => ({ ...t, [current.contact.id]: "feed" })),
       "3": () => current && setTargets((t) => ({ ...t, [current.contact.id]: "paper_trail" })),
     },
-    senders.length > 0,
+    senders.length > 0 && region === "content",
   );
 
   if (accounts.length === 0) return <ConnectGmailCard />;
@@ -248,6 +264,7 @@ export default function Screener() {
               <SenderCard
                 key={x.contact.id}
                 s={x}
+                index={i}
                 focused={i === cursor}
                 leaving={leaving[x.contact.id] ?? null}
                 target={targetFor(x)}

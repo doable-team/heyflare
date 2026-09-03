@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useCardScroll } from "../lib/cardKeys";
 
 export const STATUS_META: Record<ScreenStatus, { label: string; short: string; icon: React.ReactNode }> = {
   pending: { label: "In Screener", short: "Screener", icon: <Shield /> },
@@ -111,6 +112,7 @@ function Rows({ list, multi }: { list: Contact[]; multi: boolean }) {
 }
 
 export default function Contacts() {
+  useCardScroll();
   const [q, setQ] = useState("");
   const { multi } = useAccount();
   const res = useContacts(q);

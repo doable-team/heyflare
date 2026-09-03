@@ -10,6 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useCardScroll } from "../lib/cardKeys";
 
 /** Strictly grayscale label shades (the "color" field stores one of these). */
 export const LABEL_SHADES = ["#37352f", "#5f5b54", "#7d7972", "#9b978f", "#b5b1a9", "#cfcbc3", "#e2dfd8", "#f1efe9"];
@@ -100,6 +101,7 @@ function LabelRow({ l }: { l: Label }) {
 }
 
 export default function Labels() {
+  useCardScroll();
   const q = useLabels();
   const { create } = useLabelMutations();
   const [name, setName] = useState("");
