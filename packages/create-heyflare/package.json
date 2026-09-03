@@ -1,0 +1,22 @@
+{
+  "name": "create-heyflare",
+  "version": "0.1.0",
+  "description": "Scaffold and deploy heyflare — a self-hosted HEY-style email client with a built-in AI agent, on Cloudflare.",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "create-heyflare": "bin.mjs" },
+  "files": ["bin.mjs", "lib/", "template/", "README.md"],
+  "engines": { "node": ">=20" },
+  "repository": { "type": "git", "url": "https://github.com/doable-team/heyflare", "directory": "packages/create-heyflare" },
+  "homepage": "https://github.com/doable-team/heyflare",
+  "keywords": ["heyflare", "email", "hey", "cloudflare", "workers", "gmail", "ai", "agent", "create"],
+  "scripts": {
+    "sync-template": "node scripts/sync-template.mjs",
+    "prepack": "node scripts/sync-template.mjs",
+    "test": "node scripts/test.mjs"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.11.0",
+    "picocolors": "^1.1.1"
+  }
+}

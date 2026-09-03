@@ -48,6 +48,19 @@ lives in a resizable side panel and can see the thread you're reading.
 
 Cloudflare Workers (Hono) + D1 · React 19 + Vite + Tailwind v4 + shadcn/ui · Gmail REST API · postal-mime for inbound mail.
 
+## Install with npm
+
+```sh
+npm create heyflare@latest my-mail
+```
+
+A short wizard copies the app into `my-mail`, installs dependencies and walks you through the Cloudflare deploy: Wrangler
+login, a D1 database, Worker name and hostname (`*.workers.dev` or a custom domain), optional Google OAuth secrets, then
+build + deploy. Migrations run on first request. Redeploy later with `npx create-heyflare deploy` (or `npm run deploy`).
+
+To update, run `npm create heyflare@latest` into a new folder and copy your `wrangler.local.jsonc` across — or use the
+GitHub fork path below to pull changes with git.
+
 ## One-click deploy
 
 Click **Deploy to Cloudflare** above. Cloudflare copies this repo into your GitHub/GitLab account, creates the Worker and a
