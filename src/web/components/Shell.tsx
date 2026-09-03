@@ -309,7 +309,7 @@ function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon" className="border-r-0">
-      <SidebarHeader data-tauri-drag-region={isNative || undefined} className={cn("gap-1 p-2", isNative && "pt-7")}>
+      <SidebarHeader data-tauri-drag-region={isNative || undefined} className={cn("gap-1 p-2", isNative && "pt-10")}>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton size="lg" className="h-9 data-[state=open]:bg-sidebar-accent group-data-[collapsible=icon]:!p-1">
