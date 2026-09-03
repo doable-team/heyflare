@@ -6,3 +6,4 @@ dist
 wrangler.local.jsonc
 .env
 *.local
+.DS_Store
