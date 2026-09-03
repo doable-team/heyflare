@@ -19,6 +19,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Kbd } from "@/components/ui/kbd";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 export interface ComposerInitial {
   draft_id?: string;
@@ -137,6 +138,7 @@ export const Composer = forwardRef<ComposerHandle, { initial?: ComposerInitial; 
   const [showQuote, setShowQuote] = useState(false);
   const [draftId, setDraftId] = useState(initial.draft_id);
   const [busy, setBusy] = useState(false);
+  const [ask, setAsk] = useState<null | "discard" | "subject">(null);
   const [dragging, setDragging] = useState(false);
   const [bodyVersion, setBodyVersion] = useState(0);
   const [save, setSave] = useState<SaveState>({ kind: "idle" });
@@ -283,9 +285,13 @@ export const Composer = forwardRef<ComposerHandle, { initial?: ComposerInitial; 
     return true;
   };
 
-  const doSend = () => {
+  const doSend = (skipSubjectCheck = false) => {
     if (!validate()) return;
-    if (!subject.trim() && !isReply && !confirm("Send without a subject?")) return;
+    // The app's webview blocks window.confirm(), so ask with a real dialog instead.
+    if (!skipSubjectCheck && !subject.trim() && !isReply) {
+      setAsk("subject");
+      return;
+    }
     const undo = user?.settings?.undoSendSeconds ?? 10;
     dirty.current = false;
     queueSend(payload(), undo);
@@ -305,11 +311,17 @@ export const Composer = forwardRef<ComposerHandle, { initial?: ComposerInitial; 
       setBusy(false);
     }
   };
-  const discard = async () => {
-    if (!isEmpty() && !confirm("Discard this message?")) return;
+  const reallyDiscard = () => {
     dirty.current = false;
     if (draftId) drafts.remove.mutate(draftId);
     onCancel?.();
+  };
+  const discard = () => {
+    if (isEmpty()) {
+      reallyDiscard();
+      return;
+    }
+    setAsk("discard");
   };
   useImperativeHandle(ref, () => ({
     send: () => doSend(),
@@ -540,7 +552,7 @@ export const Composer = forwardRef<ComposerHandle, { initial?: ComposerInitial; 
           <TooltipContent>{isEmpty() ? "Close" : "Discard"}</TooltipContent>
         </Tooltip>
         <ButtonGroup className="ml-1">
-          <Button onClick={doSend} disabled={busy || !account} title="Send (⌘↵)">
+          <Button onClick={() => doSend()} disabled={busy || !account} title="Send (⌘↵)">
             <Send /> Send
           </Button>
           <Popover open={laterOpen} onOpenChange={setLaterOpen}>
@@ -556,6 +568,29 @@ export const Composer = forwardRef<ComposerHandle, { initial?: ComposerInitial; 
           </Popover>
         </ButtonGroup>
       </div>
+      <AlertDialog open={ask !== null} onOpenChange={(o) => !o && setAsk(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{ask === "discard" ? "Discard this message?" : "Send without a subject?"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {ask === "discard" ? "The draft is deleted and the text is gone." : "The recipient will see “(no subject)”."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{ask === "discard" ? "Keep writing" : "Add a subject"}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const which = ask;
+                setAsk(null);
+                if (which === "discard") reallyDiscard();
+                else doSend(true);
+              }}
+            >
+              {ask === "discard" ? "Discard" : "Send"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 });
