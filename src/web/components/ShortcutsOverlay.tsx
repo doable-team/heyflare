@@ -8,7 +8,7 @@ const GROUPS: { title: string; keys: [string, string][] }[] = [
   },
   {
     title: "Go to",
-    keys: [["⌘K", "Search & commands"], ["⌘B", "Toggle sidebar"], ["⌘J", "Assistant"]],
+    keys: [["⌘K", "Search & commands"], ["⌘B", "Toggle sidebar"], ["⌘J", "Assistant (open / close)"]],
   },
   {
     title: "Lists",

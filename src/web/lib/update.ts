@@ -162,3 +162,57 @@ export function useUpdateCheck(): UpdateInfo & { dismiss: () => void } {
     },
   };
 }
+
+// ---------- Reload when the server ships a new build ----------
+
+/** Is anything in flight that a reload would throw away? */
+function busy(): boolean {
+  const el = document.activeElement as HTMLElement | null;
+  if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return true;
+  return !!document.querySelector('[role="dialog"],[role="alertdialog"],[data-slot="sheet-content"],[data-assistant-streaming="1"]');
+}
+
+/**
+ * The app is served from the same Worker that reports its build. When a deploy lands, the running page is
+ * stale: reload it the next time the window is focused and nothing would be lost. The Mac app benefits most,
+ * since it stays open for days.
+ */
+export function installBuildWatcher() {
+  let boot: string | null = null;
+  let checking = false;
+  let last = 0;
+
+  const read = async (): Promise<string | null> => {
+    try {
+      const r = await fetch("/api/version", { credentials: "include", cache: "no-store" });
+      if (!r.ok) return null;
+      const j = (await r.json()) as BuildInfo;
+      return `${j.version}@${j.commit}`;
+    } catch {
+      return null;
+    }
+  };
+
+  const check = async () => {
+    if (checking || document.visibilityState !== "visible") return;
+    if (Date.now() - last < 60_000) return;
+    last = Date.now();
+    checking = true;
+    try {
+      const now = await read();
+      if (!now) return;
+      if (boot == null) {
+        boot = now;
+        return;
+      }
+      if (now !== boot && !busy()) location.reload();
+    } finally {
+      checking = false;
+    }
+  };
+
+  void check();
+  window.addEventListener("focus", check);
+  document.addEventListener("visibilitychange", check);
+  window.setInterval(check, 10 * 60_000);
+}

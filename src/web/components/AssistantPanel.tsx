@@ -70,11 +70,12 @@ export function AssistantPanel() {
     }
   }, [st.open, current?.id]);
 
-  // Escape closes when focus is inside the panel.
+  // ⌘J closes the panel from anywhere, including while typing in it (Shell binds it to open).
   useEffect(() => {
     if (!st.open) return;
     const fn = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && panelRef.current?.contains(document.activeElement)) {
+      if (e.key.toLowerCase() === "j" && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
         e.stopPropagation();
         assistant.close();
       }
@@ -206,9 +207,14 @@ export function AssistantPanel() {
           <TooltipContent>New chat</TooltipContent>
         </Tooltip>
         
-        <Button size="icon-sm" variant="ghost" className="text-muted-foreground" aria-label="Close" onClick={() => assistant.close()}>
-          <X />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button size="icon-sm" variant="ghost" className="text-muted-foreground" aria-label="Close" onClick={() => assistant.close()}>
+              <X />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Close <Kbd className="ml-1">⌘J</Kbd></TooltipContent>
+        </Tooltip>
       </div>
 
       {/* body */}
