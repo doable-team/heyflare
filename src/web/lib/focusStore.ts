@@ -38,5 +38,10 @@ export function useFocusRegion(): FocusRegion {
 
 /** True while a menu, dialog, popover or listbox is open — arrow keys belong to it, not to us. */
 export function overlayOpen(): boolean {
-  return !!document.querySelector('[role="menu"],[role="dialog"],[role="alertdialog"],[role="listbox"],[data-slot="popover-content"]');
+  // The assistant panel is a dialog for screen readers but not a modal: arrows still work around it.
+  const nodes = document.querySelectorAll('[role="menu"],[role="dialog"],[role="alertdialog"],[role="listbox"],[data-slot="popover-content"]');
+  for (const n of nodes) {
+    if (!(n as HTMLElement).closest("[data-assistant-panel]")) return true;
+  }
+  return false;
 }

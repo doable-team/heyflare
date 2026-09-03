@@ -177,8 +177,7 @@ export function AssistantChat({
   context = [],
   onRemoveContext,
   onAddContext,
-  autoFocus,
-}: {
+  autoFocus, onClose }: {
   conversationId?: string;
   onConversationId: (id: string) => void;
   compact?: boolean;
@@ -187,8 +186,7 @@ export function AssistantChat({
   onRemoveContext?: (id: string) => void;
   /** Opens the thread picker ("+" button and typing "@"). */
   onAddContext?: () => void;
-  autoFocus?: boolean;
-}) {
+  autoFocus?: boolean; onClose?: () => void }) {
   const settings = useAiSettings();
   const conv = useAiConversation(conversationId);
   const qc = useQueryClient();
@@ -376,11 +374,12 @@ export function AssistantChat({
                 send(input);
                 return;
               }
-              // Left from an empty box steps back out to the mail list.
+              // Left from an empty box leaves the assistant: close it and hand focus back to the list.
               if (e.key === "ArrowLeft" && !input) {
                 e.preventDefault();
                 (e.target as HTMLTextAreaElement).blur();
                 focus.toContent();
+                if (onClose) onClose();
               }
             }}
             rows={Math.min(6, Math.max(1, input.split("\n").length))}

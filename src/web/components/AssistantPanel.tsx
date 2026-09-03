@@ -110,6 +110,7 @@ export function AssistantPanel() {
   return (
     <div
       ref={panelRef}
+      data-assistant-panel=""
       role="dialog"
       aria-label="Assistant"
       className={cn(
@@ -220,6 +221,7 @@ export function AssistantPanel() {
       {/* body */}
       <div className="flex-1 min-h-0 relative">
         <AssistantChat
+          onClose={() => assistant.close()}
           conversationId={st.conversationId ?? undefined}
           onConversationId={(id) => assistant.setConversation(id)}
           compact

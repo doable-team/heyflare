@@ -290,6 +290,7 @@ function AppSidebar() {
 
   /* ---- arrow-key focus: sidebar │ content │ assistant ---- */
   const region = useFocusRegion();
+  const assistantState = useAssistant();
   const [focusIdx, setFocusIdx] = useState(0);
   const flatNav = useMemo(
     () => [...primary, ...trays, ...library, ...(moreExpanded ? more : [])],
@@ -320,6 +321,12 @@ function AppSidebar() {
   useKeys({
     ArrowLeft: () => {
       if (!arrowsOk()) return;
+      // Mirror of ArrowRight: leaving the assistant closes it, then content steps into the sidebar.
+      if (assistantState.open && region !== "sidebar") {
+        assistant.close();
+        focus.toContent();
+        return;
+      }
       if (region === "content") focus.toSidebar();
     },
     ArrowRight: () => {
