@@ -9,6 +9,7 @@ import { useCompose } from "../context/ComposeContext";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ContextChip } from "../lib/assistantStore";
+import { focus } from "../lib/focusStore";
 
 /* ---------- rendering helpers ---------- */
 
@@ -356,6 +357,7 @@ export function AssistantChat({
           )}
           <textarea
             ref={inputRef}
+            data-assistant-input
             autoFocus={autoFocus}
             value={input}
             onChange={(e) => {
@@ -372,6 +374,13 @@ export function AssistantChat({
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 send(input);
+                return;
+              }
+              // Left from an empty box steps back out to the mail list.
+              if (e.key === "ArrowLeft" && !input) {
+                e.preventDefault();
+                (e.target as HTMLTextAreaElement).blur();
+                focus.toContent();
               }
             }}
             rows={Math.min(6, Math.max(1, input.split("\n").length))}

@@ -125,6 +125,12 @@ A native macOS app (Tauri 2, WebKit, ~10 MB) lives in [`apps/mac`](apps/mac). It
 native menu bar and shortcuts, dock badge, notifications, external links in your browser, and auto-updates. Download the
 DMG from [Releases](https://github.com/doable-team/heyflare/releases) or build it yourself (`cd apps/mac && npm install && npm run build`).
 
+Downloaded builds aren't notarized yet, so macOS may say the app is "damaged". Clear the quarantine flag once:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/heyflare.app
+```
+
 ## Updating
 
 heyflare tells you when a new version is out: an **Update available** row appears at the bottom of the sidebar, and the

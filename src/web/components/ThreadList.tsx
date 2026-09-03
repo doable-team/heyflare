@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import type { Bundle, ThreadSummary } from "@shared/types";
 import { useBulkAction, useBundleMutations, type ThreadAction } from "../api";
 import { useKeys } from "../lib/keys";
+import { useFocusRegion } from "../lib/focusStore";
 import { monthKey } from "../lib/format";
 import { BulkBar } from "./BulkBar";
 import { BundleRow } from "./BundleRow";
@@ -67,6 +68,7 @@ export function ThreadList({
   const [leaving, setLeaving] = useState<Set<string>>(new Set());
   const lastClick = useRef<string | null>(null);
   const nav = useNavigate();
+  const region = useFocusRegion();
   const bulk = useBulkAction();
   const { toast } = useToast();
   const bundleM = useBundleMutations();
@@ -144,7 +146,8 @@ export function ThreadList({
       u: () => act(targets(), { action: "mark_unread" }, undefined, false),
       Escape: () => setSelected(new Set()),
     },
-    keysEnabled,
+    // While the sidebar owns the arrows, the list stays put.
+    keysEnabled && region === "content",
   );
 
   useEffect(() => {

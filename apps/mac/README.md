@@ -8,6 +8,20 @@ Mac shortcuts (⌘1–9 to navigate, ⌘N compose, ⌘K search, ⌘J assistant, 
 mail + Screener, system notifications for new mail while the window is in the background, external links opening in your
 browser, remembered window size/position, persistent login, and auto-updates from GitHub Releases.
 
+## "heyflare is damaged and can't be opened"
+
+macOS shows this for any app that isn't notarized once a browser has quarantined the download. The build is
+fine — clear the quarantine flag after dragging it to Applications:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/heyflare.app
+```
+
+Then open it normally. (Right-click → Open does **not** work for ad-hoc signed apps on Apple Silicon; the
+`xattr` command is the reliable way.) Builds you compile yourself never carry the flag.
+
+To ship without this step, sign and notarize with an Apple Developer ID — see "Signing and notarizing" below.
+
 ## Run / build
 
 ```sh
