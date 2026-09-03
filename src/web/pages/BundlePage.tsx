@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Check, Layers, MailOpen, Ungroup } from "lucide-react";
 import { toast } from "sonner";
 import { useBundle, useBundleMutations, type FeedThread } from "../api";
+import { useKeys } from "../lib/keys";
 import { BundleAvatar } from "../components/Avatar";
 import { ErrorState } from "../components/EmptyState";
 import { FeedCard } from "./Feed";
@@ -40,6 +41,17 @@ export default function BundlePage() {
       });
     }, 120);
   };
+
+  // Escape goes back, like the thread view (open menus/dialogs consume it first).
+  useKeys(
+    {
+      Escape: () => {
+        if (document.querySelector('[role="menu"],[role="dialog"],[role="alertdialog"],[role="listbox"],[data-slot="popover-content"]')) return;
+        nav(-1);
+      },
+    },
+    !confirm,
+  );
 
   if (q.error) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   if (!q.data || !b) return <div className="max-w-2xl mx-auto px-2 space-y-3"><Skeleton className="h-8 w-48" /><Skeleton className="h-40" /><Skeleton className="h-40" /></div>;
