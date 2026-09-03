@@ -271,6 +271,40 @@ fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     MenuBuilder::new(app).items(&[&app_menu, &file, &edit, &view, &go, &window, &help]).build()
 }
 
+/// The main window is built here (not from config) so it can carry a navigation guard: any attempt
+/// to leave the configured server — a link inside an email, a `target=_blank` the webview turned
+/// into a navigation — is handed to the default browser and blocked. This needs no IPC, so it works
+/// even where the JS bridge isn't available on the remote page.
+fn build_main_window(app: &AppHandle, url: WebviewUrl) -> tauri::Result<WebviewWindow> {
+    tauri::WebviewWindowBuilder::new(app, "main", url)
+        .title("heyflare")
+        .inner_size(1280.0, 820.0)
+        .min_inner_size(900.0, 600.0)
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .traffic_light_position(tauri::LogicalPosition::new(16.0, 18.0))
+        .disable_drag_drop_handler()
+        .on_navigation({
+            let app = app.clone();
+            move |url| {
+                let scheme = url.scheme();
+                if scheme == "tauri" || scheme == "about" || scheme == "data" || scheme == "blob" {
+                    return true;
+                }
+                if let Some(server) = stored_server(&app) {
+                    if server.trim_end_matches('/') == url.origin().ascii_serialization() {
+                        return true;
+                    }
+                }
+                if matches!(scheme, "http" | "https" | "mailto" | "tel") {
+                    let _ = app.opener().open_url(url.to_string(), None::<&str>);
+                }
+                false
+            }
+        })
+        .build()
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState { zoom: Mutex::new(1.0), pending_url: Mutex::new(None) })
@@ -312,9 +346,14 @@ pub fn run() {
                 }
             });
             // First launch shows the bundled welcome page; afterwards go straight to the server.
-            if let Some(server) = stored_server(&handle) {
-                navigate_to_server(&handle, &server);
-            }
+            let start = match stored_server(&handle) {
+                Some(server) => {
+                    grant_remote(&handle, &server);
+                    url::Url::parse(&format!("{server}/")).map(WebviewUrl::External).unwrap_or_else(|_| WebviewUrl::App("index.html".into()))
+                }
+                None => WebviewUrl::App("index.html".into()),
+            };
+            build_main_window(&handle, start)?;
             let _ = DEFAULT_SERVER;
             Ok(())
         })

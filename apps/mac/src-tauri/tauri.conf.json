@@ -8,28 +8,17 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "label": "main",
-        "title": "heyflare",
-        "url": "index.html",
-        "width": 1280,
-        "height": 820,
-        "minWidth": 900,
-        "minHeight": 600,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true,
-        "trafficLightPosition": { "x": 16, "y": 18 },
-        "dragDropEnabled": false
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "category": "Productivity",
     "icon": [
       "icons/32x32.png",
@@ -42,16 +31,27 @@
     "macOS": {
       "minimumSystemVersion": "12.0",
       "dmg": {
-        "appPosition": { "x": 180, "y": 170 },
-        "applicationFolderPosition": { "x": 480, "y": 170 },
-        "windowSize": { "width": 660, "height": 400 }
+        "appPosition": {
+          "x": 180,
+          "y": 170
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 170
+        },
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        }
       }
     }
   },
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMwRTNDQUQwRTg4MjczNzIKUldSeWM0TG8wTXJqTUE4YXBsenBGamhldGFnaVRvd2ZMR1ptajAvYzV5K2lKTFp4WWIzRXErWGUK",
-      "endpoints": ["https://github.com/doable-team/heyflare/releases/latest/download/latest.json"]
+      "endpoints": [
+        "https://github.com/doable-team/heyflare/releases/latest/download/latest.json"
+      ]
     }
   }
 }
