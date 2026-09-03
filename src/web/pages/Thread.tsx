@@ -15,6 +15,7 @@ import { bucketName } from "../components/BulkBar";
 import { Avatar, AvatarStack, AccountGlyph } from "../components/Avatar";
 import { ErrorState } from "../components/EmptyState";
 import { useKeys } from "../lib/keys";
+import { useCardScroll } from "../lib/cardKeys";
 import { escapeHtml, fmtFull, fmtRelative, fmtSize, fmtTime, textToHtml } from "../lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -282,6 +283,8 @@ export default function Thread() {
 
   const toggleReplyLater = () => t && run({ action: "reply_later", on: !t.reply_later }, t.reply_later ? "Removed from Reply Later" : "Added to Reply Later");
   const toggleSetAside = () => t && run({ action: "set_aside", on: !t.set_aside }, t.set_aside ? "Removed from Set Aside" : "Set aside");
+
+  useCardScroll();
 
   useKeys(
     {

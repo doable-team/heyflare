@@ -10,6 +10,7 @@ import { fmtSize, fmtDate } from "../lib/format";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useCardScroll } from "../lib/cardKeys";
 
 export type FileKind = "image" | "pdf" | "document" | "slides" | "spreadsheet" | "archive" | "video" | "audio" | "other";
 type Filter = "all" | "image" | "pdf" | "document" | "spreadsheet" | "archive" | "media" | "other";
@@ -109,6 +110,7 @@ const FILTERS: { value: Filter; label: string }[] = [
 ];
 
 export default function FilesPage() {
+  useCardScroll();
   const q = useFiles();
   const [filter, setFilter] = useState<Filter>("all");
   const all = q.data?.pages.flatMap((p) => p.files) ?? [];
