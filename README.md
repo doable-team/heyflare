@@ -63,6 +63,13 @@ After the deploy:
 3. Connect Gmail from the sidebar. Optional secrets: `CF_API_TOKEN` (automatic custom-domain setup), `RESEND_API_KEY`.
 4. Want your own hostname? Add a custom domain under Workers → Settings → Domains & Routes (or a `routes` entry in the config).
 
+### Prefer a fork?
+The button **clones** the repo into your account (Cloudflare's flow can't fork). To keep a link to upstream:
+1. Fork `doable-team/heyflare` on GitHub.
+2. In the Cloudflare dashboard: **Workers & Pages → Create → Import a repository** → pick your fork. Build command `npm run build`, deploy command `npx wrangler deploy`.
+3. Cloudflare provisions the D1 database from `wrangler.jsonc` on first deploy; the app applies migrations itself.
+4. Later, `git pull upstream main` in your fork and push — Workers Builds redeploys.
+
 ## Deploy manually
 
 Prerequisites: a Cloudflare account, Node 20+, and a Google Cloud project.
