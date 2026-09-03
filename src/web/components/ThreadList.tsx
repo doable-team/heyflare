@@ -195,7 +195,7 @@ export function ThreadList({
               key={t.id}
               thread={t}
               selected={selected.has(t.id)}
-              focused={i === cursor}
+              focused={i === cursor && region === "content"}
               onSelect={toggle}
               compact={compact}
               showBucket={showBucket}
