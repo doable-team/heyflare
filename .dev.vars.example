@@ -1,3 +1,4 @@
-# Required for connecting Gmail (Google Cloud → APIs & Services → Credentials → OAuth client ID, Web application)
-GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=your-client-secret
+# Google OAuth client for connecting Gmail (Google Cloud → APIs & Services → Credentials → OAuth client ID, Web application).
+# Leave empty at deploy time if you like — you can add both later under Workers → Settings → Variables and Secrets.
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
