@@ -3,6 +3,10 @@ import { Kbd } from "@/components/ui/kbd";
 
 const GROUPS: { title: string; keys: [string, string][] }[] = [
   {
+    title: "Moving around",
+    keys: [["↑ / ↓", "Move through mail"], ["←", "Jump to the sidebar"], ["→", "Open the Assistant"], ["↵", "Open (sidebar: go there)"], ["esc", "Back to the list"]],
+  },
+  {
     title: "Go to",
     keys: [["1", "Imbox"], ["2", "The Feed"], ["3", "Paper Trail"], ["4", "Screener"], ["5", "Focus & Reply"], ["6", "Set Aside"], ["7", "Bubble Up"], ["8", "Previously Seen"], ["9", "Contacts"], ["⌘K", "Search & commands"], ["⌘B", "Toggle sidebar"]],
   },
@@ -24,7 +28,7 @@ export function ShortcutsOverlay({ open, onClose }: { open: boolean; onClose: ()
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogDescription>The whole app works without a mouse.</DialogDescription>
         </DialogHeader>
-        <div className="grid sm:grid-cols-3 gap-6 pt-1">
+        <div className="grid sm:grid-cols-2 gap-x-8 gap-y-6 pt-1">
           {GROUPS.map((g) => (
             <div key={g.title}>
               <div className="text-xs font-medium text-muted-foreground mb-2">{g.title}</div>

@@ -136,6 +136,15 @@ function Overlays() {
   const nav = useNavigate();
 
   useKeys({
+    "1": () => nav("/"),
+    "2": () => nav("/feed"),
+    "3": () => nav("/paper-trail"),
+    "4": () => nav("/screener"),
+    "5": () => nav("/reply-later"),
+    "6": () => nav("/set-aside"),
+    "7": () => nav("/bubble-up"),
+    "8": () => nav("/previously-seen"),
+    "9": () => nav("/contacts"),
     c: () => openCompose(),
     "/": () => setOverlay({ palette: true }),
     s: () => setOverlay({ palette: true }),
@@ -258,20 +267,20 @@ function AppSidebar() {
   };
 
   const primary: NavItem[] = [
-    { to: "/", label: "Imbox", icon: <Inbox />, count: c?.imbox_new, end: true },
-    { to: "/feed", label: "The Feed", icon: <Rss />, count: c?.feed_new },
-    { to: "/paper-trail", label: "Paper Trail", icon: <FileText />, count: c?.paper_trail_new },
-    { to: "/screener", label: "Screener", icon: <Shield />, count: c?.screener },
+    { to: "/", label: "Imbox", icon: <Inbox />, count: c?.imbox_new, end: true, kbd: "1" },
+    { to: "/feed", label: "The Feed", icon: <Rss />, count: c?.feed_new, kbd: "2" },
+    { to: "/paper-trail", label: "Paper Trail", icon: <FileText />, count: c?.paper_trail_new, kbd: "3" },
+    { to: "/screener", label: "Screener", icon: <Shield />, count: c?.screener, kbd: "4" },
   ];
   const trays: NavItem[] = [
-    { to: "/reply-later", label: "Reply Later", icon: <Clock />, count: c?.reply_later },
-    { to: "/set-aside", label: "Set Aside", icon: <Bookmark />, count: c?.set_aside },
-    { to: "/bubble-up", label: "Bubble Up", icon: <ArrowUpCircle /> },
+    { to: "/reply-later", label: "Reply Later", icon: <Clock />, count: c?.reply_later, kbd: "5" },
+    { to: "/set-aside", label: "Set Aside", icon: <Bookmark />, count: c?.set_aside, kbd: "6" },
+    { to: "/bubble-up", label: "Bubble Up", icon: <ArrowUpCircle />, kbd: "7" },
   ];
   const library: NavItem[] = [
     { to: "/assistant", label: "Assistant", icon: <Sparkles />, kbd: "⌘J" },
-    { to: "/previously-seen", label: "Previously Seen", icon: <Eye /> },
-    { to: "/contacts", label: "Contacts", icon: <Users /> },
+    { to: "/previously-seen", label: "Previously Seen", icon: <Eye />, kbd: "8" },
+    { to: "/contacts", label: "Contacts", icon: <Users />, kbd: "9" },
     { to: "/clips", label: "Clips", icon: <Scissors /> },
     { to: "/collections", label: "Collections", icon: <FolderOpen /> },
     { to: "/files", label: "Files", icon: <Files /> },
@@ -329,7 +338,14 @@ function AppSidebar() {
         if (n) activate(n);
       } else {
         assistant.open();
-        window.setTimeout(() => document.querySelector<HTMLTextAreaElement>("[data-assistant-input]")?.focus(), 60);
+        // The panel mounts a tick later; keep trying briefly, then give up quietly.
+        let tries = 0;
+        const focusInput = () => {
+          const el = document.querySelector<HTMLTextAreaElement>("[data-assistant-input]");
+          if (el && !el.disabled) return el.focus();
+          if (tries++ < 12) window.setTimeout(focusInput, 50);
+        };
+        window.setTimeout(focusInput, 30);
       }
     },
     ArrowDown: () => {
