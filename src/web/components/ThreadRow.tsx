@@ -72,7 +72,7 @@ export function ThreadRow({
       data-thread-id={t.id}
       data-row-id={t.id}
       className={cn(
-        "group relative grid items-center gap-2.5 rounded-md px-2 transition-colors duration-100",
+        "group relative grid items-center gap-2.5 rounded-md px-2 scroll-mt-20 scroll-mb-4 transition-colors duration-100",
         compact ? "grid-cols-[20px_1fr_auto] h-11" : "grid-cols-[20px_1fr_auto] h-14",
         selected ? "bg-accent" : focused ? "bg-muted" : "hover:bg-muted",
         leaving && "row-out",

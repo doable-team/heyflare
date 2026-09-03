@@ -23,7 +23,7 @@ export function BundleRow({ bundle: b, compact, onSeen, leaving, focused }: { bu
     <div
       data-row-id={`b:${b.id}`}
       className={cn(
-        "group relative grid items-center gap-2.5 rounded-md px-2 transition-colors duration-100",
+        "group relative grid items-center gap-2.5 rounded-md px-2 scroll-mt-20 scroll-mb-4 transition-colors duration-100",
         compact ? "grid-cols-[24px_1fr_auto] h-11" : "grid-cols-[24px_1fr_auto] h-14",
         focused ? "bg-muted" : "hover:bg-muted",
         leaving && "row-out",
