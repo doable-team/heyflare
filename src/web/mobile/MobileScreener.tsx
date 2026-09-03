@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Check, FileText, Inbox, Paperclip, Receipt, Rss, ShieldOff, UserRound, X } from "lucide-react";
-import type { ScreenStatus } from "@shared/types";
+import type { DecisionScope, ScreenStatus } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useScreener, useScreenerDecide, type ScreenerSender } from "../api";
 import { useAccount } from "../context/AccountContext";
@@ -33,7 +33,7 @@ function reason(s: ScreenerSender): { text: string; icon: React.ReactNode } {
   return { text: "Probably a person", icon: <UserRound /> };
 }
 
-function Card({ s, target, onTarget, onDecide, leaving }: { s: ScreenerSender; target: Target; onTarget: (t: Target) => void; onDecide: (d: ScreenStatus) => void; leaving: "yes" | "no" | null }) {
+function Card({ s, target, onTarget, onDecide, leaving }: { s: ScreenerSender; target: Target; onTarget: (t: Target) => void; onDecide: (d: ScreenStatus, scope?: DecisionScope) => void; leaving: "yes" | "no" | null }) {
   const { multi, glyphFor, accountFor } = useAccount();
   const nav = useNavigate();
   const swipe = useSwipe({ threshold: 120, onRight: () => onDecide(target), onLeft: () => onDecide("screened_out") });
@@ -102,6 +102,11 @@ function Card({ s, target, onTarget, onDecide, leaving }: { s: ScreenerSender; t
             <Check /> Let them in
           </Button>
         </div>
+        {multi && acct && (
+          <Button variant="ghost" size="sm" className="mt-1 w-full h-10 text-[13px] text-muted-foreground" onClick={() => onDecide(target, "account")}>
+            Just for {acct.email}
+          </Button>
+        )}
       </article>
     </div>
   );
@@ -118,12 +123,12 @@ export default function MobileScreener() {
   const timers = useRef<number[]>([]);
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
   const targetFor = (x: ScreenerSender): Target => targets[x.contact.id] ?? (x.suggestion === "imbox" ? user?.settings?.defaultScreenTarget ?? "imbox" : x.suggestion);
-  const act = (x: ScreenerSender, d: ScreenStatus) => {
+  const act = (x: ScreenerSender, d: ScreenStatus, scope: DecisionScope = "all") => {
     if (leaving[x.contact.id]) return;
     setLeaving((l) => ({ ...l, [x.contact.id]: d === "screened_out" ? "no" : "yes" }));
     timers.current.push(
       window.setTimeout(() => {
-        decide.mutate({ contact_id: x.contact.id, decision: d });
+        decide.mutate({ contact_id: x.contact.id, decision: d, scope });
         setLeaving((l) => {
           const n = { ...l };
           delete n[x.contact.id];
@@ -169,7 +174,7 @@ export default function MobileScreener() {
           {!s.isLoading && waiting === 0 && !s.error && <MobileEmpty icon={<ShieldOff />} title="Nobody at the door." body="Every new sender has been dealt with." />}
           <div className="space-y-3">
             {senders.map((x) => (
-              <Card key={x.contact.id} s={x} target={targetFor(x)} leaving={leaving[x.contact.id] ?? null} onTarget={(t) => setTargets((m) => ({ ...m, [x.contact.id]: t }))} onDecide={(d) => act(x, d)} />
+              <Card key={x.contact.id} s={x} target={targetFor(x)} leaving={leaving[x.contact.id] ?? null} onTarget={(t) => setTargets((m) => ({ ...m, [x.contact.id]: t }))} onDecide={(d, scope) => act(x, d, scope)} />
             ))}
           </div>
         </>

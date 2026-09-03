@@ -140,6 +140,19 @@ export interface Contact {
   bundled: boolean;
 }
 
+/**
+ * One person, merged across every account that has heard from them. Contact rows are per (account, email);
+ * the list and detail views collapse them so someone who writes to three of your addresses is one entry.
+ */
+export interface MergedContact extends Contact {
+  /** True when the accounts disagree about where this person's mail goes. */
+  mixed: boolean;
+  accounts: { account_id: string; contact_id: string; screen_status: ScreenStatus; bundled: boolean }[];
+}
+
+/** Whether a screening / bundling change applies to every connected account, or only the one it came from. */
+export type DecisionScope = "all" | "account";
+
 /** One bundled sender, standing in for all of their threads in a list. */
 export interface Bundle {
   id: string;

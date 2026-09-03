@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Check, PenSquare } from "lucide-react";
-import type { ScreenStatus } from "@shared/types";
+import type { DecisionScope, ScreenStatus } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useContact, useUpdateContact } from "../api";
 import { useAccount } from "../context/AccountContext";
@@ -47,6 +47,7 @@ export default function ContactDetail() {
   const { openCompose } = useCompose();
   const { multi, glyphFor, accountFor } = useAccount();
   const c = q.data?.contact;
+  const [scope, setScope] = useState<DecisionScope>("all");
   const [name, setName] = useState("");
   const [notes, setNotes] = useState("");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
@@ -118,11 +119,12 @@ export default function ContactDetail() {
           <div className="mt-1 flex items-center gap-2 flex-wrap text-sm text-muted-foreground">
             <a href={`mailto:${c.email}`} className="hover:text-foreground">{c.email}</a>
             <Badge variant="outline" className="font-normal text-muted-foreground">{c.email.split("@")[1]}</Badge>
-            {multi && acc && (
-              <span className="inline-flex items-center gap-1 text-xs">
-                <AccountGlyph glyph={glyphFor(c.account_id)} /> {acc.email}
-              </span>
-            )}
+            {multi &&
+              c.accounts.map((a) => (
+                <span key={a.account_id} className="inline-flex items-center gap-1 text-xs">
+                  <AccountGlyph glyph={glyphFor(a.account_id)} /> {accountFor(a.account_id)?.email ?? a.account_id}
+                </span>
+              ))}
           </div>
         </div>
         <Button variant="outline" size="sm" onClick={() => openCompose({ to: [{ email: c.email, name: c.name }] })}>
@@ -137,7 +139,7 @@ export default function ContactDetail() {
           </div>
         </Property>
         <Property label="Mail goes to">
-          <ToggleGroup type="single" size="sm" value={status === "pending" ? "" : status} onValueChange={(v) => v && update.mutate({ id: c.id, screen_status: v as ScreenStatus })} className="flex-wrap">
+          <ToggleGroup type="single" size="sm" value={status === "pending" ? "" : status} onValueChange={(v) => v && update.mutate({ id: c.id, screen_status: v as ScreenStatus, scope })} className="flex-wrap">
             {OPTIONS.map((s) => (
               <ToggleGroupItem key={s} value={s} aria-label={STATUS_META[s].label} className="gap-1.5 text-muted-foreground data-[state=on]:bg-accent data-[state=on]:text-foreground [&>svg]:size-3.5">
                 {STATUS_META[s].icon}
@@ -147,9 +149,26 @@ export default function ContactDetail() {
           </ToggleGroup>
           <p className="mt-1.5 text-[13px] text-muted-foreground">{BLURB[status]}</p>
         </Property>
+        {c.accounts.length > 1 && (
+          <Property label="Applies to">
+            <ToggleGroup type="single" size="sm" value={scope} onValueChange={(v) => v && setScope(v as DecisionScope)} className="flex-wrap">
+              <ToggleGroupItem value="all" className="text-muted-foreground data-[state=on]:bg-accent data-[state=on]:text-foreground">
+                All accounts
+              </ToggleGroupItem>
+              <ToggleGroupItem value="account" className="text-muted-foreground data-[state=on]:bg-accent data-[state=on]:text-foreground">
+                Only {acc?.email ?? "this account"}
+              </ToggleGroupItem>
+            </ToggleGroup>
+            {c.mixed && (
+              <p className="mt-1.5 text-[13px] text-muted-foreground">
+                {c.accounts.map((a) => `${STATUS_META[a.screen_status].label} on ${accountFor(a.account_id)?.email ?? a.account_id}`).join(" · ")}
+              </p>
+            )}
+          </Property>
+        )}
         <Property label="Bundled up">
           <label className={cn("flex items-center gap-3 pt-1.5", status !== "imbox" && status !== "paper_trail" && "opacity-60")}>
-            <Switch checked={c.bundled} disabled={status !== "imbox" && status !== "paper_trail"} onCheckedChange={(on) => update.mutate({ id: c.id, bundled: on })} aria-label="Bundle up this sender" />
+            <Switch checked={c.bundled} disabled={status !== "imbox" && status !== "paper_trail"} onCheckedChange={(on) => update.mutate({ id: c.id, bundled: on, scope })} aria-label="Bundle up this sender" />
             <span className="text-sm inline-flex items-center gap-1.5"><Layers size={14} className="text-muted-foreground" /> {c.bundled ? "Bundled up" : "Not bundled"}</span>
           </label>
           <p className="mt-1.5 text-[13px] text-muted-foreground">

@@ -7,20 +7,29 @@ import type { ScreenStatus } from "@shared/types";
 
 const screener = new Hono<AppEnv>();
 
-/** Re-bucket all threads from a contact after a screening decision. */
-/**
- * Screening decisions are user-wide: deciding for a sender applies to that email across every account the user has
- * connected (contact rows are created where missing), and re-buckets their threads everywhere.
- */
-export async function applyScreenDecision(db: D1Database, accountId: string, contact: ContactRow, decision: ScreenStatus) {
-  const t = now();
-  const bucket = decision === "pending" ? "screener" : decision;
+export type DecisionScope = "all" | "account";
+
+/** Which accounts a decision touches: every account the user has connected, or just this one. */
+async function scopeAccountIds(db: D1Database, accountId: string, scope: DecisionScope): Promise<string[]> {
+  if (scope === "account") return [accountId];
   const siblings = await db
     .prepare(`SELECT id FROM accounts WHERE user_id = (SELECT user_id FROM accounts WHERE id = ?)`)
     .bind(accountId)
     .all<{ id: string }>();
   const ids = siblings.results.map((r) => r.id);
   if (!ids.includes(accountId)) ids.push(accountId);
+  return ids;
+}
+
+/**
+ * Screening decisions are user-wide by default: deciding for a sender applies to that email across every account the
+ * user has connected (contact rows are created where missing), and re-buckets their threads everywhere. Pass
+ * scope "account" to touch only the account the contact row belongs to.
+ */
+export async function applyScreenDecision(db: D1Database, accountId: string, contact: ContactRow, decision: ScreenStatus, scope: DecisionScope = "all") {
+  const t = now();
+  const bucket = decision === "pending" ? "screener" : decision;
+  const ids = await scopeAccountIds(db, accountId, scope);
   const stmts: D1PreparedStatement[] = [];
   for (const id of ids) {
     stmts.push(
@@ -50,15 +59,10 @@ export async function applyScreenDecision(db: D1Database, accountId: string, con
   await db.batch(stmts);
 }
 
-/** Bundle flag is user-wide too: applies to that email's contact rows across every connected account (created where missing). */
-export async function applyBundleFlag(db: D1Database, accountId: string, contact: ContactRow, on: boolean) {
+/** Bundle flag is user-wide too by default; scope "account" limits it to this one account's row. */
+export async function applyBundleFlag(db: D1Database, accountId: string, contact: ContactRow, on: boolean, scope: DecisionScope = "all") {
   const t = now();
-  const siblings = await db
-    .prepare(`SELECT id FROM accounts WHERE user_id = (SELECT user_id FROM accounts WHERE id = ?)`)
-    .bind(accountId)
-    .all<{ id: string }>();
-  const ids = siblings.results.map((r) => r.id);
-  if (!ids.includes(accountId)) ids.push(accountId);
+  const ids = await scopeAccountIds(db, accountId, scope);
   const stmts: D1PreparedStatement[] = ids.map((id) =>
     db
       .prepare(
@@ -140,12 +144,12 @@ screener.get("/", async (c) => {
 
 screener.post("/decide", async (c) => {
   const db = c.env.DB;
-  const body = await c.req.json<{ contact_id?: string; decision?: ScreenStatus }>().catch(() => ({}) as any);
+  const body = await c.req.json<{ contact_id?: string; decision?: ScreenStatus; scope?: DecisionScope }>().catch(() => ({}) as any);
   const decision = body.decision;
   if (!decision || !["imbox", "feed", "paper_trail", "screened_out"].includes(decision)) return c.json({ error: "invalid_decision" }, 400);
   const contact = await ownedRow<ContactRow>(db, "contacts", body.contact_id ?? "", c.get("user").id);
   if (!contact) return c.json({ error: "not_found" }, 404);
-  await applyScreenDecision(db, contact.account_id, contact, decision);
+  await applyScreenDecision(db, contact.account_id, contact, decision, body.scope === "account" ? "account" : "all");
   return c.json({ ok: true });
 });
 

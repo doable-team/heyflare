@@ -247,7 +247,7 @@ export function useScreener(enabled = true) {
 export function useScreenerDecide() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (p: { contact_id: string; decision: T.ScreenStatus }) => api.post<{ ok: boolean }>("/api/screener/decide", p),
+    mutationFn: (p: { contact_id: string; decision: T.ScreenStatus; scope?: T.DecisionScope }) => api.post<{ ok: boolean }>("/api/screener/decide", p),
     onMutate: ({ contact_id }) => {
       qc.setQueryData<{ senders: ScreenerSender[] }>(keys.screener, (old) => (old ? { senders: old.senders.filter((s) => s.contact.id !== contact_id) } : old));
     },
@@ -263,7 +263,7 @@ export function useScreenedOut() {
 
 // ---------- Contacts ----------
 export function useContacts(q: string, enabled = true) {
-  return useQuery({ queryKey: keys.contacts(q), queryFn: () => api.get<T.Contact[]>(`/api/contacts${qs({ q })}`), enabled, staleTime: 30_000 });
+  return useQuery({ queryKey: keys.contacts(q), queryFn: () => api.get<T.MergedContact[]>(`/api/contacts${qs({ q })}`), enabled, staleTime: 30_000 });
 }
 export interface Suggestion { email: string; name: string; avatar_url: string }
 export function useSuggest(q: string, enabled = true) {
@@ -272,14 +272,14 @@ export function useSuggest(q: string, enabled = true) {
 export function useContact(id: string | undefined, bucket?: string) {
   return useQuery({
     queryKey: [...keys.contact(id ?? ""), bucket ?? ""],
-    queryFn: () => api.get<{ contact: T.Contact; threads: T.ThreadSummary[] }>(`/api/contacts/${id}${qs({ bucket })}`),
+    queryFn: () => api.get<{ contact: T.MergedContact; threads: T.ThreadSummary[] }>(`/api/contacts/${id}${qs({ bucket })}`),
     enabled: !!id,
   });
 }
 export function useUpdateContact() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; notes?: string; screen_status?: T.ScreenStatus; bundled?: boolean }) => api.patch<T.Contact>(`/api/contacts/${id}`, body),
+    mutationFn: ({ id, ...body }: { id: string; name?: string; notes?: string; screen_status?: T.ScreenStatus; bundled?: boolean; scope?: T.DecisionScope }) => api.patch<T.MergedContact>(`/api/contacts/${id}`, body),
     onSuccess: (_d, v) => {
       qc.invalidateQueries({ queryKey: ["contacts"] });
       qc.invalidateQueries({ queryKey: keys.contact(v.id) });

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { FileText, Inbox, Rss, Search, Shield, ShieldOff } from "lucide-react";
-import type { Contact, ScreenStatus } from "@shared/types";
+import type { MergedContact, ScreenStatus } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useContacts, useUpdateContact } from "../api";
 import { useAccount } from "../context/AccountContext";
@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useCardScroll } from "../lib/cardKeys";
 
 export const STATUS_META: Record<ScreenStatus, { label: string; short: string; icon: React.ReactNode }> = {
@@ -35,7 +36,7 @@ export function StatusChip({ s, small }: { s: ScreenStatus; small?: boolean }) {
 const CHOICES: ScreenStatus[] = ["imbox", "feed", "paper_trail", "screened_out"];
 
 /** Inline "where their mail goes" property, Notion-style: a quiet select that mutates on change. */
-export function StatusSelect({ c, className }: { c: Contact; className?: string }) {
+export function StatusSelect({ c, className }: { c: MergedContact; className?: string }) {
   const update = useUpdateContact();
   if (c.screen_status === "pending") {
     return (
@@ -63,7 +64,7 @@ export function StatusSelect({ c, className }: { c: Contact; className?: string 
   );
 }
 
-function Rows({ list, multi }: { list: Contact[]; multi: boolean }) {
+function Rows({ list, multi }: { list: MergedContact[]; multi: boolean }) {
   const { glyphFor, accountFor } = useAccount();
   return (
     <Table className="table-fixed">
@@ -71,41 +72,59 @@ function Rows({ list, multi }: { list: Contact[]; multi: boolean }) {
         <TableRow className="border-0 hover:bg-transparent">
           <TableHead className="h-7 pl-2 text-xs font-normal text-muted-foreground w-[46%] sm:w-[28%]">Name</TableHead>
           <TableHead className="hidden sm:table-cell h-7 text-xs font-normal text-muted-foreground">Email</TableHead>
-          {multi && <TableHead className="hidden md:table-cell h-7 w-[12%] text-xs font-normal text-muted-foreground">Account</TableHead>}
-          <TableHead className="h-7 w-[34%] sm:w-[20%] text-xs font-normal text-muted-foreground">Goes to</TableHead>
+          {multi && <TableHead className="hidden md:table-cell h-7 w-[12%] text-xs font-normal text-muted-foreground">Accounts</TableHead>}
+          <TableHead className="h-7 w-[34%] sm:w-[24%] text-xs font-normal text-muted-foreground">Goes to</TableHead>
           <TableHead className="hidden sm:table-cell h-7 w-[11%] pr-2 text-right text-xs font-normal text-muted-foreground">Last</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {list.map((c) => {
-          const acc = accountFor(c.account_id);
-          return (
-            <TableRow key={c.id} className="border-0 hover:bg-muted h-10">
-              <TableCell className="py-0 pl-2">
-                <Link to={`/contacts/${c.id}`} className="flex items-center gap-2.5 min-w-0 h-10">
-                  <Avatar email={c.email} name={c.name} src={c.avatar_url} size={20} />
-                  <span className="truncate text-sm font-medium">{c.name || c.email.split("@")[0]}</span>
-                  {c.message_count > 0 && <span className="text-xs text-tertiary tnum shrink-0">{c.message_count}</span>}
-                </Link>
+        {list.map((c) => (
+          <TableRow key={c.email} className="border-0 hover:bg-muted h-10">
+            <TableCell className="py-0 pl-2">
+              <Link to={`/contacts/${c.id}`} className="flex items-center gap-2.5 min-w-0 h-10">
+                <Avatar email={c.email} name={c.name} src={c.avatar_url} size={20} />
+                <span className="truncate text-sm font-medium">{c.name || c.email.split("@")[0]}</span>
+                {c.message_count > 0 && <span className="text-xs text-tertiary tnum shrink-0">{c.message_count}</span>}
+              </Link>
+            </TableCell>
+            <TableCell className="hidden sm:table-cell py-0 text-muted-foreground truncate">
+              <Link to={`/contacts/${c.id}`} className="block truncate">{c.email}</Link>
+            </TableCell>
+            {multi && (
+              <TableCell className="hidden md:table-cell py-0 text-xs text-muted-foreground">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex items-center gap-1">
+                      {c.accounts.slice(0, 4).map((a) => (
+                        <AccountGlyph key={a.account_id} glyph={glyphFor(a.account_id)} />
+                      ))}
+                      {c.accounts.length > 4 && <span className="tnum">+{c.accounts.length - 4}</span>}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {c.accounts.map((a) => accountFor(a.account_id)?.email ?? a.account_id).join(", ")}
+                  </TooltipContent>
+                </Tooltip>
               </TableCell>
-              <TableCell className="hidden sm:table-cell py-0 text-muted-foreground truncate">
-                <Link to={`/contacts/${c.id}`} className="block truncate">{c.email}</Link>
-              </TableCell>
-              {multi && (
-                <TableCell className="hidden md:table-cell py-0 text-xs text-muted-foreground">
-                  <span className="inline-flex items-center gap-1.5 min-w-0">
-                    <AccountGlyph glyph={glyphFor(c.account_id)} />
-                    <span className="truncate">{acc?.email.split("@")[0]}</span>
-                  </span>
-                </TableCell>
-              )}
-              <TableCell className="py-0">
-                <StatusSelect c={c} />
-              </TableCell>
-              <TableCell className="hidden sm:table-cell py-0 pr-2 text-right text-xs text-muted-foreground tnum">{fmtTime(c.last_seen_at)}</TableCell>
-            </TableRow>
-          );
-        })}
+            )}
+            <TableCell className="py-0 overflow-hidden">
+              <span className="flex items-center gap-1.5 min-w-0">
+                <StatusSelect c={c} className="min-w-0" />
+                {c.mixed && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Badge variant="outline" className="shrink-0 font-normal text-muted-foreground text-[11px] px-1.5">Mixed</Badge>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {c.accounts.map((a) => `${accountFor(a.account_id)?.email ?? a.account_id}: ${STATUS_META[a.screen_status].label}`).join(" · ")}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </span>
+            </TableCell>
+            <TableCell className="hidden sm:table-cell py-0 pr-2 text-right text-xs text-muted-foreground tnum">{fmtTime(c.last_seen_at)}</TableCell>
+          </TableRow>
+        ))}
       </TableBody>
     </Table>
   );

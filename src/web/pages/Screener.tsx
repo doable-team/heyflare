@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Check, FileText, Inbox, Paperclip, Receipt, Rss, ShieldOff, UserRound, X } from "lucide-react";
-import type { ScreenStatus } from "@shared/types";
+import type { DecisionScope, ScreenStatus } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useScreener, useScreenerDecide, type ScreenerSender } from "../api";
 import { useAccount } from "../context/AccountContext";
@@ -53,7 +53,7 @@ function SenderCard({
   leaving: "yes" | "no" | null;
   target: Target;
   onTarget: (t: Target) => void;
-  onDecide: (d: ScreenStatus) => void;
+  onDecide: (d: ScreenStatus, scope?: DecisionScope) => void;
   onFocus: () => void;
 }) {
   const { multi, glyphFor, accountFor } = useAccount();
@@ -127,6 +127,18 @@ function SenderCard({
           ))}
         </ToggleGroup>
         <div className="flex items-center gap-1 justify-end">
+          {multi && acct && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="sm" className="mr-auto text-muted-foreground" onClick={() => onDecide(target, "account")}>
+                  Just for {acct.email.split("@")[0]}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                Deliver to {TARGETS.find((t) => t.value === target)?.label} on {acct.email} only — other accounts keep asking
+              </TooltipContent>
+            </Tooltip>
+          )}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => onDecide("screened_out")}>
@@ -169,12 +181,12 @@ export default function Screener() {
 
   const targetFor = (x: ScreenerSender): Target => targets[x.contact.id] ?? (x.suggestion === "imbox" ? user?.settings?.defaultScreenTarget ?? "imbox" : x.suggestion);
 
-  const act = (x: ScreenerSender, d: ScreenStatus) => {
+  const act = (x: ScreenerSender, d: ScreenStatus, scope: DecisionScope = "all") => {
     if (leaving[x.contact.id]) return;
     setLeaving((l) => ({ ...l, [x.contact.id]: d === "screened_out" ? "no" : "yes" }));
     timers.current.push(
       window.setTimeout(() => {
-        decide.mutate({ contact_id: x.contact.id, decision: d });
+        decide.mutate({ contact_id: x.contact.id, decision: d, scope });
         setLeaving((l) => {
           const n = { ...l };
           delete n[x.contact.id];
@@ -269,7 +281,7 @@ export default function Screener() {
                 leaving={leaving[x.contact.id] ?? null}
                 target={targetFor(x)}
                 onTarget={(t) => setTargets((m) => ({ ...m, [x.contact.id]: t }))}
-                onDecide={(d) => act(x, d)}
+                onDecide={(d, scope) => act(x, d, scope)}
                 onFocus={() => setCursor(i)}
               />
             ))}

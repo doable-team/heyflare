@@ -44,13 +44,13 @@ Account-scoped routes take the account via `X-Account-Id` header (web stores the
 
 ## Screener (account-scoped)
 - `GET /api/screener` -> {senders: {contact: Contact, threads: ThreadSummary[], suggestion: 'imbox'|'feed'|'paper_trail'}[]}
-- `POST /api/screener/decide` {contact_id, decision: 'imbox'|'feed'|'paper_trail'|'screened_out'} -> {ok}. Sets contact.screen_status and moves ALL that contact's threads currently in 'screener' or 'screened_out' to that bucket (or to screened_out).
+- `POST /api/screener/decide` {contact_id, decision: 'imbox'|'feed'|'paper_trail'|'screened_out', scope?: 'all'|'account'} -> {ok}. Sets contact.screen_status and moves ALL that contact's threads currently in 'screener' or 'screened_out' to that bucket (or to screened_out). `scope` defaults to `'all'`: the decision applies to that email on every account the user has connected (rows created where missing). `'account'` limits it to the account the contact row belongs to.
 - `GET /api/screener/screened-out` -> {contacts: Contact[]}
 
 ## Contacts (account-scoped)
-- `GET /api/contacts?q=` -> Contact[] (screened contacts first, sorted by last_seen_at desc)
-- `GET /api/contacts/:id` -> {contact, threads: ThreadSummary[]}
-- `PATCH /api/contacts/:id` {name?, notes?, screen_status?} -> Contact (changing screen_status re-buckets their threads like screener/decide)
+- `GET /api/contacts?q=` -> MergedContact[] — **one entry per email address**, merged across the accounts in scope (screened first, then last_seen_at desc). `MergedContact` = Contact plus `mixed` (the accounts disagree about `screen_status`) and `accounts: {account_id, contact_id, screen_status, bundled}[]`. Merge rules: `screen_status` = the shared value, else the most common one with `mixed: true`; `message_count` summed; `first_seen_at` min; `last_seen_at`/`screened_at` max; `name`/`avatar_url`/`notes` = first non-empty; `id`/`account_id` = the row that heard from them most recently, which is what links and PATCH address. Narrowing the scope (`X-Account-Id: <id>`) returns just that account's people.
+- `GET /api/contacts/:id` -> {contact: MergedContact, threads: ThreadSummary[]} — `contact.id`/`account_id` stay the requested row; `threads` covers every account in scope.
+- `PATCH /api/contacts/:id` {name?, notes?, screen_status?, bundled?, scope?: 'all'|'account'} -> MergedContact. `scope` defaults to `'all'` (every connected account, like screener/decide); `'account'` touches only this row and re-buckets only that account's threads. With `'all'` the change is applied even when this row already matches, so mixed accounts get squared up.
 
 ## Labels / Collections / Clips / Files (account-scoped)
 - `GET/POST /api/labels`, `PATCH/DELETE /api/labels/:id` ({name,color})
@@ -104,7 +104,7 @@ Account-scoped routes take the account via `X-Account-Id` header (web stores the
 - Per-object routes (`/api/threads/:id`, actions, bulk, contacts/:id, labels/:id, collections/:id, clips/:id, drafts/:id, attachments) resolve the owning account from the object row (must belong to the user), regardless of the header.
 - Creating objects in unified scope: `POST /api/labels`, `POST /api/collections`, `POST /api/clips`, `POST /api/drafts` accept optional `account_id`; default = the thread's account when a `thread_id` is given, else the user's first account. Labels/collections may be applied to threads of any of the user's accounts.
 - `POST /api/send` accepts `account_id` (the From account). Default = the thread's account for replies, else the user's first account. Response includes `account_id`.
-- `GET /api/counts`, `GET /api/imbox`, `GET /api/feed`, `GET /api/threads`, `GET /api/search`, `GET /api/files`, `GET /api/screener`, `GET /api/contacts` all honor unified scope. Screener entries include `account_id` (decisions stay per contact row, i.e. per account).
+- `GET /api/counts`, `GET /api/imbox`, `GET /api/feed`, `GET /api/threads`, `GET /api/search`, `GET /api/files`, `GET /api/screener`, `GET /api/contacts` all honor unified scope. Screener entries include `account_id`. Contact rows stay per (account, email), but `GET /api/contacts` and `GET /api/contacts/:id` merge them per person; screening and bundling changes default to every account and take `scope: 'account'` to stay local.
 - `POST /api/accounts/:id/sync` unchanged; `GET /api/me` unchanged.
 
 ## Custom domains & mailboxes (added)
