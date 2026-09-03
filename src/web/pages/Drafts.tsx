@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { CalendarClock, PenSquare, Trash2, X } from "lucide-react";
 import type { Draft } from "@shared/types";
 import { useDraftMutations, useDrafts } from "../api";
@@ -11,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useItemCursor } from "../lib/cardKeys";
 import { cn } from "@/lib/utils";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 function preview(html: string): string {
   return html
@@ -47,14 +49,14 @@ function DraftRow({ d, mode, focused, onOpen, onCancel, onDelete }: { d: Draft; 
         </div>
       </button>
       <div className="shrink-0 flex items-center gap-2 text-muted-foreground">
-        <span className="group-hover:hidden">
+        <span className={cn(focused ? "hidden" : "group-hover:hidden")}>
           {mode === "scheduled" && d.send_at ? (
             <Badge variant="secondary" className="font-normal text-muted-foreground"><CalendarClock /> {fmtFull(d.send_at)}</Badge>
           ) : (
             <span className="text-xs tnum">{fmtTime(d.updated_at)}</span>
           )}
         </span>
-        <span className="hidden group-hover:flex items-center gap-0.5">
+        <span className={cn("items-center gap-0.5", focused ? "flex" : "hidden group-hover:flex")}>
           {d.status === "scheduled" ? (
             <Button variant="ghost" size="xs" onClick={onCancel}><X /> Cancel</Button>
           ) : (
@@ -74,6 +76,7 @@ function DraftRow({ d, mode, focused, onOpen, onCancel, onDelete }: { d: Draft; 
 export default function Drafts({ mode }: { mode: "draft" | "scheduled" }) {
   const q = useDrafts();
   const m = useDraftMutations();
+  const [confirmId, setConfirmId] = useState<string | null>(null);
   const { openCompose } = useCompose();
   const list = (q.data ?? []).filter((d) => (mode === "scheduled" ? d.status === "scheduled" || d.status === "sending" || d.status === "failed" : d.status === "draft"));
   const openDraft = (d: Draft) =>
@@ -106,10 +109,30 @@ export default function Drafts({ mode }: { mode: "draft" | "scheduled" }) {
           focused={cursor === i}
           onOpen={() => openDraft(d)}
           onCancel={() => m.cancelScheduled.mutate(d.id)}
-          onDelete={() => m.remove.mutate(d.id)}
+          onDelete={() => setConfirmId(d.id)}
         />
         </div>
       ))}
+
+      <AlertDialog open={!!confirmId} onOpenChange={(o) => !o && setConfirmId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this draft?</AlertDialogTitle>
+            <AlertDialogDescription>It's gone for good — there's no undo for drafts.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (confirmId) m.remove.mutate(confirmId);
+                setConfirmId(null);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
