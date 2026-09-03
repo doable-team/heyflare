@@ -1,6 +1,6 @@
 # heyflare
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/doable-team/heyflare)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/doable-team/heyflare) [![npm](https://img.shields.io/npm/v/create-heyflare?label=npm%20create%20heyflare)](https://www.npmjs.com/package/create-heyflare) [![License: MIT](https://img.shields.io/badge/license-MIT-black)](LICENSE)
 
 A self-hosted, HEY-style email client that runs entirely on Cloudflare — **with a built-in AI agent** that reads, triages and
 drafts for you. Connect Gmail accounts and mailboxes on your own domains, screen first-time senders, and read a calm, unified Imbox. Single owner, minimal black-and-white UI, tailor-made
