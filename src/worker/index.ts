@@ -49,7 +49,7 @@ api.route("/ai", aiRoutes);
 
 
 const scoped = new Hono<AppEnv>();
-for (const p of ["/counts", "/imbox", "/threads", "/threads/*", "/feed", "/search", "/messages/*", "/files", "/screener", "/screener/*", "/contacts", "/contacts/*", "/labels", "/labels/*", "/collections", "/collections/*", "/clips", "/clips/*", "/drafts", "/drafts/*", "/send", "/send/*", "/bundles", "/bundles/*"]) {
+for (const p of ["/counts", "/imbox", "/threads", "/threads/*", "/feed", "/search", "/messages/*", "/files", "/screener", "/screener/*", "/contacts", "/contacts/*", "/labels", "/labels/*", "/collections", "/collections/*", "/clips", "/clips/*", "/drafts", "/drafts/*", "/send", "/send/*", "/bundles", "/bundles/*", "/power-through", "/power-through/*"]) {
   scoped.use(p, requireAccount);
 }
 scoped.route("/", mailRoutes); // counts, imbox, threads, feed, search, messages/*/attachments, files

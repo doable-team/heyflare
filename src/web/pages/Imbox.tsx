@@ -1,5 +1,5 @@
-import { Link } from "react-router-dom";
-import { ArrowRight, ChevronRight, Loader2, Mail, RefreshCw, Shield } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { ArrowRight, ChevronRight, Loader2, Mail, RefreshCw, Shield, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ALL, useAccount } from "../context/AccountContext";
 import { useAccountMutations, useImbox } from "../api";
@@ -7,8 +7,20 @@ import { ThreadList } from "../components/ThreadList";
 import { Piles } from "../components/Trays";
 import { Avatar } from "../components/Avatar";
 import { fmtRelative } from "../lib/format";
+import { useKeys } from "../lib/keys";
+import { overlayOpen } from "../lib/focusStore";
+import { Kbd } from "@/components/ui/kbd";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+
+/**
+ * `o` powers through the queue (HEY's shortcut), but the thread list also binds `o` to "open the
+ * focused row". Only take the key when the list has nothing focused or selected — those rows carry
+ * a statically applied `bg-muted`/`bg-accent`, unlike the hover-only variant.
+ */
+function listRowActive(): boolean {
+  return !!document.querySelector('[data-row-id].bg-muted, [data-row-id].bg-accent');
+}
 
 export function ConnectGmailCard() {
   const { user } = useAccount();
@@ -74,6 +86,17 @@ function senderLine(people: { name: string; email: string }[], total: number): s
 export default function Imbox() {
   const { accounts, account, scope } = useAccount();
   const imbox = useImbox(accounts.length > 0);
+  const nav = useNavigate();
+  const newCount = (imbox.data?.new_threads.length ?? 0) + (imbox.data?.bundles ?? []).filter((b) => b.status === "open").length;
+
+  // HEY's shortcut for powering through the queue.
+  useKeys({
+    o: () => {
+      if (overlayOpen() || listRowActive() || newCount === 0) return;
+      nav("/power-through");
+    },
+  });
+
   if (accounts.length === 0) return <ConnectGmailCard />;
   const d = imbox.data;
   const scopeLabel = accounts.length > 1 ? (scope === ALL ? "All accounts" : account?.email) : account?.email ?? accounts[0]?.email;
@@ -118,6 +141,12 @@ export default function Imbox() {
             title: "New for you",
             threads: d?.new_threads ?? [],
             bundles: (d?.bundles ?? []).filter((b) => b.status === "open"),
+            actions:
+              newCount > 0 ? (
+                <Button variant="ghost" size="sm" className="text-muted-foreground -mr-1" onClick={() => nav("/power-through")}>
+                  <Zap /> Power through new <Kbd>o</Kbd>
+                </Button>
+              ) : undefined,
             emptyNode: (
               <div className="min-h-[20vh] px-2 pt-2">
                 <div className="text-[14px] text-foreground">Nothing new. Go enjoy your day.</div>

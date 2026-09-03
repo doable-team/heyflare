@@ -15,6 +15,10 @@ const GROUPS: { title: string; keys: [string, string][] }[] = [
     keys: [["j / k", "Move down / up"], ["↵ or o", "Open thread"], ["x", "Select thread"], ["l", "Reply later"], ["a", "Set aside"], ["z", "Bubble up"], ["u", "Mark unread"], ["#", "Trash"], ["b", "Labels (with selection)"], ["g", "Merge selected"]],
   },
   {
+    title: "Power through new",
+    keys: [["o", "Start (from the Imbox)"], ["j / k", "Next / previous"], ["r", "Reply inline"], ["l", "Reply later"], ["a", "Set aside"], ["e", "Mark seen"], ["#", "Trash"], ["↵", "Open the full thread"], ["esc", "Back to the Imbox"]],
+  },
+  {
     title: "Everywhere",
     keys: [["c", "Compose"], ["⌘↵", "Send message"], ["q", "Undo send"], ["i", "Back to Imbox"], ["esc", "Close / clear"], ["?", "This overlay"]],
   },

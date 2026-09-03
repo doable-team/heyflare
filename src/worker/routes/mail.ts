@@ -206,6 +206,99 @@ mail.get("/feed", async (c) => {
   return c.json({ threads, next_page: hasMore ? page + 1 : null });
 });
 
+// ---------- Power through new ----------
+/**
+ * Everything sitting in the Imbox's "New for you", each with its latest message body, so the whole
+ * queue can be triaged on one page (HEY's "Power Through New"). Threads inside an open bundle are
+ * stacked inline — powering through is about the mail, not the grouping.
+ */
+mail.get("/power-through", async (c) => {
+  const db = c.env.DB;
+  const t = now();
+  const sc = scope(c);
+  const CAP = 50;
+  const rows = await db
+    .prepare(
+      `SELECT t.* FROM threads t
+       LEFT JOIN bundles b ON b.id = t.bundle_id
+       WHERE ${sc.sql} AND t.bucket = 'imbox' AND t.reply_later = 0 AND t.set_aside = 0 AND ${VISIBLE}
+         AND (t.bundle_id IS NULL AND t.seen = 0 OR b.status = 'open')
+       ORDER BY t.last_message_at DESC LIMIT ?`
+    )
+    .bind(...sc.params, t, CAP)
+    .all<ThreadRow>();
+  const list = rows.results;
+  const summaries = await threadsWithLabels(db, list);
+  const latest = new Map<string, MessageRow>();
+  for (const ids of chunk(list.map((r) => r.id), 90)) {
+    const ms = await db
+      .prepare(
+        `SELECT m.* FROM messages m WHERE m.thread_id IN (${placeholders(ids.length)}) AND m.date = (SELECT MAX(date) FROM messages x WHERE x.thread_id = m.thread_id)`
+      )
+      .bind(...ids)
+      .all<MessageRow>();
+    for (const m of ms.results) latest.set(m.thread_id, m);
+  }
+  const items = summaries.map((s) => {
+    const m = latest.has(s.id) ? toMessage(latest.get(s.id)!) : null;
+    if (m && m.from.email.toLowerCase() === s.last_from.email.toLowerCase() && s.last_from.avatar_url) m.from.avatar_url = s.last_from.avatar_url;
+    return { ...s, latest_message: m };
+  });
+  return c.json({ items });
+});
+
+/** "Mark all as seen" at the bottom of the power-through page. */
+mail.post("/power-through/seen", async (c) => {
+  const db = c.env.DB;
+  const t = now();
+  const body = await c.req.json<{ thread_ids?: string[] }>().catch(() => ({}) as { thread_ids?: string[] });
+  const ids = (body.thread_ids ?? []).slice(0, 200);
+  if (!ids.length) return c.json({ error: "no_threads" }, 400);
+  const owned = inClause(c.get("allAccountIds") ?? []);
+  const mine = await db
+    .prepare(`SELECT id, account_id FROM threads WHERE id IN (${placeholders(ids.length)}) AND account_id IN ${owned.sql}`)
+    .bind(...ids, ...owned.params)
+    .all<{ id: string; account_id: string }>();
+  if (!mine.results.length) return c.json({ ok: true, count: 0 });
+  const mineIds = mine.results.map((r) => r.id);
+
+  // Gmail's own read state, per account, before we clear ours.
+  const unread = await db
+    .prepare(`SELECT account_id, gmail_message_id FROM messages WHERE thread_id IN (${placeholders(mineIds.length)}) AND unread = 1 AND gmail_message_id <> ''`)
+    .bind(...mineIds)
+    .all<{ account_id: string; gmail_message_id: string }>();
+
+  await runBatch(db, [
+    ...mineIds.map((id) => db.prepare(`UPDATE threads SET seen = 1, unread = 0, bubbled = 0, updated_at = ? WHERE id = ?`).bind(t, id)),
+    ...mineIds.map((id) => db.prepare(`UPDATE messages SET unread = 0 WHERE thread_id = ?`).bind(id)),
+  ]);
+
+  // A bundle whose whole batch is now seen is finished: close it, so the queue really does empty.
+  await db
+    .prepare(
+      `UPDATE bundles SET status = 'seen', seen_at = ?
+       WHERE status = 'open'
+         AND EXISTS (SELECT 1 FROM threads t WHERE t.bundle_id = bundles.id AND t.id IN (${placeholders(mineIds.length)}))
+         AND NOT EXISTS (SELECT 1 FROM threads t WHERE t.bundle_id = bundles.id AND t.seen = 0)`
+    )
+    .bind(t, ...mineIds)
+    .run();
+
+  if (unread.results.length) {
+    const byAccount = new Map<string, string[]>();
+    for (const r of unread.results) byAccount.set(r.account_id, [...(byAccount.get(r.account_id) ?? []), r.gmail_message_id]);
+    const accounts = await accountsById(db, c.get("user").id, [...byAccount.keys()]);
+    for (const [accId, gmailIds] of byAccount) {
+      const acc = accounts.get(accId);
+      if (!acc || acc.provider !== "gmail") continue;
+      for (const part of chunk(gmailIds, 900)) {
+        c.executionCtx.waitUntil(gmailPost(c.env, acc, `messages/batchModify`, { ids: part, removeLabelIds: ["UNREAD"] }).catch(() => {}));
+      }
+    }
+  }
+  return c.json({ ok: true, count: mineIds.length });
+});
+
 // ---------- Search ----------
 mail.get("/search", async (c) => {
   const db = c.env.DB;

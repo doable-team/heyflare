@@ -9,6 +9,7 @@ import Login from "./pages/Login";
 import Setup from "./pages/Setup";
 import Imbox from "./pages/Imbox";
 import Feed from "./pages/Feed";
+import PowerThrough from "./pages/PowerThrough";
 import PaperTrail from "./pages/PaperTrail";
 import Screener from "./pages/Screener";
 import ReplyLater from "./pages/ReplyLater";
@@ -38,6 +39,7 @@ import NotFound from "./pages/NotFound";
 import { MobileShell } from "./mobile/MobileShell";
 import MobileImbox from "./mobile/MobileImbox";
 import MobileFeed from "./mobile/MobileFeed";
+import MobilePowerThrough from "./mobile/MobilePowerThrough";
 import MobileScreener from "./mobile/MobileScreener";
 import MobileThread from "./mobile/MobileThread";
 import MobileMore from "./mobile/MobileMore";
@@ -61,6 +63,7 @@ function DesktopRoutes() {
       <Route element={<Shell />}>
         <Route path="/" element={<Imbox />} />
         <Route path="/feed" element={<Feed />} />
+        <Route path="/power-through" element={<PowerThrough />} />
         <Route path="/paper-trail" element={<PaperTrail />} />
         <Route path="/screener" element={<Screener />} />
         <Route path="/screened-out" element={<ScreenedOut />} />
@@ -106,6 +109,7 @@ function MobileRoutes() {
       <Route element={<MobileShell />}>
         <Route path="/" element={<MobileImbox />} />
         <Route path="/feed" element={<MobileFeed />} />
+        <Route path="/power-through" element={<MobilePowerThrough />} />
         <Route path="/paper-trail" element={<MobileBucketScreen bucket="paper_trail" cfg={BUCKETS.paper_trail} />} />
         <Route path="/screener" element={<MobileScreener />} />
         <Route path="/more" element={<MobileMore />} />

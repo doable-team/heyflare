@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, Bookmark, Check, ChevronDown, ChevronRight, Clock, Mail, Shield, Search } from "lucide-react";
+import { ArrowRight, Bookmark, Check, ChevronDown, ChevronRight, Clock, Mail, Shield, Search, Zap } from "lucide-react";
 import type { ThreadSummary } from "@shared/types";
 import { useAccount } from "../context/AccountContext";
 import { useBulkAction, useImbox } from "../api";
@@ -115,6 +115,7 @@ export default function MobileImbox() {
   const scopeLabel = useScopeLabel();
   const d = imbox.data;
   const piles = (d?.reply_later.length ?? 0) + (d?.set_aside.length ?? 0) > 0;
+  const newCount = (d?.new_threads.length ?? 0) + (d?.bundles ?? []).filter((b) => b.status === "open").length;
   return (
     <Screen
       title={
@@ -163,6 +164,13 @@ export default function MobileImbox() {
               </div>
               <ChevronRight size={18} className="text-tertiary shrink-0" />
             </button>
+          )}
+          {newCount > 0 && (
+            <div className="px-4 mb-2">
+              <Button variant="outline" className="w-full h-10 justify-center" onClick={() => nav("/power-through")}>
+                <Zap /> Power through {newCount} new
+              </Button>
+            </div>
           )}
           <MobileList
             loading={imbox.isLoading}

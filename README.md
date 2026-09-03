@@ -36,6 +36,7 @@ lives in a resizable side panel and can see the thread you're reading.
 
 - **The Screener** — every first-time sender waits for a yes/no. Decide once per person, across all your accounts.
 - **Imbox, The Feed, Paper Trail** — people, newsletters, receipts. "New for you" vs "Previously seen".
+- **Power through new** — the whole "New for you" queue stacked on one page: reply, defer or file each one, `o` to start.
 - **Reply Later, Set Aside, Bubble Up** — trays docked in the Imbox, Focus & Reply mode, snooze with presets.
 - **Bundles** — collapse a chatty sender into one row per batch; read the batch like a feed.
 - **Unified inbox** across every connected account, with per-account glyphs and a From picker in compose.

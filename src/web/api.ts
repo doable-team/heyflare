@@ -618,3 +618,30 @@ export async function aiChatStream(body: { conversation_id?: string; message: st
     }
   }
 }
+
+// ---------- Power through new ----------
+export interface PowerThroughResponse {
+  items: (T.ThreadSummary & { latest_message: T.Message | null })[];
+}
+export function usePowerThrough(enabled = true) {
+  return useQuery({
+    queryKey: ["power-through"],
+    queryFn: () => api.get<PowerThroughResponse>("/api/power-through"),
+    enabled,
+    // The queue is a snapshot you work through; refetching under the cursor would be jarring.
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+}
+export function usePowerThroughMutations() {
+  const qc = useQueryClient();
+  return {
+    markAllSeen: useMutation({
+      mutationFn: (thread_ids: string[]) => api.post<{ ok: boolean; count: number }>("/api/power-through/seen", { thread_ids }),
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: ["power-through"] });
+        invalidateMail(qc);
+      },
+    }),
+  };
+}

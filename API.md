@@ -147,3 +147,11 @@ Without `CF_API_TOKEN`, domain setup is "manual": the API returns the exact step
   Gmail changes. `sync_error` is set when that first sync failed (it is retried by the cron).
 - Connecting a Gmail account no longer imports history: the first sync just records Gmail's historyId ("start from now"), and
   every sender is screened when their first new mail arrives.
+
+## Power through new
+- `GET /api/power-through` -> `{ items: (ThreadSummary & { latest_message: Message | null })[] }` — everything in the
+  Imbox's "New for you" (bucket `imbox`, not reply_later/set_aside, visible, and either unseen and unbundled or inside an
+  **open** bundle), newest first, capped at 50, each with its latest message body. Honours unified scope.
+- `POST /api/power-through/seen` `{ thread_ids: string[] }` -> `{ ok, count }` — marks those threads seen + read
+  (max 200, ownership-checked) and clears Gmail's UNREAD label per account, best-effort. Used by "Mark all as seen";
+  nothing is marked seen just by scrolling the page.
