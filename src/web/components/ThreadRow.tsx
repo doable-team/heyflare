@@ -60,7 +60,9 @@ export function ThreadRow({
   quickActions?: boolean;
 }) {
   const { multi, glyphFor, accountFor } = useAccount();
-  const unread = t.unread;
+  // "New" means you haven't opened it here yet — the same signal the sidebar counts and the Imbox's
+  // "New for you" section use. Gmail's own unread flag also counts, but plenty of mail arrives already read.
+  const unread = t.unread || !t.seen;
   const showQuick = quickActions && !!onQuickAction;
   const glyph = multi ? glyphFor(t.account_id) : "";
   const me = (accountFor(t.account_id)?.email ?? "").toLowerCase();
@@ -104,9 +106,9 @@ export function ThreadRow({
             {glyph && <AccountGlyph glyph={glyph} label={accountFor(t.account_id)?.email} />}
             {t.bubbled && <Badge variant="outline" className="h-4 px-1 text-[10px] font-normal text-muted-foreground">Bubbled up</Badge>}
             {showBucket && t.bucket !== "imbox" && <Badge variant="outline" className="h-4 px-1 text-[10px] font-normal text-muted-foreground">{bucketName(t.bucket)}</Badge>}
-            <span className={cn("truncate text-[13px] min-w-0", unread ? "text-foreground/80" : "text-tertiary")}>
+            <span className={cn("truncate text-[13px] min-w-0", unread ? "text-foreground" : "text-tertiary")}>
               {senderLine(t)}
-              {t.snippet && <span className={unread ? "text-muted-foreground" : "text-tertiary"}> — {t.snippet}</span>}
+              {t.snippet && <span className={unread ? "text-foreground" : "text-tertiary"}> — {t.snippet}</span>}
             </span>
           </div>
         ) : (
@@ -123,8 +125,8 @@ export function ThreadRow({
             </div>
             {/* line 2: who — snippet */}
             <div className="flex items-center gap-1.5 min-w-0 leading-tight mt-0.5">
-              <span className={cn("truncate text-[13px] shrink-0 max-w-full sm:max-w-[45%]", unread ? "text-foreground" : "text-foreground/80")}>{senderLine(t)}</span>
-              {t.snippet && <span className="hidden sm:inline truncate text-xs text-muted-foreground min-w-0">— {t.snippet}</span>}
+              <span className={cn("truncate text-[13px] shrink-0 max-w-full sm:max-w-[45%]", unread ? "text-foreground" : "text-muted-foreground")}>{senderLine(t)}</span>
+              {t.snippet && <span className={cn("hidden sm:inline truncate text-xs min-w-0", unread ? "text-foreground" : "text-muted-foreground")}>— {t.snippet}</span>}
             </div>
           </>
         )}
