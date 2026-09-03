@@ -117,11 +117,21 @@ auth.post("/logout", async (c) => {
   return c.json({ ok: true });
 });
 
-function redirectUriFor(c: any): string {
+/** Where this deployment lives, as the browser sees it (localhost wins over APP_URL in dev). */
+export function appOrigin(c: any): string {
   const url = new URL(c.req.url);
-  const origin = url.hostname === "localhost" || url.hostname === "127.0.0.1" ? url.origin : c.env.APP_URL || url.origin;
-  return `${origin}/auth/google/callback`;
+  return url.hostname === "localhost" || url.hostname === "127.0.0.1" ? url.origin : c.env.APP_URL || url.origin;
 }
+
+function redirectUriFor(c: any): string {
+  return `${appOrigin(c)}/auth/google/callback`;
+}
+
+/**
+ * States minted for the "open Google in the real browser" handoff carry this prefix, so the callback
+ * knows to finish with a plain confirmation page instead of redirecting into the app's webview.
+ */
+export const HANDOFF_PREFIX = "hx_";
 
 auth.get("/google/start", async (c) => {
   const user = await getSessionUser(c);
@@ -137,13 +147,53 @@ auth.get("/google/start", async (c) => {
   return c.redirect(googleAuthUrl(c.env, state, redirectUriFor(c), hint));
 });
 
+/** Standalone page shown in the browser tab that finished a handoff (the app is a separate window). */
+function handoffPage(title: string, detail: string, ok: boolean): string {
+  const esc = (v: string) => v.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]!);
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(title)} · heyflare</title><style>
+:root{color-scheme:light dark}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#fff;color:#37352f;
+font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:22rem;padding:2rem;text-align:center}
+.mark{width:40px;height:40px;border-radius:10px;background:#37352f;color:#fff;display:flex;align-items:center;
+justify-content:center;font-weight:700;margin:0 auto 1.25rem}
+h1{font-size:17px;margin:0 0 .4rem;font-weight:600}
+p{margin:0;color:rgba(55,53,47,.65)}
+@media (prefers-color-scheme:dark){body{background:#191919;color:#d4d4d4}.mark{background:#d4d4d4;color:#191919}p{color:rgba(255,255,255,.55)}}
+</style></head><body><main><div class="mark">h</div><h1>${esc(title)}</h1><p>${esc(detail)}</p></main></body></html>`;
+}
+
+/**
+ * Unauthenticated entry point for the Mac app: the app (which *is* signed in) mints a state through
+ * `POST /api/accounts/connect-link`, then opens this URL in the system browser, which has no session.
+ * The state row identifies the user, so no cookie is needed here.
+ */
+auth.get("/google/handoff", async (c) => {
+  const state = c.req.query("state") ?? "";
+  if (!googleConfigured(c.env)) {
+    return c.json({ error: "google_not_configured", message: "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET secrets." }, 500);
+  }
+  if (!state.startsWith(HANDOFF_PREFIX)) return c.json({ error: "invalid_state" }, 400);
+  const st = await c.env.DB.prepare(`SELECT state FROM oauth_states WHERE state = ? AND created_at > ?`).bind(state, now() - 3600_000).first<{ state: string }>();
+  if (!st) return c.json({ error: "invalid_state" }, 400);
+  const hint = c.req.query("login_hint") ?? undefined;
+  return c.redirect(googleAuthUrl(c.env, state, redirectUriFor(c), hint));
+});
+
 auth.get("/google/callback", async (c) => {
   const code = c.req.query("code");
   const state = c.req.query("state");
   const err = c.req.query("error");
-  if (err) return c.redirect(`/?connect_error=${encodeURIComponent(err)}`);
+  if (err) {
+    if ((c.req.query("state") ?? "").startsWith(HANDOFF_PREFIX)) {
+      return c.html(handoffPage("Not connected", "Google reported: " + err + ". You can close this tab and try again from heyflare.", false), 200);
+    }
+    return c.redirect(`/?connect_error=${encodeURIComponent(err)}`);
+  }
   if (!code || !state) return c.json({ error: "missing_code_or_state" }, 400);
   const db = c.env.DB;
+  const handoff = state.startsWith(HANDOFF_PREFIX);
   const st = await db.prepare(`SELECT * FROM oauth_states WHERE state = ? AND created_at > ?`).bind(state, now() - 3600_000).first<{ user_id: string }>();
   if (!st) return c.json({ error: "invalid_state" }, 400);
   await db.prepare(`DELETE FROM oauth_states WHERE state = ?`).bind(state).run();
@@ -181,9 +231,14 @@ auth.get("/google/callback", async (c) => {
       const { syncAccount } = await import("../sync");
       c.executionCtx.waitUntil(syncAccount(c.env, account));
     }
+    if (handoff) {
+      return c.html(handoffPage("Connected", `${info.email} is now syncing. You can close this tab and go back to heyflare.`, true), 200);
+    }
     return c.redirect(`/?connected=1&account=${accountId}`);
   } catch (e) {
-    return c.redirect(`/?connect_error=${encodeURIComponent(((e as Error).message ?? "oauth_failed").slice(0, 200))}`);
+    const msg = ((e as Error).message ?? "oauth_failed").slice(0, 200);
+    if (handoff) return c.html(handoffPage("Not connected", `${msg}. You can close this tab and try again from heyflare.`, false), 200);
+    return c.redirect(`/?connect_error=${encodeURIComponent(msg)}`);
   }
 });
 

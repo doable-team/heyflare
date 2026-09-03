@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { Account, User } from "@shared/types";
 import { getAccountId, storeAccountId, useMe } from "../api";
 import { api } from "../api";
+import { setConnectRefresh } from "../lib/connect";
 
 export const ALL = "all" as const;
 export type Scope = typeof ALL | string;
@@ -89,6 +90,14 @@ export function AccountProvider({ children }: { children: ReactNode }) {
 
   const accounts = useMemo(() => me.data?.accounts ?? [], [me.data?.accounts]);
   useSyncOnFocus(accounts, qc);
+  // The Google connect flow (which runs in the system browser on the Mac app) refreshes through this
+  // rather than reloading the whole page.
+  useEffect(() => {
+    setConnectRefresh(() => {
+      void me.refetch();
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== "me" });
+    });
+  }, [me, qc]);
   const account = useMemo(() => (scope === ALL ? null : accounts.find((a) => a.id === scope) ?? null), [accounts, scope]);
 
   // A stored account id that no longer exists → fall back to unified.

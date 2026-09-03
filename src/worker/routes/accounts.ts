@@ -5,6 +5,9 @@ import { toAccount } from "../db";
 import { syncAccount } from "../sync";
 import { syncContactPhotos } from "../people";
 import { deleteAccountData } from "./domains";
+import { appOrigin, HANDOFF_PREFIX } from "./auth";
+import { googleConfigured } from "../google";
+import { uid, now } from "../db";
 
 const accounts = new Hono<AppEnv>();
 
@@ -95,6 +98,23 @@ accounts.get("/:id/logs", async (c) => {
   if (!acc) return c.json({ error: "not_found" }, 404);
   const rows = await c.env.DB.prepare(`SELECT id, account_id, level, message, created_at FROM sync_log WHERE account_id = ? ORDER BY created_at DESC LIMIT 200`).bind(acc.id).all();
   return c.json(rows.results);
+});
+
+/**
+ * Mints a one-time link that starts Google's consent flow in the *system browser*. The Mac app calls
+ * this (it holds the session), then opens the URL outside the webview — Google increasingly refuses
+ * to sign people in inside embedded web views, and the browser has the user's Google session anyway.
+ */
+accounts.post("/connect-link", async (c) => {
+  const user = c.get("user");
+  if (!googleConfigured(c.env)) return c.json({ error: "google_not_configured", message: "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET secrets." }, 500);
+  const body = await c.req.json<{ login_hint?: string }>().catch(() => ({}) as { login_hint?: string });
+  const state = `${HANDOFF_PREFIX}${uid()}`;
+  await c.env.DB.prepare(`INSERT INTO oauth_states (state, user_id, created_at) VALUES (?, ?, ?)`).bind(state, user.id, now()).run();
+  c.executionCtx.waitUntil(c.env.DB.prepare(`DELETE FROM oauth_states WHERE created_at < ?`).bind(now() - 3600_000).run());
+  const hint = (body.login_hint ?? "").trim();
+  const url = `${appOrigin(c)}/auth/google/handoff?state=${encodeURIComponent(state)}${hint ? `&login_hint=${encodeURIComponent(hint)}` : ""}`;
+  return c.json({ url });
 });
 
 export default accounts;
