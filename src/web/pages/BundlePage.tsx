@@ -4,7 +4,7 @@ import { ArrowLeft, Check, Layers, MailOpen, Ungroup } from "lucide-react";
 import { toast } from "sonner";
 import { useBundle, useBundleMutations, type FeedThread } from "../api";
 import { useKeys } from "../lib/keys";
-import { useCardCursor } from "../lib/cardKeys";
+import { useCardScroll } from "../lib/cardKeys";
 import { cn } from "@/lib/utils";
 import { BundleAvatar } from "../components/Avatar";
 import { ErrorState } from "../components/EmptyState";
@@ -45,7 +45,7 @@ export default function BundlePage() {
   };
 
   const threads = (q.data?.threads.filter((t) => t.latest_message) ?? []) as FeedThread[];
-  const { cursor } = useCardCursor(threads.length, { onOpen: (i) => threads[i] && nav(`/t/${threads[i].id}`) });
+  useCardScroll();
 
   // Escape goes back, like the thread view (open menus/dialogs consume it first).
   useKeys(
@@ -99,8 +99,7 @@ export default function BundlePage() {
         {threads.map((t, i) => (
           <div
             key={t.id}
-            data-card-index={i}
-            className={cn("rounded-md scroll-mt-16 transition-opacity duration-100", leaving.has(t.id) && "opacity-0", cursor === i && "ring-1 ring-ring")}
+            className={cn("rounded-md scroll-mt-16 transition-opacity duration-100", leaving.has(t.id) && "opacity-0",)}
           >
             <FeedCard t={t} onLeave={onLeave} />
           </div>

@@ -10,7 +10,7 @@ import { LoadMore } from "../components/ThreadList";
 import { Avatar, AccountGlyph } from "../components/Avatar";
 import { EmptyState, ErrorState, PageHeader } from "../components/EmptyState";
 import { useToast } from "../components/Toast";
-import { useCardCursor } from "../lib/cardKeys";
+import { useCardScroll } from "../lib/cardKeys";
 import { fmtTime, fmtFull, unsubscribeTarget } from "../lib/format";
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -146,7 +146,7 @@ export default function Feed() {
   const [leaving, setLeaving] = useState<Set<string>>(new Set());
   const nav = useNavigate();
   const threads = feed.data?.pages.flatMap((p) => p.threads) ?? [];
-  const { cursor } = useCardCursor(threads.length, { onOpen: (i) => threads[i] && nav(`/t/${threads[i].id}`) });
+  useCardScroll();
   if (accounts.length === 0) return <ConnectGmailCard />;
   const onLeave = (id: string, cb: () => void) => {
     setLeaving((l) => new Set([...l, id]));
@@ -184,8 +184,7 @@ export default function Feed() {
         {threads.map((t, i) => (
           <div
             key={t.id}
-            data-card-index={i}
-            className={cn("rounded-md scroll-mt-16 transition-opacity duration-100", leaving.has(t.id) && "opacity-0", cursor === i && "ring-1 ring-ring")}
+            className={cn("rounded-md scroll-mt-16 transition-opacity duration-100", leaving.has(t.id) && "opacity-0",)}
           >
             <FeedCard t={t} onLeave={onLeave} />
           </div>

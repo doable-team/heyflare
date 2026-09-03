@@ -1,47 +1,42 @@
-import { useEffect, useState } from "react";
 import { useKeys } from "./keys";
 import { overlayOpen, useFocusRegion } from "./focusStore";
 
+/** The element that actually scrolls the page content (shadcn's SidebarInset, or the window). */
+function scroller(): HTMLElement | Window {
+  const main = document.querySelector("main");
+  let el: HTMLElement | null = main;
+  while (el) {
+    const style = getComputedStyle(el);
+    if (/(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 4) return el;
+    el = el.parentElement;
+  }
+  return window;
+}
+
 /**
- * Arrow-key cursor for card layouts (The Feed, a bundle). Same grammar as the mail list:
- * ↑/↓ (or k/j) walk the cards and scroll them into view, Enter/o opens the focused one.
- * Nothing is focused until the first keypress, so the page scrolls normally with the mouse.
- * Mark each card with `data-card-index={i}` for the scroll-into-view to find it.
+ * Arrow keys on card layouts (The Feed, a bundle) scroll the page smoothly instead of hopping
+ * between cards — these are made for reading, not triage.
  */
-export function useCardCursor(count: number, opts: { onOpen?: (index: number) => void; enabled?: boolean } = {}) {
-  const [cursor, setCursor] = useState(-1);
+export function useCardScroll(enabled = true) {
   const region = useFocusRegion();
-  const enabled = (opts.enabled ?? true) && region === "content" && count > 0;
 
-  useEffect(() => {
-    setCursor((c) => (c >= count ? count - 1 : c));
-  }, [count]);
-
-  const move = (delta: number) => {
+  const by = (delta: number) => {
     if (overlayOpen()) return;
-    setCursor((c) => Math.min(Math.max(c + delta, 0), count - 1));
-  };
-  const open = () => {
-    if (overlayOpen() || cursor < 0) return;
-    opts.onOpen?.(cursor);
+    const s = scroller();
+    const step = Math.round((s instanceof Window ? window.innerHeight : s.clientHeight) * delta);
+    s.scrollBy({ top: step, behavior: "smooth" });
   };
 
   useKeys(
     {
-      ArrowDown: () => move(1),
-      ArrowUp: () => move(-1),
-      j: () => move(1),
-      k: () => move(-1),
-      Enter: open,
-      o: open,
+      ArrowDown: () => by(0.25),
+      ArrowUp: () => by(-0.25),
+      j: () => by(0.25),
+      k: () => by(-0.25),
+      PageDown: () => by(0.9),
+      PageUp: () => by(-0.9),
+      " ": () => by(0.9),
     },
-    enabled,
+    enabled && region === "content",
   );
-
-  useEffect(() => {
-    if (cursor < 0) return;
-    document.querySelector(`[data-card-index="${cursor}"]`)?.scrollIntoView({ block: "nearest" });
-  }, [cursor]);
-
-  return { cursor, setCursor };
 }
