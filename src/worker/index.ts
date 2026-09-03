@@ -20,6 +20,7 @@ import { runLearning } from "./ai/memory";
 import domainRoutes from "./routes/domains";
 import { handleInboundEmail } from "./inbound";
 import { ensureMigrations } from "./migrations";
+import { VERSION, COMMIT, BUILT_AT } from "@shared/version";
 
 const app = new Hono<AppEnv>();
 
@@ -38,6 +39,8 @@ api.get("/me", async (c, next) => {
   const n = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM users`).first<{ n: number }>();
   return c.json({ user: null, accounts: [], setup_required: (n?.n ?? 0) === 0, google_configured: !!(c.env.GOOGLE_CLIENT_ID && c.env.GOOGLE_CLIENT_SECRET) });
 });
+// What this deployment is running (used by the update check).
+api.get("/version", (c) => c.json({ version: VERSION, commit: COMMIT, built_at: BUILT_AT, latest: null }));
 api.use("*", requireUser);
 api.route("/me", meRoutes);
 api.route("/accounts", accountRoutes);

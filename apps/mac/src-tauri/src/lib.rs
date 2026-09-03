@@ -53,7 +53,10 @@ fn grant_remote(app: &AppHandle, origin: &str) {
             "allow-take-pending-url",
             "allow-open-external",
             "allow-get-server",
-            "allow-reset-server"
+            "allow-reset-server",
+            "allow-check-update",
+            "allow-install-update",
+            "allow-relaunch-app"
         ]
     });
     if let Err(e) = app.add_capability(cap.to_string()) {
@@ -142,27 +145,45 @@ fn apply_zoom(app: &AppHandle, state: &AppState, delta: Option<f64>) {
     }
 }
 
-fn check_updates(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        let result = async {
-            let updater = app.updater()?;
-            match updater.check().await? {
-                Some(update) => {
-                    let _ = app.notification().builder().title("Updating heyflare").body(format!("Downloading version {}…", update.version)).show();
-                    update.download_and_install(|_, _| {}, || {}).await?;
-                    app.restart();
-                }
-                None => {
-                    let _ = app.notification().builder().title("heyflare is up to date").body("You have the latest version.").show();
-                }
-            }
-            Ok::<(), tauri_plugin_updater::Error>(())
-        }
-        .await;
-        if let Err(e) = result {
-            let _ = app.notification().builder().title("Update check failed").body(e.to_string()).show();
-        }
-    });
+/// Is there a newer build? Returns `{available, version, notes}`; a failed check is non-fatal.
+#[tauri::command]
+async fn check_update(app: AppHandle) -> Result<serde_json::Value, String> {
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    match updater.check().await.map_err(|e| e.to_string())? {
+        Some(u) => Ok(json!({ "available": true, "version": u.version, "notes": u.body })),
+        None => Ok(json!({ "available": false })),
+    }
+}
+
+/// Download and install the update, then relaunch. Emits `update://progress` with a 0..1
+/// fraction (or -1 when the server sends no content length).
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let update = updater.check().await.map_err(|e| e.to_string())?.ok_or("Already up to date.")?;
+    let total = std::sync::Mutex::new(0u64);
+    let handle = app.clone();
+    update
+        .download_and_install(
+            move |chunk, len| {
+                let mut done = total.lock().unwrap();
+                *done += chunk as u64;
+                let fraction = match len {
+                    Some(t) if t > 0 => (*done as f64 / t as f64).min(1.0),
+                    _ => -1.0,
+                };
+                let _ = handle.emit("update://progress", json!({ "fraction": fraction }));
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    app.restart();
+}
+
+#[tauri::command]
+fn relaunch_app(app: AppHandle) {
+    app.restart();
 }
 
 fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
@@ -259,7 +280,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
-        .invoke_handler(tauri::generate_handler![set_badge, notify, take_pending_url, open_external, open_server, get_server, reset_server])
+        .invoke_handler(tauri::generate_handler![set_badge, notify, take_pending_url, open_external, open_server, get_server, reset_server, check_update, install_update, relaunch_app])
         .setup(|app| {
             let handle = app.handle().clone();
             let menu = build_menu(&handle)?;
@@ -276,7 +297,9 @@ pub fn run() {
                             let _ = w.eval("location.reload()");
                         }
                     }
-                    "check-updates" => check_updates(app.clone()),
+                    "check-updates" => {
+                        let _ = app.emit("menu", "check-updates");
+                    }
                     "help" => {
                         let _ = app.opener().open_url("https://github.com/doable-team/heyflare", None::<&str>);
                     }

@@ -15,6 +15,8 @@ import { CommandPalette } from "./CommandPalette";
 import { AssistantPanel } from "./AssistantPanel";
 import { assistant, useAssistant } from "../lib/assistantStore";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
+import { UpdateDialog } from "./UpdateDialog";
+import { useUpdateCheck } from "../lib/update";
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar,
 } from "@/components/ui/sidebar";
@@ -93,13 +95,17 @@ export function Shell() {
 }
 
 /* ---------------- overlays (palette, shortcuts) share state via a tiny store ---------------- */
-type OverlayState = { palette: boolean; help: boolean };
-let overlayState: OverlayState = { palette: false, help: false };
+type OverlayState = { palette: boolean; help: boolean; update: boolean };
+let overlayState: OverlayState = { palette: false, help: false, update: false };
 const listeners = new Set<() => void>();
 function setOverlay(patch: Partial<OverlayState>) {
   overlayState = { ...overlayState, ...patch };
   listeners.forEach((l) => l());
 }
+export function openUpdateDialog() {
+  setOverlay({ update: true });
+}
+
 function useOverlay() {
   const [, force] = useState(0);
   useEffect(() => {
@@ -121,10 +127,11 @@ function useTheme() {
 }
 
 function Overlays() {
-  const { palette, help } = useOverlay();
+  const { palette, help, update } = useOverlay();
   const { openCompose } = useCompose();
   const { account, accounts } = useAccount();
   const { theme, toggleTheme } = useTheme();
+  const updateInfo = useUpdateCheck();
   const nav = useNavigate();
 
   useKeys({
@@ -167,6 +174,7 @@ function Overlays() {
         case "compose": return openCompose();
         case "palette": return setOverlay({ palette: true });
         case "assistant": return assistant.toggle();
+        case "check-updates": return setOverlay({ update: true });
         case "toggle-sidebar": return window.dispatchEvent(new KeyboardEvent("keydown", { key: "b", metaKey: true, bubbles: true }));
         case "back": return history.back();
         case "forward": return history.forward();
@@ -183,6 +191,7 @@ function Overlays() {
     <>
       <CommandPalette open={palette} onClose={() => setOverlay({ palette: false })} onCompose={() => openCompose()} onToggleTheme={toggleTheme} onShortcuts={() => setOverlay({ help: true })} onAssistant={() => assistant.open()} theme={theme} hasAccount={!!account || accounts.length > 0} />
       <ShortcutsOverlay open={help} onClose={() => setOverlay({ help: false })} />
+      <UpdateDialog open={update} onClose={() => setOverlay({ update: false })} info={updateInfo} />
     </>
   );
 }
@@ -217,6 +226,7 @@ function TopBar() {
 function AppSidebar() {
   const { user, accounts, account, scope, setScope, glyphFor } = useAccount();
   const counts = useCounts(accounts.length > 0);
+  const update = useUpdateCheck();
   const { openCompose } = useCompose();
   const { theme, setTheme } = useTheme();
   const nav = useNavigate();
@@ -403,6 +413,15 @@ function AppSidebar() {
 
       <SidebarFooter className="p-2">
         <SidebarMenu>
+          {update.updateAvailable && (
+            <SidebarMenuItem>
+              <SidebarMenuButton onClick={openUpdateDialog} tooltip={`Update available · v${update.latest}`} className="h-7 text-sm [&>svg]:text-muted-foreground">
+                <ArrowUpCircle />
+                <span className="flex-1 truncate">Update available</span>
+                <span className="size-1.5 rounded-full bg-foreground shrink-0" aria-hidden />
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
           <SidebarMenuItem>
             <SidebarMenuButton asChild isActive={loc.pathname.startsWith("/settings")} tooltip="Settings" className="h-7 text-sm [&>svg]:text-muted-foreground">
               <Link to="/settings">

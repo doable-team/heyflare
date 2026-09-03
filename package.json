@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:worker": "wrangler dev",
+    "prebuild": "node scripts/gen-version.mjs",
     "build": "vite build",
     "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.worker.json --noEmit",
     "deploy": "npm run build && wrangler deploy",

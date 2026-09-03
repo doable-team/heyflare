@@ -7,6 +7,8 @@ import { useAccount } from "../context/AccountContext";
 import { Avatar } from "../components/Avatar";
 import { Screen } from "./Screen";
 import { ActionSheet } from "./ActionSheet";
+import { useUpdateCheck } from "../lib/update";
+import { UpdateDialog } from "../components/UpdateDialog";
 
 function Row({ to, icon, label, count, onClick, hint }: { to?: string; icon: ReactNode; label: string; count?: number; onClick?: () => void; hint?: string }) {
   const inner = (
@@ -42,6 +44,8 @@ export default function MobileMore() {
   const { update } = useMeMutations();
   const theme = user?.settings?.theme ?? "system";
   const [themeOpen, setThemeOpen] = useState(false);
+  const [updateOpen, setUpdateOpen] = useState(false);
+  const upd = useUpdateCheck();
   const nav = useNavigate();
   const qc = useQueryClient();
   const logout = async () => {
@@ -88,10 +92,12 @@ export default function MobileMore() {
       </Group>
       <Group title="App">
         <Row to="/settings" icon={<Settings />} label="Settings" />
+        {upd.updateAvailable && <Row icon={<ArrowUpCircle />} label="Update available" hint={`v${upd.latest}`} onClick={() => setUpdateOpen(true)} />}
         <Row icon={theme === "dark" ? <Moon /> : theme === "light" ? <Sun /> : <Monitor />} label="Appearance" hint={theme === "system" ? "System" : theme === "dark" ? "Dark" : "Light"} onClick={() => setThemeOpen(true)} />
         <Row icon={<LogOut />} label="Log out" onClick={logout} />
       </Group>
       <div className="px-4 py-6 text-center text-[12px] text-muted-foreground">heyflare · {user?.email}</div>
+      <UpdateDialog open={updateOpen} onClose={() => setUpdateOpen(false)} info={upd} />
       <ActionSheet
         open={themeOpen}
         onOpenChange={setThemeOpen}
