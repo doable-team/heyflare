@@ -322,6 +322,27 @@ export function toAttachment(r: AttachmentRow, extra?: { thread_subject?: string
   };
 }
 
+/**
+ * Inline images arrive as `<img src="cid:...">` pointing at an attachment part. Rewrite them to the
+ * attachment proxy so signatures, logos and embedded photos actually render.
+ */
+export function rewriteCidImages(html: string, messageId: string, attachments: AttachmentRow[]): string {
+  if (!html || !html.includes("cid:")) return html;
+  const byCid = new Map<string, string>();
+  for (const a of attachments) {
+    const cid = (a.content_id ?? "").replace(/^<|>$/g, "").trim().toLowerCase();
+    if (cid) byCid.set(cid, a.id);
+    // Some senders reference the filename instead of the Content-ID.
+    const name = (a.filename ?? "").trim().toLowerCase();
+    if (name && !byCid.has(name)) byCid.set(name, a.id);
+  }
+  if (byCid.size === 0) return html;
+  return html.replace(/(["'(])cid:([^"')\s>]+)/gi, (whole, open: string, ref: string) => {
+    const id = byCid.get(decodeURIComponent(ref).trim().toLowerCase());
+    return id ? `${open}/api/messages/${messageId}/attachments/${id}` : whole;
+  });
+}
+
 export function toMessage(r: MessageRow, attachments: AttachmentRow[] = []): Message {
   return {
     id: r.id,
@@ -336,7 +357,7 @@ export function toMessage(r: MessageRow, attachments: AttachmentRow[] = []): Mes
     date: r.date,
     snippet: r.snippet,
     text_body: r.text_body,
-    html_body: r.html_body,
+    html_body: rewriteCidImages(r.html_body, r.id, attachments),
     is_from_me: !!r.is_from_me,
     unread: !!r.unread,
     has_attachments: !!r.has_attachments,
