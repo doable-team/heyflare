@@ -269,7 +269,6 @@ function AppSidebar() {
     { to: "/bubble-up", label: "Bubble Up", icon: <ArrowUpCircle /> },
   ];
   const library: NavItem[] = [
-    { to: "/assistant", label: "Assistant", icon: <Sparkles />, kbd: "⌘J" },
     { to: "/previously-seen", label: "Previously Seen", icon: <Eye /> },
     { to: "/contacts", label: "Contacts", icon: <Users /> },
     { to: "/clips", label: "Clips", icon: <Scissors /> },
