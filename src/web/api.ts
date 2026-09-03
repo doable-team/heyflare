@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type * as T from "@shared/types";
+import { markDraftSent } from "./lib/sentDrafts";
 
 export class ApiError extends Error {
   status: number;
@@ -406,7 +407,9 @@ export interface SendResult {
   draft_id?: string;
 }
 export async function sendMail(payload: SendPayload): Promise<SendResult> {
-  return api.post<SendResult>("/api/send", payload);
+  const res = await api.post<SendResult>("/api/send", payload);
+  markDraftSent(payload.draft_id, res.thread_id);
+  return res;
 }
 
 // ---------- Accounts / settings ----------

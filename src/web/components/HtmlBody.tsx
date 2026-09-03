@@ -131,7 +131,9 @@ export function HtmlBody({
     const doc = ref.current?.contentDocument;
     if (!doc) return;
     if (collapseQuotes && !usePlain) {
-      const count = applyQuotes(!quoted.shown);
+      // Start collapsed: pass the *current* state, not its inverse (that left the quotes visible
+      // while the button still said "Show quoted text", so the first click appeared to do nothing).
+      const count = applyQuotes(quoted.shown);
       setQuoted((q) => ({ count, shown: q.shown }));
     }
     resize();

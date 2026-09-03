@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ArrowRight, Check, Plus, Tag, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { Label } from "@shared/types";
@@ -10,7 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useCardScroll } from "../lib/cardKeys";
+import { useItemCursor } from "../lib/cardKeys";
 
 /** Strictly grayscale label shades (the "color" field stores one of these). */
 export const LABEL_SHADES = ["#37352f", "#5f5b54", "#7d7972", "#9b978f", "#b5b1a9", "#cfcbc3", "#e2dfd8", "#f1efe9"];
@@ -38,7 +38,7 @@ function Shades({ value, onPick }: { value: string; onPick: (c: string) => void 
   );
 }
 
-function LabelRow({ l }: { l: Label }) {
+function LabelRow({ l, focused }: { l: Label; focused?: boolean }) {
   const { update, remove } = useLabelMutations();
   const [name, setName] = useState(l.name);
   const [del, setDel] = useState(false);
@@ -49,7 +49,8 @@ function LabelRow({ l }: { l: Label }) {
     if (n !== l.name) update.mutate({ id: l.id, name: n }, { onError: (e) => toast.error((e as Error).message) });
   };
   return (
-    <div className="group flex items-center gap-3 px-2 h-10 rounded-md hover:bg-muted transition-colors duration-100">
+    <div className={cn("group relative flex items-center gap-3 px-2 h-10 rounded-md scroll-mt-20 hover:bg-muted transition-colors duration-100", focused && "bg-muted")}>
+      {focused && <span className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-foreground" />}
       <Popover open={open} onOpenChange={setOpen}>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -101,13 +102,14 @@ function LabelRow({ l }: { l: Label }) {
 }
 
 export default function Labels() {
-  useCardScroll();
   const q = useLabels();
+  const nav = useNavigate();
   const { create } = useLabelMutations();
   const [name, setName] = useState("");
   const [color, setColor] = useState(LABEL_SHADES[0]);
   const [open, setOpen] = useState(false);
   const list = q.data ?? [];
+  const { cursor } = useItemCursor({ count: list.length, onOpen: (i) => list[i] && nav(`/labels/${list[i].id}`) });
   return (
     <div className="max-w-3xl mx-auto">
       <PageHeader title="Labels" subtitle="Light-touch tags for cross-cutting stuff. Press b on any thread to add one." />
@@ -144,8 +146,10 @@ export default function Labels() {
       {q.isLoading && <SkeletonRows rows={4} compact />}
       {!q.isLoading && list.length === 0 && !q.error && <EmptyState compact icon={<Tag />} title="No labels yet." body="Make one above." />}
       <div>
-        {list.map((l) => (
-          <LabelRow key={l.id} l={l} />
+        {list.map((l, i) => (
+          <div key={l.id} data-item-index={i} data-focused={cursor === i || undefined}>
+            <LabelRow l={l} focused={cursor === i} />
+          </div>
         ))}
       </div>
     </div>

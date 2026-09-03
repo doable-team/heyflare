@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useKeys } from "./keys";
 import { overlayOpen, useFocusRegion } from "./focusStore";
 
@@ -52,4 +53,55 @@ export function useCardScroll(enabled = true, opts: { arrows?: boolean } = {}) {
     },
     enabled && region === "content",
   );
+}
+
+/**
+ * Arrow-key cursor for pages that are lists of things rather than something to read: Set Aside,
+ * Drafts, Clips, Files… ↑/↓ (or j/k) walk the items, Enter/o opens the focused one. Nothing is
+ * focused until the first press, and an empty page falls back to scrolling so the keys never feel dead.
+ *
+ * Mark each item with `data-item-index={i}` (and `scroll-mt-20`, so the sticky header doesn't clip it).
+ */
+export function useItemCursor({ count, onOpen, enabled = true }: { count: number; onOpen?: (index: number) => void; enabled?: boolean }) {
+  const [cursor, setCursor] = useState(-1);
+  const region = useFocusRegion();
+
+  // Keep the cursor inside the list when items disappear (a draft sent, a thread put back).
+  useEffect(() => {
+    setCursor((c) => (c >= count ? count - 1 : c));
+  }, [count]);
+
+  useEffect(() => {
+    if (cursor < 0) return;
+    document.querySelector(`[data-item-index="${cursor}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [cursor]);
+
+  const step = (delta: number) => {
+    if (overlayOpen()) return;
+    if (count === 0) {
+      scrollPageBy(delta * 0.25);
+      return;
+    }
+    setCursor((c) => Math.min(Math.max(c + delta, 0), count - 1));
+  };
+  const open = () => {
+    if (overlayOpen() || cursor < 0) return;
+    onOpen?.(cursor);
+  };
+
+  useKeys(
+    {
+      ArrowDown: () => step(1),
+      ArrowUp: () => step(-1),
+      j: () => step(1),
+      k: () => step(-1),
+      Enter: open,
+      o: open,
+      PageDown: () => !overlayOpen() && scrollPageBy(0.9),
+      PageUp: () => !overlayOpen() && scrollPageBy(-0.9),
+    },
+    enabled && region === "content",
+  );
+
+  return { cursor, setCursor };
 }

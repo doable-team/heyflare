@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ChevronDown, FileText, Inbox, Rss, ShieldOff } from "lucide-react";
 import { useScreenedOut, useUpdateContact } from "../api";
 import { useAccount } from "../context/AccountContext";
@@ -8,15 +8,17 @@ import { EmptyState, ErrorState, PageHeader, SkeletonRows } from "../components/
 import { useToast } from "../components/Toast";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { useCardScroll } from "../lib/cardKeys";
+import { useItemCursor } from "../lib/cardKeys";
+import { cn } from "@/lib/utils";
 
 export default function ScreenedOut() {
-  useCardScroll();
   const q = useScreenedOut();
+  const nav = useNavigate();
   const update = useUpdateContact();
   const { toast } = useToast();
   const { multi, glyphFor, accountFor } = useAccount();
   const contacts = q.data?.contacts ?? [];
+  const { cursor } = useItemCursor({ count: contacts.length, onOpen: (i) => contacts[i] && nav(`/contacts/${contacts[i].id}`) });
   const admit = (c: (typeof contacts)[number], status: "imbox" | "feed" | "paper_trail", label: string) =>
     update.mutate({ id: c.id, screen_status: status }, { onSuccess: () => toast(`${c.name || c.email} → ${label}`, { kind: "success" }) });
   return (
@@ -38,10 +40,11 @@ export default function ScreenedOut() {
       {!q.isLoading && contacts.length === 0 && !q.error && <EmptyState icon={<ShieldOff />} title="Nobody's screened out." body="Say no in the Screener and they'll be listed here." />}
       {contacts.length > 0 && (
         <ul>
-          {contacts.map((c) => {
+          {contacts.map((c, i) => {
             const acct = accountFor(c.account_id);
             return (
-              <li key={c.id} className="group flex items-center gap-3 px-2 h-11 rounded-md hover:bg-accent">
+              <li key={c.id} data-item-index={i} data-focused={cursor === i || undefined} className={cn("group relative flex items-center gap-3 px-2 h-11 rounded-md scroll-mt-20 hover:bg-accent", cursor === i && "bg-muted")}>
+                {cursor === i && <span className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-foreground" />}
                 <Avatar email={c.email} name={c.name} src={c.avatar_url} size={20} />
                 <Link to={`/contacts/${c.id}`} className="flex-1 min-w-0 flex items-center gap-2">
                   <span className="text-sm truncate">{c.name || c.email}</span>

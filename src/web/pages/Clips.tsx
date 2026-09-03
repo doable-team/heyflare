@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Check, Copy, MessageSquare, Scissors, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -8,9 +8,9 @@ import { EmptyState, ErrorState, PageHeader, SkeletonRows } from "../components/
 import { fmtDate } from "../lib/format";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useCardScroll } from "../lib/cardKeys";
+import { useItemCursor } from "../lib/cardKeys";
 
-function ClipRow({ id, text, thread_id, thread_subject, created_at }: { id: string; text: string; thread_id: string; thread_subject?: string; created_at: number }) {
+function ClipRow({ id, text, thread_id, thread_subject, created_at, focused }: { id: string; text: string; thread_id: string; thread_subject?: string; created_at: number; focused?: boolean }) {
   const { remove } = useClipMutations();
   const [copied, setCopied] = useState(false);
   const [leaving, setLeaving] = useState(false);
@@ -25,7 +25,7 @@ function ClipRow({ id, text, thread_id, thread_subject, created_at }: { id: stri
     window.setTimeout(() => remove.mutate(id, { onError: (e) => { setLeaving(false); toast.error((e as Error).message); } }), 120);
   };
   return (
-    <article className={cn("group rounded-md px-3 py-2.5 hover:bg-muted transition-colors duration-100", leaving && "opacity-0")}>
+    <article className={cn("group rounded-md px-3 py-2.5 scroll-mt-20 hover:bg-muted transition-colors duration-100", focused && "ring-1 ring-ring", leaving && "opacity-0")}>
       {codeLike ? (
         <div className="font-mono text-base tracking-wider tnum select-all break-all py-1">{text.trim()}</div>
       ) : (
@@ -63,9 +63,10 @@ function ClipRow({ id, text, thread_id, thread_subject, created_at }: { id: stri
 }
 
 export default function Clips() {
-  useCardScroll();
   const q = useClips();
+  const nav = useNavigate();
   const list = q.data ?? [];
+  const { cursor } = useItemCursor({ count: list.length, onOpen: (i) => list[i] && nav(`/t/${list[i].thread_id}`) });
   return (
     <div className="max-w-3xl mx-auto">
       <PageHeader title="Clips" subtitle="Bits of text you saved. Codes, addresses, the good sentence." />
@@ -75,8 +76,10 @@ export default function Clips() {
         <EmptyState icon={<Scissors />} title="Nothing clipped yet." body="Select any text inside an email and hit Save clip. It'll wait here so you never dig for it again." />
       )}
       <div className="space-y-0.5">
-        {list.map((c) => (
-          <ClipRow key={c.id} id={c.id} text={c.text} thread_id={c.thread_id} thread_subject={c.thread_subject} created_at={c.created_at} />
+        {list.map((c, i) => (
+          <div key={c.id} data-item-index={i} data-focused={cursor === i || undefined}>
+            <ClipRow id={c.id} text={c.text} thread_id={c.thread_id} thread_subject={c.thread_subject} created_at={c.created_at} focused={cursor === i} />
+          </div>
         ))}
       </div>
     </div>

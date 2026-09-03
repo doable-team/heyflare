@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ContextChip } from "../lib/assistantStore";
 import { focus } from "../lib/focusStore";
+import { draftSentThread, markDraftSent, subscribeSentDrafts } from "../lib/sentDrafts";
 
 /* ---------- rendering helpers ---------- */
 
@@ -72,18 +73,55 @@ export function DraftCard({ d, sentThreadId }: { d: AiDraftCard; sentThreadId?: 
   const { openCompose } = useCompose();
   const qc = useQueryClient();
   const [state, setState] = useState<"idle" | "sending" | "sent">(sentThreadId ? "sent" : "idle");
+  const [threadId, setThreadId] = useState<string | undefined>(sentThreadId);
+  // A draft can also be sent from the composer this card opened, or by the assistant itself.
+  useEffect(() => {
+    const sync = () => {
+      const t = draftSentThread(d.draft_id);
+      if (t !== null) {
+        setState("sent");
+        setThreadId((prev) => prev ?? t);
+      }
+    };
+    sync();
+    return subscribeSentDrafts(sync);
+  }, [d.draft_id]);
+  useEffect(() => {
+    if (sentThreadId) {
+      setState("sent");
+      setThreadId(sentThreadId);
+    }
+  }, [sentThreadId]);
   const send = async () => {
     setState("sending");
     try {
       await api.post("/api/send", { draft_id: d.draft_id, account_id: d.account_id, thread_id: d.thread_id, to: d.to, cc: d.cc, subject: d.subject, body_html: textToHtml(d.body_text) });
       setState("sent");
       toast("Sent");
+      markDraftSent(d.draft_id);
       qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== "me" });
     } catch (e) {
       setState("idle");
       toast.error((e as Error).message);
     }
   };
+  if (state === "sent") {
+    // Collapsed: the mail is gone, so the card stops offering to send it.
+    return (
+      <div className="my-2 rounded-lg bg-muted/50 px-3 py-2 text-[13px] flex items-center gap-2 text-muted-foreground">
+        <Check className="size-3.5 shrink-0" />
+        <span className="truncate">
+          Sent to {d.to.map((a) => a.name || a.email).join(", ")} · <span className="text-foreground/80">{d.subject}</span>
+        </span>
+        {threadId && (
+          <Link className="ml-auto shrink-0 underline underline-offset-2 hover:text-foreground" to={`/t/${threadId}`}>
+            Open
+          </Link>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="my-2 rounded-lg bg-muted/50 p-3 text-[13px]">
       <div className="flex items-center gap-2 text-muted-foreground mb-1">
@@ -93,14 +131,8 @@ export function DraftCard({ d, sentThreadId }: { d: AiDraftCard; sentThreadId?: 
       <div className="font-medium mb-1">{d.subject}</div>
       <Prose text={d.body_text} className="text-[13px] leading-5 text-foreground/90 max-h-56 overflow-y-auto" />
       <div className="flex items-center gap-2 mt-3">
-        {state === "sent" ? (
-          <span className="inline-flex items-center gap-1 text-muted-foreground"><Check className="size-3.5" /> Sent{sentThreadId ? <> · <Link className="underline underline-offset-2" to={`/t/${sentThreadId}`}>open</Link></> : null}</span>
-        ) : (
-          <>
-            <Button size="sm" onClick={send} disabled={state === "sending"}>{state === "sending" ? <Loader2 className="animate-spin" /> : <Send />} Send</Button>
-            <Button size="sm" variant="ghost" onClick={() => openCompose({ draft_id: d.draft_id, account_id: d.account_id, thread_id: d.thread_id, to: d.to, cc: d.cc, subject: d.subject, body_html: textToHtml(d.body_text) })}>Open in composer</Button>
-          </>
-        )}
+        <Button size="sm" onClick={send} disabled={state === "sending"}>{state === "sending" ? <Loader2 className="animate-spin" /> : <Send />} Send</Button>
+        <Button size="sm" variant="ghost" onClick={() => openCompose({ draft_id: d.draft_id, account_id: d.account_id, thread_id: d.thread_id, to: d.to, cc: d.cc, subject: d.subject, body_html: textToHtml(d.body_text) })}>Open in composer</Button>
       </div>
     </div>
   );
@@ -360,9 +392,11 @@ export function AssistantChat({
             value={input}
             onChange={(e) => {
               const v = e.target.value;
-              // Typing "@" opens the thread picker (panel mode) and doesn't leave the "@" behind.
-              if (onAddContext && v.endsWith("@") && !input.endsWith("@")) {
-                setInput(v.slice(0, -1));
+              // "@" opens the thread picker only when it starts a word — otherwise you could never
+              // type an email address (issue #2). The character is always kept.
+              const startsWord = v.length === 1 || /\s$/.test(v.slice(0, -1));
+              if (onAddContext && v.endsWith("@") && !input.endsWith("@") && startsWord) {
+                setInput(v);
                 onAddContext();
                 return;
               }

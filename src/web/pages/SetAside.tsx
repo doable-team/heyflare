@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Bookmark, Check, Paperclip, ShieldCheck, StickyNote } from "lucide-react";
 import type { ThreadSummary } from "@shared/types";
 import { cn } from "@/lib/utils";
@@ -14,15 +14,15 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useCardScroll } from "../lib/cardKeys";
+import { useItemCursor } from "../lib/cardKeys";
 
 const OUT_MS = 120;
 
-function Card({ t, leaving, onDone }: { t: ThreadSummary; leaving: boolean; onDone: () => void }) {
+function Card({ t, leaving, focused, onDone }: { t: ThreadSummary; leaving: boolean; focused?: boolean; onDone: () => void }) {
   const { multi, glyphFor, accountFor } = useAccount();
   const acct = accountFor(t.account_id);
   return (
-    <article className={cn("group flex flex-col rounded-md bg-muted/40 transition-opacity duration-100", leaving && "opacity-0")}>
+    <article className={cn("group flex flex-col rounded-md bg-muted/40 scroll-mt-20 transition-opacity duration-100", focused && "ring-1 ring-ring", leaving && "opacity-0")}>
       <div className="flex items-center gap-2 px-4 pt-4">
         <Avatar email={t.last_from.email} name={t.last_from.name} src={t.last_from.avatar_url} size={20} />
         <span className="text-[13px] text-muted-foreground truncate flex-1">{t.last_from.name || t.last_from.email}</span>
@@ -81,14 +81,15 @@ function Card({ t, leaving, onDone }: { t: ThreadSummary; leaving: boolean; onDo
 }
 
 export default function SetAside() {
-  useCardScroll();
   const { accounts } = useAccount();
   const imbox = useImbox(accounts.length > 0);
   const bulk = useBulkAction();
   const { toast } = useToast();
+  const nav = useNavigate();
   const [leaving, setLeaving] = useState<Set<string>>(new Set());
-  if (accounts.length === 0) return <ConnectGmailCard />;
   const list = imbox.data?.set_aside ?? [];
+  const { cursor } = useItemCursor({ count: list.length, onOpen: (i) => list[i] && nav(`/t/${list[i].id}`) });
+  if (accounts.length === 0) return <ConnectGmailCard />;
   const done = (t: ThreadSummary) => {
     setLeaving((l) => new Set([...l, t.id]));
     window.setTimeout(() => {
@@ -118,8 +119,10 @@ export default function SetAside() {
       )}
       {!imbox.isLoading && list.length === 0 && !imbox.error && <EmptyState icon={<Bookmark />} title="Nothing set aside." body="Press a on any thread to keep it handy here." />}
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 items-start">
-        {list.map((t) => (
-          <Card key={t.id} t={t} leaving={leaving.has(t.id)} onDone={() => done(t)} />
+        {list.map((t, i) => (
+          <div key={t.id} data-item-index={i} data-focused={cursor === i || undefined}>
+            <Card t={t} leaving={leaving.has(t.id)} focused={cursor === i} onDone={() => done(t)} />
+          </div>
         ))}
       </div>
     </div>

@@ -9,7 +9,8 @@ import { EmptyState, ErrorState, PageHeader, SkeletonRows } from "../components/
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useCardScroll } from "../lib/cardKeys";
+import { useItemCursor } from "../lib/cardKeys";
+import { cn } from "@/lib/utils";
 
 function preview(html: string): string {
   return html
@@ -22,12 +23,13 @@ function preview(html: string): string {
     .slice(0, 120);
 }
 
-function DraftRow({ d, mode, onOpen, onCancel, onDelete }: { d: Draft; mode: "draft" | "scheduled"; onOpen: () => void; onCancel: () => void; onDelete: () => void }) {
+function DraftRow({ d, mode, focused, onOpen, onCancel, onDelete }: { d: Draft; mode: "draft" | "scheduled"; focused?: boolean; onOpen: () => void; onCancel: () => void; onDelete: () => void }) {
   const { multi, glyphFor, accountFor } = useAccount();
   const people = d.to.length ? d.to : d.cc;
   const snippet = preview(d.body_html);
   return (
-    <div className="group flex items-center gap-2.5 px-2 h-11 rounded-md hover:bg-muted">
+    <div className={cn("group relative flex items-center gap-2.5 px-2 h-11 rounded-md scroll-mt-20 hover:bg-muted", focused && "bg-muted")}>
+      {focused && <span className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-foreground" />}
       <div className="size-5 shrink-0 flex items-center justify-center">
         {people.length > 1 ? <AvatarStack people={people} size={20} max={2} /> : people[0] ? <Avatar email={people[0].email} name={people[0].name} src={people[0].avatar_url} size={20} /> : <PenSquare size={14} className="text-muted-foreground" />}
       </div>
@@ -70,11 +72,13 @@ function DraftRow({ d, mode, onOpen, onCancel, onDelete }: { d: Draft; mode: "dr
 }
 
 export default function Drafts({ mode }: { mode: "draft" | "scheduled" }) {
-  useCardScroll();
   const q = useDrafts();
   const m = useDraftMutations();
   const { openCompose } = useCompose();
   const list = (q.data ?? []).filter((d) => (mode === "scheduled" ? d.status === "scheduled" || d.status === "sending" || d.status === "failed" : d.status === "draft"));
+  const openDraft = (d: Draft) =>
+    openCompose({ draft_id: d.id, account_id: d.account_id, thread_id: d.thread_id, reply_to_message_id: d.reply_to_message_id, to: d.to, cc: d.cc, bcc: d.bcc, subject: d.subject, body_html: d.body_html, title: d.status === "draft" ? "Draft" : "Scheduled message" });
+  const { cursor } = useItemCursor({ count: list.length, onOpen: (i) => list[i] && openDraft(list[i]) });
   const scheduled = mode === "scheduled";
   return (
     <div className="max-w-3xl mx-auto">
@@ -94,15 +98,17 @@ export default function Drafts({ mode }: { mode: "draft" | "scheduled" }) {
           action={!scheduled && <Button variant="ghost" size="sm" onClick={() => openCompose()}>Start writing</Button>}
         />
       )}
-      {list.map((d) => (
+      {list.map((d, i) => (
+        <div key={d.id} data-item-index={i} data-focused={cursor === i || undefined}>
         <DraftRow
-          key={d.id}
           d={d}
           mode={mode}
-          onOpen={() => openCompose({ draft_id: d.id, account_id: d.account_id, thread_id: d.thread_id, reply_to_message_id: d.reply_to_message_id, to: d.to, cc: d.cc, bcc: d.bcc, subject: d.subject, body_html: d.body_html, title: d.status === "draft" ? "Draft" : "Scheduled message" })}
+          focused={cursor === i}
+          onOpen={() => openDraft(d)}
           onCancel={() => m.cancelScheduled.mutate(d.id)}
           onDelete={() => m.remove.mutate(d.id)}
         />
+        </div>
       ))}
     </div>
   );

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ArrowUpCircle, X } from "lucide-react";
 import type { ThreadSummary } from "@shared/types";
 import { cn } from "@/lib/utils";
@@ -13,19 +13,20 @@ import { useToast } from "../components/Toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useCardScroll } from "../lib/cardKeys";
+import { useItemCursor } from "../lib/cardKeys";
 
 const OUT_MS = 120;
 
 export default function BubbleUp() {
-  useCardScroll();
   const { accounts, multi, glyphFor, accountFor } = useAccount();
   const q = useThreads("bubble_up", { enabled: accounts.length > 0 });
   const bulk = useBulkAction();
   const { toast } = useToast();
+  const nav = useNavigate();
   const [leaving, setLeaving] = useState<Set<string>>(new Set());
-  if (accounts.length === 0) return <ConnectGmailCard />;
   const list = (q.data?.pages.flatMap((p) => p.threads) ?? []).filter((t) => t.bubble_up_at).sort((a, b) => (a.bubble_up_at ?? 0) - (b.bubble_up_at ?? 0));
+  const { cursor } = useItemCursor({ count: list.length, onOpen: (i) => list[i] && nav(`/t/${list[i].id}`) });
+  if (accounts.length === 0) return <ConnectGmailCard />;
   const cancel = (t: ThreadSummary) => {
     setLeaving((l) => new Set([...l, t.id]));
     window.setTimeout(() => {
@@ -45,10 +46,11 @@ export default function BubbleUp() {
       {!q.isLoading && list.length === 0 && !q.error && <EmptyState icon={<ArrowUpCircle />} title="Nothing scheduled to bubble up." body="Pick a thread, press z, choose a time." />}
       {list.length > 0 && (
         <ul>
-          {list.map((t) => {
+          {list.map((t, i) => {
             const acct = accountFor(t.account_id);
             return (
-              <li key={t.id} className={cn("group flex items-center gap-3 px-2 h-11 rounded-md hover:bg-accent transition-opacity duration-100", leaving.has(t.id) && "opacity-0")}>
+              <li key={t.id} data-item-index={i} data-focused={cursor === i || undefined} className={cn("group relative flex items-center gap-3 px-2 h-11 rounded-md scroll-mt-20 hover:bg-accent transition-opacity duration-100", cursor === i && "bg-muted", leaving.has(t.id) && "opacity-0")}>
+                {cursor === i && <span className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-foreground" />}
                 <Avatar email={t.last_from.email} name={t.last_from.name} src={t.last_from.avatar_url} size={20} />
                 <Link to={`/t/${t.id}?peek=1`} className="flex-1 min-w-0 flex items-center gap-2">
                   <span className="text-sm truncate">{t.subject || "(no subject)"}</span>

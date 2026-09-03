@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { FolderOpen, Paperclip, MessagesSquare, Plus } from "lucide-react";
 import { toast } from "sonner";
 import type { Collection } from "@shared/types";
@@ -11,11 +11,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { useCardScroll } from "../lib/cardKeys";
+import { useItemCursor } from "../lib/cardKeys";
+import { cn } from "@/lib/utils";
 
-function CollectionRow({ c }: { c: Collection }) {
+function CollectionRow({ c, focused }: { c: Collection; focused?: boolean }) {
   return (
-    <Link to={`/collections/${c.id}`} className="group grid grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-3 rounded-md px-2 h-11 hover:bg-muted transition-colors duration-100">
+    <Link to={`/collections/${c.id}`} className={cn("group relative grid grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-3 rounded-md px-2 h-11 scroll-mt-20 hover:bg-muted transition-colors duration-100", focused && "bg-muted")}>
+      {focused && <span className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-foreground" />}
       <FolderOpen size={16} className="text-muted-foreground" />
       <div className="min-w-0 flex items-baseline gap-2">
         <span className="text-sm font-medium truncate">{c.name}</span>
@@ -71,10 +73,11 @@ export function NewCollectionModal({ open, onClose, onCreated }: { open: boolean
 }
 
 export default function Collections() {
-  useCardScroll();
   const q = useCollections();
+  const nav = useNavigate();
   const [open, setOpen] = useState(false);
   const list = q.data ?? [];
+  const { cursor } = useItemCursor({ count: list.length, onOpen: (i) => list[i] && nav(`/collections/${list[i].id}`) });
   return (
     <div className="max-w-3xl mx-auto">
       <PageHeader
@@ -97,8 +100,10 @@ export default function Collections() {
         />
       )}
       <div>
-        {list.map((c) => (
-          <CollectionRow key={c.id} c={c} />
+        {list.map((c, i) => (
+          <div key={c.id} data-item-index={i} data-focused={cursor === i || undefined}>
+            <CollectionRow c={c} focused={cursor === i} />
+          </div>
         ))}
       </div>
       <NewCollectionModal open={open} onClose={() => setOpen(false)} />
