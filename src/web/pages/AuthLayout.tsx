@@ -2,6 +2,8 @@ import { Mark } from "../components/Logo";
 import type { ReactNode } from "react";
 import { Navigate, useSearchParams } from "react-router-dom";
 import { useMe } from "../api";
+import { isNative } from "../lib/native";
+import { cn } from "@/lib/utils";
 
 /** Plain auth page: wordmark top-left, a 360px form centered, no card. */
 export function AuthLayout({ title, subtitle, children }: { title: string; subtitle?: ReactNode; children: ReactNode }) {
@@ -10,7 +12,11 @@ export function AuthLayout({ title, subtitle, children }: { title: string; subti
   if (me.data?.user) return <Navigate to={sp.get("next") || "/"} replace />;
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <div className="h-12 flex items-center px-5 gap-2 text-sm font-semibold">
+      {/* In the Mac app the window has no title bar, so leave room for the traffic lights and let this strip drag the window. */}
+      <div
+        data-tauri-drag-region={isNative || undefined}
+        className={cn("flex items-center px-5 gap-2 text-sm font-semibold", isNative ? "h-14 pt-6 pl-[86px]" : "h-12")}
+      >
         <Mark />
         heyflare
       </div>
