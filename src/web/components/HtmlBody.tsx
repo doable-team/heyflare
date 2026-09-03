@@ -6,6 +6,7 @@ import { textToHtml } from "../lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { isNative, native } from "../lib/native";
 
 DOMPurify.addHook("afterSanitizeAttributes", (node) => {
   if (node.tagName === "A") {
@@ -161,6 +162,37 @@ export function HtmlBody({
       doc.addEventListener("selectionchange", handler);
       doc.addEventListener("mouseup", handler);
     }
+
+    // Links inside the sandbox can't navigate the top frame, and the Mac webview swallows
+    // window.open — so intercept the click and hand the URL to the system browser.
+    doc.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((a) => {
+      a.setAttribute("target", "_blank");
+      a.setAttribute("rel", "noopener noreferrer");
+    });
+    doc.addEventListener("click", (ev) => {
+      const target = ev.target as HTMLElement | null;
+      const a = target?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!a) return;
+      const raw = (a.getAttribute("href") ?? "").trim();
+      if (!raw || raw.startsWith("#") || /^(javascript|data|cid|blob):/i.test(raw)) {
+        ev.preventDefault();
+        return;
+      }
+      let href: string;
+      if (/^(mailto|tel):/i.test(raw)) {
+        href = raw;
+      } else {
+        try {
+          href = new URL(raw, location.href).toString();
+        } catch {
+          ev.preventDefault();
+          return;
+        }
+      }
+      ev.preventDefault();
+      if (isNative) native.openExternal(href);
+      else window.open(href, "_blank", "noopener,noreferrer");
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resize, onClip, collapseQuotes, usePlain, applyQuotes]);
 
