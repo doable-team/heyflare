@@ -96,14 +96,17 @@ export function ThreadRow({
         {compact ? (
           <div className="flex items-center gap-1.5 min-w-0 leading-tight">
             {unread && <span className="size-1.5 rounded-full bg-foreground shrink-0" aria-label="Unread" />}
-            <span className={cn("truncate text-[13px] shrink-0 max-w-[38%]", unread ? "font-semibold text-foreground" : "font-medium text-foreground/90")}>{senderLine(t)}</span>
+            {/* Subject leads, as in the two-line rows; unread is bold, read is muted. */}
+            <span className={cn("truncate text-[13px] shrink-0 max-w-[55%]", unread ? "font-semibold text-foreground" : "font-normal text-muted-foreground")}>
+              {t.subject || "(no subject)"}
+            </span>
             {t.message_count > 1 && <span className="text-xs text-tertiary tnum shrink-0">{t.message_count}</span>}
             {glyph && <AccountGlyph glyph={glyph} label={accountFor(t.account_id)?.email} />}
             {t.bubbled && <Badge variant="outline" className="h-4 px-1 text-[10px] font-normal text-muted-foreground">Bubbled up</Badge>}
             {showBucket && t.bucket !== "imbox" && <Badge variant="outline" className="h-4 px-1 text-[10px] font-normal text-muted-foreground">{bucketName(t.bucket)}</Badge>}
-            <span className={cn("truncate text-[13px] min-w-0", unread ? "text-foreground" : "text-foreground/80")}>
-              {t.subject || "(no subject)"}
-              {t.snippet && <span className="text-muted-foreground"> — {t.snippet}</span>}
+            <span className={cn("truncate text-[13px] min-w-0", unread ? "text-foreground/80" : "text-tertiary")}>
+              {senderLine(t)}
+              {t.snippet && <span className={unread ? "text-muted-foreground" : "text-tertiary"}> — {t.snippet}</span>}
             </span>
           </div>
         ) : (
