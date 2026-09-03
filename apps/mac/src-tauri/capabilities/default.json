@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Local (bundled) pages: the welcome screen.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "store:default",
+    "window-state:default",
+    "notification:default",
+    "updater:default",
+    "process:default",
+    "opener:default",
+    "allow-open-server",
+    "allow-get-server",
+    "allow-reset-server"
+  ]
+}

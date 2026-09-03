@@ -1,0 +1,17 @@
+{
+  "name": "heyflare-mac",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "build:debug": "tauri build --debug",
+    "build:universal": "tauri build --target universal-apple-darwin",
+    "icons": "tauri icon icon-source.png",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4"
+  }
+}

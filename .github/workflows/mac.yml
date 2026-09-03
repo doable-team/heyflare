@@ -1,0 +1,67 @@
+name: Mac app
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Install app deps
+        working-directory: apps/mac
+        run: npm ci || npm install
+      - name: Build universal DMG
+        working-directory: apps/mac
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npx tauri build --target universal-apple-darwin
+      - name: Collect artifacts
+        id: collect
+        run: |
+          set -e
+          B=apps/mac/src-tauri/target/universal-apple-darwin/release/bundle
+          ls -R "$B" | head -50
+          DMG=$(ls "$B"/dmg/*.dmg | head -1)
+          cp "$DMG" heyflare-mac-universal.dmg
+          TAR=$(ls "$B"/macos/*.app.tar.gz 2>/dev/null | head -1 || true)
+          if [ -n "$TAR" ]; then
+            cp "$TAR" heyflare-mac-universal.app.tar.gz
+            SIG=$(cat "$TAR.sig" 2>/dev/null || echo "")
+            VER=$(node -p "require('./apps/mac/src-tauri/tauri.conf.json').version")
+            URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/heyflare-mac-universal.app.tar.gz"
+            printf '{"version":"%s","notes":"heyflare for Mac %s","pub_date":"%s","platforms":{"darwin-universal":{"signature":"%s","url":"%s"},"darwin-aarch64":{"signature":"%s","url":"%s"},"darwin-x86_64":{"signature":"%s","url":"%s"}}}\n' \
+              "$VER" "$VER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SIG" "$URL" "$SIG" "$URL" "$SIG" "$URL" > latest.json
+          fi
+      - name: Upload to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" heyflare-mac-universal.dmg --clobber
+          [ -f heyflare-mac-universal.app.tar.gz ] && gh release upload "${GITHUB_REF_NAME}" heyflare-mac-universal.app.tar.gz latest.json --clobber || true
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'release'
+        with:
+          name: heyflare-mac
+          path: |
+            heyflare-mac-universal.dmg
+            latest.json

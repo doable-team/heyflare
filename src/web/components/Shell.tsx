@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { ArrowUpCircle, Bookmark, CalendarClock, Check, ChevronDown, ChevronRight, Clock, Eye, FileText, Files, FolderOpen, Inbox, Keyboard, Layers, LogOut, Mail, Monitor, Moon, PenSquare, Plus, Rss, Scissors, Search, Send, Settings, Shield, ShieldOff, Sun, Tag, Trash2, Users, Sparkles } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { Mark } from "./Logo";
+import { isNative, native, onMenu, installExternalLinkHandler } from "../lib/native";
 import { startGoogleConnect } from "../lib/connect";
 import { ALL, useAccount } from "../context/AccountContext";
 import { useCompose } from "../context/ComposeContext";
@@ -157,6 +158,27 @@ function Overlays() {
     return () => window.removeEventListener("keydown", fn);
   }, []);
 
+  // Native macOS shell: menu bar actions, external links, notification deep links.
+  useEffect(() => {
+    if (!isNative) return;
+    const offMenu = onMenu((id) => {
+      if (id.startsWith("nav:")) return nav(id.slice(4));
+      switch (id) {
+        case "compose": return openCompose();
+        case "palette": return setOverlay({ palette: true });
+        case "assistant": return assistant.toggle();
+        case "toggle-sidebar": return window.dispatchEvent(new KeyboardEvent("keydown", { key: "b", metaKey: true, bubbles: true }));
+        case "back": return history.back();
+        case "forward": return history.forward();
+      }
+    });
+    const offLinks = installExternalLinkHandler();
+    const onFocus = () => { native.takePendingUrl().then((u) => { if (u) nav(u); }); };
+    window.addEventListener("focus", onFocus);
+    return () => { offMenu(); offLinks(); window.removeEventListener("focus", onFocus); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <>
       <CommandPalette open={palette} onClose={() => setOverlay({ palette: false })} onCompose={() => openCompose()} onToggleTheme={toggleTheme} onShortcuts={() => setOverlay({ help: true })} onAssistant={() => assistant.open()} theme={theme} hasAccount={!!account || accounts.length > 0} />
@@ -172,7 +194,7 @@ function TopBar() {
   const title = pageTitle(loc.pathname);
   const scopeLabel = accounts.length > 1 ? (scope === ALL ? "All accounts" : account?.email) : undefined;
   return (
-    <header className="sticky top-0 z-30 h-11 flex items-center gap-2 px-2 sm:px-3 bg-background/90 backdrop-blur">
+    <header data-tauri-drag-region={isNative || undefined} className="sticky top-0 z-30 h-11 flex items-center gap-2 px-2 sm:px-3 bg-background/90 backdrop-blur">
       <SidebarTrigger className="text-muted-foreground" />
       <div className="flex items-center gap-1.5 min-w-0 text-sm">
         <span className="font-medium truncate">{title}</span>
@@ -215,6 +237,18 @@ function AppSidebar() {
   }, [loc.pathname]);
 
   const c = counts.data;
+  const prevNew = useRef<number | null>(null);
+  useEffect(() => {
+    if (!isNative || !c) return;
+    native.setBadge((c.imbox_new ?? 0) + (c.screener ?? 0));
+    const prev = prevNew.current;
+    prevNew.current = c.imbox_new ?? 0;
+    if (prev != null && (c.imbox_new ?? 0) > prev && !document.hasFocus()) {
+      api.get<{ new_threads: { id: string; subject: string; last_from: { name: string; email: string } }[] }>("/api/imbox")
+        .then((d) => { const t = d.new_threads?.[0]; if (t) native.notify(t.last_from.name || t.last_from.email, t.subject || "(no subject)", `/t/${t.id}`); })
+        .catch(() => {});
+    }
+  }, [c?.imbox_new, c?.screener]);
   const logout = async () => {
     await api.post("/auth/logout");
     qc.clear();
@@ -275,7 +309,7 @@ function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon" className="border-r-0">
-      <SidebarHeader className="gap-1 p-2">
+      <SidebarHeader data-tauri-drag-region={isNative || undefined} className={cn("gap-1 p-2", isNative && "pt-7")}>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton size="lg" className="h-9 data-[state=open]:bg-sidebar-accent group-data-[collapsible=icon]:!p-1">

@@ -119,6 +119,12 @@ no existing DNS record for the host) or a zone route; or delete `routes` to use 
 Open your host. You'll be sent to `/setup` to create the single owner login (any email + password). After that `/setup`
 locks and only `/login` works. Then **Connect Gmail** from the sidebar. Turn on two-factor auth in Settings → Security.
 
+## Mac app
+
+A native macOS app (Tauri 2, WebKit, ~10 MB) lives in [`apps/mac`](apps/mac). It wraps your server with a real title bar,
+native menu bar and shortcuts, dock badge, notifications, external links in your browser, and auto-updates. Download the
+DMG from [Releases](https://github.com/doable-team/heyflare/releases) or build it yourself (`cd apps/mac && npm install && npm run build`).
+
 ## How mail flows
 - Connecting Gmail imports **nothing**. It records Gmail's history cursor and only mail that arrives afterwards syncs.
 - Every first-time sender waits in the **Screener**. Decisions are per person and apply across all your accounts.

@@ -1,0 +1,33 @@
+[package]
+name = "heyflare"
+version = "0.1.0"
+description = "heyflare for Mac — a native shell for your heyflare mail server"
+authors = ["Doable Team"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+name = "heyflare_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-store = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
