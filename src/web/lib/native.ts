@@ -3,8 +3,34 @@ type Tauri = {
   core: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
   event: { listen: (name: string, cb: (e: { payload: unknown }) => void) => Promise<() => void> };
 };
+type Internals = {
+  invoke: (cmd: string, payload?: Record<string, unknown>, options?: unknown) => Promise<unknown>;
+  transformCallback?: (cb: (v: unknown) => void, once?: boolean) => number;
+};
+function internals(): Internals | undefined {
+  return typeof window !== "undefined" ? ((window as unknown as { __TAURI_INTERNALS__?: Internals }).__TAURI_INTERNALS__ ?? undefined) : undefined;
+}
+/**
+ * The bundled JS API (`window.__TAURI__`) is not always injected into a *remote* page, while the
+ * low-level bridge (`__TAURI_INTERNALS__`) always is. Prefer the API, fall back to the bridge —
+ * without this, every native call silently did nothing in the app.
+ */
 function tauri(): Tauri | undefined {
-  return typeof window !== "undefined" ? ((window as unknown as { __TAURI__?: Tauri }).__TAURI__ ?? undefined) : undefined;
+  const api = typeof window !== "undefined" ? (window as unknown as { __TAURI__?: Tauri }).__TAURI__ : undefined;
+  if (api?.core?.invoke) return api;
+  const i = internals();
+  if (!i?.invoke) return undefined;
+  return {
+    core: { invoke: (cmd, args) => i.invoke(cmd, args ?? {}) },
+    event: {
+      listen: async (name, cb) => {
+        if (!i.transformCallback) return () => {};
+        const handler = i.transformCallback((payload) => cb({ payload }));
+        const id = (await i.invoke("plugin:event|listen", { event: name, target: { kind: "Any" }, handler })) as number;
+        return () => void i.invoke("plugin:event|unlisten", { event: name, eventId: id });
+      },
+    },
+  };
 }
 export const isNative: boolean = typeof window !== "undefined" && !!(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
 
