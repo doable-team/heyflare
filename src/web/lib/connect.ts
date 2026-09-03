@@ -1,4 +1,4 @@
-import { isNative, native } from "./native";
+import { isNative, native, openExternalUrl } from "./native";
 
 // Full-screen overlay shown while the browser takes over the OAuth flow.
 const MARK = `<svg width="40" height="40" viewBox="0 0 64 64" aria-hidden><rect width="64" height="64" rx="16" fill="currentColor"/><path d="M21 15v34M21 37c0-9 18-9 18 0v12" fill="none" stroke="var(--background)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="47" cy="17" r="4.5" fill="var(--background)"/></svg>`;
@@ -70,7 +70,7 @@ async function startNative(hint?: string) {
     alert(e instanceof Error ? e.message : "Couldn't start the Google flow.");
     return;
   }
-  native.openExternal(url);
+  openExternalUrl(url);
   showWaitingOverlay(refresh);
   // The window regaining focus is the usual signal that Google is done.
   const onFocus = () => {

@@ -6,7 +6,7 @@ import { textToHtml } from "../lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { isNative, native } from "../lib/native";
+import { openExternalUrl } from "../lib/native";
 
 DOMPurify.addHook("afterSanitizeAttributes", (node) => {
   if (node.tagName === "A") {
@@ -190,8 +190,7 @@ export function HtmlBody({
         }
       }
       ev.preventDefault();
-      if (isNative) native.openExternal(href);
-      else window.open(href, "_blank", "noopener,noreferrer");
+      openExternalUrl(href);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resize, onClip, collapseQuotes, usePlain, applyQuotes]);

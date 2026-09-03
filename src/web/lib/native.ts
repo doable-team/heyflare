@@ -45,6 +45,26 @@ async function invoke<T = unknown>(cmd: string, args?: Record<string, unknown>):
   }
 }
 
+/**
+ * Send a URL to the default browser.
+ *
+ * In the Mac app we deliberately *navigate* rather than call the `open_external` command: the JS
+ * bridge is not reliably injected into the remote page, and a silent no-op is worse than useless.
+ * The app's window carries a navigation guard that catches anything leaving the server, opens it in
+ * the browser and blocks the navigation, so the window never actually moves.
+ */
+export function openExternalUrl(url: string) {
+  if (isNative) {
+    try {
+      window.location.assign(url);
+      return;
+    } catch {
+      /* fall through */
+    }
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
 export const native = {
   /** Dock badge (0 clears it). */
   setBadge: (count: number) => void invoke("set_badge", { count: Math.max(0, Math.floor(count)) }),
@@ -113,7 +133,7 @@ export function installExternalLinkHandler(): () => void {
     }
     if (url.origin === location.origin && a.target !== "_blank") return;
     e.preventDefault();
-    native.openExternal(url.toString());
+    openExternalUrl(url.toString());
   };
   document.addEventListener("click", onClick, true);
   return () => document.removeEventListener("click", onClick, true);
