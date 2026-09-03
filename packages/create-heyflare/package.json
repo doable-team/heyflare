@@ -1,6 +1,6 @@
 {
   "name": "create-heyflare",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Scaffold and deploy heyflare — a self-hosted HEY-style email client with a built-in AI agent, on Cloudflare.",
   "license": "MIT",
   "type": "module",
