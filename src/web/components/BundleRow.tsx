@@ -13,7 +13,7 @@ export function bundleHref(b: Bundle): string {
 }
 
 /** One batch of mail from a bundled sender (same row grammar as ThreadRow). */
-export function BundleRow({ bundle: b, compact, onSeen, leaving }: { bundle: Bundle; compact?: boolean; onSeen?: (b: Bundle) => void; leaving?: boolean }) {
+export function BundleRow({ bundle: b, compact, onSeen, leaving, focused }: { bundle: Bundle; compact?: boolean; onSeen?: (b: Bundle) => void; leaving?: boolean; focused?: boolean }) {
   const { multi, glyphFor, accountFor } = useAccount();
   const nav = useNavigate();
   const open = b.status === "open";
@@ -21,12 +21,15 @@ export function BundleRow({ bundle: b, compact, onSeen, leaving }: { bundle: Bun
   const countText = `${b.message_count} ${b.message_count === 1 ? "message" : "messages"}`;
   return (
     <div
+      data-row-id={`b:${b.id}`}
       className={cn(
-        "group relative grid items-center gap-2.5 rounded-md px-2 transition-colors duration-100 hover:bg-muted",
+        "group relative grid items-center gap-2.5 rounded-md px-2 transition-colors duration-100",
         compact ? "grid-cols-[24px_1fr_auto] h-11" : "grid-cols-[24px_1fr_auto] h-14",
+        focused ? "bg-muted" : "hover:bg-muted",
         leaving && "row-out",
       )}
     >
+      {focused && <span className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-foreground" />}
       <BundleAvatar email={b.email} name={b.name} src={b.avatar_url} size={20} />
       <Link to={bundleHref(b)} className="min-w-0 block outline-none">
         <div className="flex items-center gap-1.5 min-w-0 leading-tight">

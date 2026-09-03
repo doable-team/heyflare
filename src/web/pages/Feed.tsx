@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ArrowUpRight, ChevronDown, FileText, Inbox, Rss, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFeed, useBulkAction, type FeedThread } from "../api";
@@ -10,6 +10,7 @@ import { LoadMore } from "../components/ThreadList";
 import { Avatar, AccountGlyph } from "../components/Avatar";
 import { EmptyState, ErrorState, PageHeader } from "../components/EmptyState";
 import { useToast } from "../components/Toast";
+import { useCardCursor } from "../lib/cardKeys";
 import { fmtTime, fmtFull, unsubscribeTarget } from "../lib/format";
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -143,8 +144,10 @@ export default function Feed() {
   const [show, setShow] = useState<"new" | "all">("new");
   const feed = useFeed(accounts.length > 0, show);
   const [leaving, setLeaving] = useState<Set<string>>(new Set());
-  if (accounts.length === 0) return <ConnectGmailCard />;
+  const nav = useNavigate();
   const threads = feed.data?.pages.flatMap((p) => p.threads) ?? [];
+  const { cursor } = useCardCursor(threads.length, { onOpen: (i) => threads[i] && nav(`/t/${threads[i].id}`) });
+  if (accounts.length === 0) return <ConnectGmailCard />;
   const onLeave = (id: string, cb: () => void) => {
     setLeaving((l) => new Set([...l, id]));
     window.setTimeout(() => {
@@ -178,8 +181,12 @@ export default function Feed() {
       )}
       {!feed.isLoading && threads.length === 0 && !feed.error && <EmptyState icon={<Rss />} title="Your Feed is quiet." body="Screen a newsletter into The Feed and it shows up here, fully opened." />}
       <div className="space-y-4">
-        {threads.map((t) => (
-          <div key={t.id} className={cn("transition-opacity duration-100", leaving.has(t.id) && "opacity-0")}>
+        {threads.map((t, i) => (
+          <div
+            key={t.id}
+            data-card-index={i}
+            className={cn("rounded-md scroll-mt-16 transition-opacity duration-100", leaving.has(t.id) && "opacity-0", cursor === i && "ring-1 ring-ring")}
+          >
             <FeedCard t={t} onLeave={onLeave} />
           </div>
         ))}

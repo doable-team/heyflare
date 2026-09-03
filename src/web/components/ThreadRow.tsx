@@ -70,6 +70,7 @@ export function ThreadRow({
   return (
     <div
       data-thread-id={t.id}
+      data-row-id={t.id}
       className={cn(
         "group relative grid items-center gap-2.5 rounded-md px-2 transition-colors duration-100",
         compact ? "grid-cols-[20px_1fr_auto] h-11" : "grid-cols-[20px_1fr_auto] h-14",

@@ -4,6 +4,8 @@ import { ArrowLeft, Check, Layers, MailOpen, Ungroup } from "lucide-react";
 import { toast } from "sonner";
 import { useBundle, useBundleMutations, type FeedThread } from "../api";
 import { useKeys } from "../lib/keys";
+import { useCardCursor } from "../lib/cardKeys";
+import { cn } from "@/lib/utils";
 import { BundleAvatar } from "../components/Avatar";
 import { ErrorState } from "../components/EmptyState";
 import { FeedCard } from "./Feed";
@@ -42,6 +44,9 @@ export default function BundlePage() {
     }, 120);
   };
 
+  const threads = (q.data?.threads.filter((t) => t.latest_message) ?? []) as FeedThread[];
+  const { cursor } = useCardCursor(threads.length, { onOpen: (i) => threads[i] && nav(`/t/${threads[i].id}`) });
+
   // Escape goes back, like the thread view (open menus/dialogs consume it first).
   useKeys(
     {
@@ -55,7 +60,6 @@ export default function BundlePage() {
 
   if (q.error) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   if (!q.data || !b) return <div className="max-w-2xl mx-auto px-2 space-y-3"><Skeleton className="h-8 w-48" /><Skeleton className="h-40" /><Skeleton className="h-40" /></div>;
-  const threads = q.data.threads.filter((t) => t.latest_message) as FeedThread[];
   const bucketPath = b.latest?.bucket === "paper_trail" ? "/paper-trail" : "/";
   return (
     <div className="max-w-2xl mx-auto">
@@ -92,8 +96,12 @@ export default function BundlePage() {
         </div>
       </header>
       <div className="space-y-4">
-        {threads.map((t) => (
-          <div key={t.id} className={leaving.has(t.id) ? "opacity-0 transition-opacity duration-100" : "transition-opacity duration-100"}>
+        {threads.map((t, i) => (
+          <div
+            key={t.id}
+            data-card-index={i}
+            className={cn("rounded-md scroll-mt-16 transition-opacity duration-100", leaving.has(t.id) && "opacity-0", cursor === i && "ring-1 ring-ring")}
+          >
             <FeedCard t={t} onLeave={onLeave} />
           </div>
         ))}
