@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, ImagePlus, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import type { CalEvent, CalendarDay, Habit } from "@shared/types";
 import { cn } from "@/lib/utils";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useCalendar } from "./CalendarContext";
 import { AllDayChip, EventBlock } from "./EventBlock";
 import { MIN_EVENT_PX, snap } from "./scale";
 import { countdownLabel, isPast, isToday, isWeekend, layoutColumns, minutesOfDay, msAt } from "../lib/caldate";
 import { useCalendarDayMutation, useEventMutations, useHabitMutations } from "../api";
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-/** Header block: cover art, the date, an editable label, habits and the day's all-day items. */
+/**
+ * The head of a day: its cover, its name, the things you meant to do today, then the all-day
+ * banners. The personal half of a day sits above the scheduled half on purpose — a day is more
+ * than the meetings someone else put in it.
+ */
 function DayHead({ date, day, habits, allDay }: { date: string; day: CalendarDay | undefined; habits: Habit[]; allDay: CalEvent[] }) {
   const { openEvent, createEvent, cursor, setCursor } = useCalendar();
   const today = isToday(date);
@@ -29,40 +32,39 @@ function DayHead({ date, day, habits, allDay }: { date: string; day: CalendarDay
 
   return (
     <div
-      className={cn(
-        "flex flex-col gap-1 px-1.5 pt-1.5 pb-1 border-l border-border",
-        isWeekend(date) && "bg-muted/30",
-        cursor === date && "bg-muted/60",
-      )}
+      className={cn("flex flex-col border-l border-border px-2.5 pb-1.5 pt-2", isWeekend(date) && "bg-muted/40", cursor === date && "bg-muted/70")}
       onClick={() => setCursor(date)}
     >
       {day?.cover_url && (
-        <div className="h-9 -mx-1.5 -mt-1.5 mb-0.5 overflow-hidden bg-muted">
+        <div className="-mx-2.5 -mt-2 mb-2 h-14 overflow-hidden bg-muted">
           <img src={day.cover_url} alt="" className="h-full w-full object-cover grayscale" loading="lazy" />
         </div>
       )}
-      <div className="flex items-baseline gap-1.5 min-w-0">
-        <span className={cn("text-[10px] uppercase tracking-wide", today ? "text-foreground" : "text-tertiary")}>{WEEKDAYS[d.getDay()]}</span>
-        <span
-          className={cn(
-            "text-[13px] tnum leading-none",
-            today ? "font-semibold text-background bg-foreground rounded-full px-1.5 py-1 -my-1" : isPast(date) ? "text-muted-foreground" : "font-medium",
-          )}
-        >
-          {d.getDate()}
-        </span>
-        {d.getDate() === 1 && <span className="text-[10px] text-tertiary">{d.toLocaleString(undefined, { month: "short" })}</span>}
-        <span className="flex-1" />
+
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            {today ? (
+              <span className="rounded-full bg-foreground px-1.5 py-[3px] text-[9.5px] font-semibold uppercase tracking-[0.08em] leading-none text-background">Today</span>
+            ) : (
+              <span className={cn("text-[10.5px] uppercase tracking-[0.08em]", isPast(date) ? "text-tertiary" : "text-muted-foreground")}>{WEEKDAYS[d.getDay()]}</span>
+            )}
+            {d.getDate() === 1 && <span className="text-[10.5px] uppercase tracking-[0.08em] text-tertiary">{d.toLocaleString(undefined, { month: "short" })}</span>}
+          </div>
+          <div className={cn("mt-0.5 text-[30px] font-semibold leading-[32px] tnum tracking-[-0.02em]", isPast(date) && !today && "text-muted-foreground")}>
+            {d.getDate()}
+          </div>
+        </div>
         <button
           type="button"
           onClick={(e) => {
             e.stopPropagation();
             createEvent({ starts_at: msAt(date, 9 * 60), ends_at: msAt(date, 10 * 60) });
           }}
-          className="opacity-0 group-hover/col:opacity-100 text-tertiary hover:text-foreground transition-opacity"
+          className="mt-1 shrink-0 text-tertiary opacity-0 transition-opacity hover:text-foreground group-hover/col:opacity-100"
           aria-label={`New event on ${date}`}
         >
-          <Plus size={12} />
+          <Plus size={14} />
         </button>
       </div>
 
@@ -80,7 +82,7 @@ function DayHead({ date, day, habits, allDay }: { date: string; day: CalendarDay
             }
           }}
           placeholder="Name this day"
-          className="h-4 w-full bg-transparent text-[10.5px] outline-none placeholder:text-tertiary"
+          className="mt-0.5 h-5 w-full bg-transparent text-[12px] outline-none placeholder:text-tertiary"
         />
       ) : (
         <button
@@ -89,51 +91,45 @@ function DayHead({ date, day, habits, allDay }: { date: string; day: CalendarDay
             e.stopPropagation();
             setEditing(true);
           }}
-          className={cn("h-4 text-left text-[10.5px] truncate", day?.label ? "text-muted-foreground" : "text-transparent group-hover/col:text-tertiary")}
+          className={cn("mt-0.5 h-5 truncate text-left text-[12px]", day?.label ? "text-muted-foreground" : "text-transparent group-hover/col:text-tertiary")}
         >
           {day?.label || "Name this day"}
         </button>
       )}
 
       {habits.length > 0 && (
-        <div className="flex flex-wrap gap-0.5">
+        <div className="mt-1.5 flex flex-wrap gap-1">
           {habits.map((h) => {
             const done = h.completions?.includes(date);
             return (
-              <Tooltip key={h.id}>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      habitMut.toggle.mutate({ id: h.id, date });
-                    }}
-                    aria-pressed={done}
-                    aria-label={h.name}
-                    className={cn(
-                      "size-4 rounded-[3px] border text-[9px] leading-none flex items-center justify-center transition-colors",
-                      done ? "border-transparent text-background" : "border-border text-tertiary hover:border-foreground/40",
-                    )}
-                    style={done ? { background: h.color || "currentColor" } : undefined}
-                  >
-                    {h.icon || h.name.slice(0, 1).toUpperCase()}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  {h.name}
-                  {done ? " · done" : ""}
-                </TooltipContent>
-              </Tooltip>
+              <button
+                key={h.id}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  habitMut.toggle.mutate({ id: h.id, date });
+                }}
+                aria-pressed={done}
+                title={h.name}
+                className={cn(
+                  "inline-flex h-5 max-w-full items-center gap-1 rounded-full border px-1.5 text-[11px] leading-none transition-colors",
+                  done ? "border-transparent text-background" : "border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground",
+                )}
+                style={done ? { background: h.color || "currentColor" } : undefined}
+              >
+                {h.icon && <span className="shrink-0 text-[10px]">{h.icon}</span>}
+                <span className="truncate">{h.name}</span>
+              </button>
             );
           })}
         </div>
       )}
 
-      <div className="flex flex-col gap-0.5 min-h-[19px]">
+      <div className={cn("flex flex-col gap-1", allDay.length > 0 && "mt-1.5")}>
         {allDay.map((e) => (
           <div key={e.id}>
             <AllDayChip e={e} onClick={() => openEvent(e)} />
-            {e.countdown && <div className="px-1.5 text-[9.5px] text-tertiary">{countdownLabel(e.start_date ?? date)}</div>}
+            {e.countdown && <div className="px-2 pt-0.5 text-[10.5px] text-tertiary">{countdownLabel(e.start_date ?? date)}</div>}
           </div>
         ))}
       </div>
@@ -141,7 +137,7 @@ function DayHead({ date, day, habits, allDay }: { date: string; day: CalendarDay
   );
 }
 
-/** The timeline body for one day: hour rules, the events, the now line, and drag-to-create. */
+/** The timeline body for one day: the events, the now line, and drag-to-create. */
 function DayBody({ date }: { date: string }) {
   const { scale, settings, eventsOn, openEvent, createEvent, setNightOpen, nightOpen, cursor, setCursor } = useCalendar();
   const { timed } = eventsOn(date);
@@ -167,10 +163,10 @@ function DayBody({ date }: { date: string }) {
     <div
       ref={ref}
       className={cn(
-        "relative border-l border-border select-none",
-        isWeekend(date) && "bg-muted/30",
-        isPast(date) && !today && "opacity-[0.82]",
-        cursor === date && "bg-muted/50",
+        "relative select-none border-l border-border",
+        isWeekend(date) && "bg-muted/40",
+        isPast(date) && !today && "opacity-[0.75]",
+        cursor === date && "bg-muted/60",
       )}
       style={{ height: scale.height }}
       onMouseDown={(e) => {
@@ -190,19 +186,19 @@ function DayBody({ date }: { date: string }) {
       onMouseLeave={() => setDrag(null)}
     >
       {scale.segments.map((s) =>
-        s.night ? (
+        s.band ? (
           <button
             key={s.from}
             type="button"
             onClick={() => setNightOpen(!nightOpen)}
             style={{ top: s.y, height: s.height }}
-            className="absolute inset-x-0 z-0 bg-muted/60 hover:bg-muted text-[9px] text-tertiary"
-            aria-label={nightOpen ? "Collapse nighttime" : "Expand nighttime"}
+            className="absolute inset-x-0 z-0 bg-muted/70 hover:bg-muted"
+            aria-label={nightOpen ? "Collapse the rest of the day" : "Show the rest of the day"}
           />
         ) : null,
       )}
       {scale.hours.map((h) => (
-        <div key={h.hour} style={{ top: h.y }} className="pointer-events-none absolute inset-x-0 border-t border-border/60" />
+        <div key={h.hour} style={{ top: h.y }} className="pointer-events-none absolute inset-x-0 border-t border-border/45" />
       ))}
 
       {timed.map((e, i) => {
@@ -225,8 +221,8 @@ function DayBody({ date }: { date: string }) {
 
       {drag && (
         <div
-          className="pointer-events-none absolute inset-x-0.5 z-20 rounded-[4px] border border-dashed border-foreground/50 bg-foreground/5"
-          style={{ top: scale.y(Math.min(drag.from, drag.to)), height: Math.max(scale.y(Math.max(drag.from, drag.to)) - scale.y(Math.min(drag.from, drag.to)), 8) }}
+          className="pointer-events-none absolute inset-x-1 z-20 rounded-[5px] border border-dashed border-foreground/50 bg-foreground/5"
+          style={{ top: scale.y(Math.min(drag.from, drag.to)), height: Math.max(scale.y(Math.max(drag.from, drag.to)) - scale.y(Math.min(drag.from, drag.to)), 10) }}
         />
       )}
 

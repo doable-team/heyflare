@@ -323,7 +323,7 @@ function DayTimeline({ date, onHold }: { date: string; onHold: () => void }) {
         onPointerCancel={() => finish(false)}
       >
         {scale.segments.map((s) =>
-          s.night ? (
+          s.band ? (
             <button
               key={s.from}
               type="button"

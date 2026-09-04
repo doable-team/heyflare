@@ -136,34 +136,30 @@ Notion visual language: same grayscale tokens, Geist, 6px radius, but layouts de
 - Touch targets ≥ 44px; no hover-only affordances; `overscroll-behavior` and `touch-action` set so swipes don't fight scrolling;
   `100dvh` heights; `env(safe-area-inset-*)` padding; no horizontal overflow at 360px.
 
-## 9. Calendar — time as a filmstrip
+## 9. Calendar — weeks, then a day
 
-The calendar keeps the same monochrome rules as the mail side, with one deliberate exception: a
-calendar's colour. It appears only as a 2px left border on an event, never as a fill, so a screen
-full of meetings still reads as black on white.
+37signals' framing for HEY Calendar is "week after week, not month after month — people think in
+days and weeks, not months", and the layout follows from it. The home view is a **continuously
+scrolling stack of week rows**, not a month grid and not an hour grid. Each row is seven day cells;
+each cell is a **list of one-line chips** in time order. Duration is deliberately not drawn: at a
+week's scale what you need is what's on, not how long it runs, and sizing by duration is what makes
+every other calendar look like a spreadsheet. Month names print inline where a month turns; a day's
+label sits above the row; a day's cover photo sits inline among its chips.
 
-**The day column** is the unit. Days run left to right and time runs down inside each of them, in a
-single scroll container: the hour gutter is `sticky left`, the day headers are `sticky top`. Both
-axes then behave correctly without synchronising two scrollers. Stacking runs corner `z-40`, day
-headers `z-30`, gutter `z-[25]`, the now line `z-20`, event blocks `z-10`.
+Beside it sits the **day pane**, the one place time is drawn to scale. Its timeline is *fitted*:
+built from the hours that day's events occupy and stretched to fill the pane, with everything
+outside collapsed into a "Nighttime" band you click to open. Hour marks sit quietly down the right
+edge rather than ruling the pane. Overlapping events sit side by side (`layoutColumns` in
+`src/web/lib/caldate.ts`), never stacked. `scale.ts` owns the piecewise minute-to-pixel mapping and
+nothing should compute a y offset any other way.
 
-**The timeline is not a linear scale.** Night collapses to a 26px band you can click open, so the
-hours you actually live in fill the screen. That makes the minute-to-pixel mapping piecewise across
-three segments; `src/web/calendar/scale.ts` owns it, and every event, hour rule and now line reads
-its `y()`. Nothing should compute a y offset any other way.
+**Colour is the one exception to monochrome.** A chip is filled with its calendar's colour and its
+text flips to black or white for contrast (`chipColors`). Colour here is the user's data, not
+chrome, and a week of forty chips is unreadable without it. Calendars still default to the
+grayscale ramp, so an untouched install stays black and white.
 
-**Overlaps sit side by side, never stacked.** `layoutColumns` in `src/web/lib/caldate.ts` cuts
-overlapping events into clusters and assigns each a column, so a double-booked hour shows both
-halves rather than hiding one.
+**Density.** Chips 16px tall at 10.5px; day cells at least 78px; the day pane's date header at
+14px semibold with the day's name spelled out. Today's date number sits in a filled dark pill; past
+days dim; weekends take a slightly different ground.
 
-**Density.** 56px per hour, 11–12px type inside a block, 208px day columns in the filmstrip and
-flexible columns in week view. An event under 34px tall drops to a single line with the time on the
-right. Today's date sits in a filled circle; past days dim to about 82%; weekends take `bg-muted/30`.
-
-**A day is more than its meetings.** The column header carries a cover image, an editable label,
-the day's habits as tick-able pills, and the all-day banners, in that order — the personal part of
-the day above the scheduled part.
-
-Views: `days` (the filmstrip), `week`, `month`, `year` (all-day and multi-day items only, so a year
-stays legible), `agenda`. Mobile gets its own month-plus-agenda screen and a full-screen day, not a
-shrunken filmstrip — a strip of thumb-width columns does not work.
+Mobile gets its own month-plus-agenda screen and a full-screen day, not a shrunken week scroll.

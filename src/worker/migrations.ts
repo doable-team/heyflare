@@ -13,6 +13,7 @@ import m0008 from "../../migrations/0008_two_factor.sql";
 import m0009 from "../../migrations/0009_bundle_batches.sql";
 import m0010 from "../../migrations/0010_ai.sql";
 import m0011 from "../../migrations/0011_calendar.sql";
+import m0012 from "../../migrations/0012_calendar_default_view.sql";
 
 export const MIGRATIONS: { name: string; sql: string }[] = [
   { name: "0001_init.sql", sql: m0001 },
@@ -26,6 +27,7 @@ export const MIGRATIONS: { name: string; sql: string }[] = [
   { name: "0009_bundle_batches.sql", sql: m0009 },
   { name: "0010_ai.sql", sql: m0010 },
   { name: "0011_calendar.sql", sql: m0011 },
+  { name: "0012_calendar_default_view.sql", sql: m0012 },
 ];
 
 /** Split a migration file into statements: full-line comments dropped, split on `;` at end of line. */

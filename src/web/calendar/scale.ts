@@ -1,38 +1,50 @@
 /**
  * Geometry for the day timeline.
  *
- * A day column is not a plain linear scale: the night hours collapse into a thin band so the part
- * of the day you actually live in fills the screen. That makes the mapping from a wall-clock minute
- * to a y offset piecewise linear across three segments — night, day, night — and every event block,
- * the hour rules and the "now" line all have to agree on it.
+ * Two ideas keep this from turning into a spreadsheet grid.
+ *
+ * First, the day is *fitted*: the scale is built from the hours your events actually occupy, then
+ * stretched to fill the height available. A day that runs 08:00–19:00 fills the screen instead of
+ * floating in the middle of a 24-hour chart, and you never scroll through empty morning.
+ *
+ * Second, what falls outside that window collapses into a thin band you can click open. So the
+ * mapping from a wall-clock minute to a y offset is piecewise across up to three segments, and
+ * every event block, hour rule and now line has to read it from here rather than compute its own.
  */
 
-export const PX_PER_HOUR = 56;
-/** Height of a collapsed night band, whole segment. */
-export const NIGHT_PX = 26;
+/** Never draw an hour shorter than this, however empty the day. */
+export const MIN_PX_PER_HOUR = 46;
+/** Nor taller than this, however sparse — a two-event day shouldn't become a poster. */
+export const MAX_PX_PER_HOUR = 132;
+/** Height of a collapsed band, whole segment. */
+export const BAND_PX = 30;
 /** Nothing shorter than this reads as a block. */
-export const MIN_EVENT_PX = 18;
+export const MIN_EVENT_PX = 30;
 
 export interface ScaleOpts {
-  /** Hour the night band starts, e.g. 22. */
-  nightStart: number;
-  /** Hour the night band ends, e.g. 6. */
-  nightEnd: number;
+  /** First minute of the fitted window (minutes past midnight). */
+  from: number;
+  /** Last minute of the fitted window. */
+  to: number;
+  /** When false, the whole 24 hours are drawn at full scale. */
   collapse: boolean;
+  /** Height the timeline should fill, when known. */
+  fit?: number;
   pxPerHour?: number;
 }
 
 export interface Segment {
-  /** Minutes past midnight. */
   from: number;
   to: number;
   y: number;
   height: number;
-  night: boolean;
+  /** True for the collapsed early/late bands. */
+  band: boolean;
 }
 
 export interface TimeScale {
   height: number;
+  pxPerHour: number;
   segments: Segment[];
   /** y offset, in px, of a wall-clock minute. */
   y(minutes: number): number;
@@ -40,25 +52,53 @@ export interface TimeScale {
   minutes(y: number): number;
   /** Hour marks that get a rule and a label. */
   hours: { hour: number; y: number }[];
-  nightTop: Segment | null;
-  nightBottom: Segment | null;
+  bandTop: Segment | null;
+  bandBottom: Segment | null;
 }
 
-export function makeScale({ nightStart, nightEnd, collapse, pxPerHour = PX_PER_HOUR }: ScaleOpts): TimeScale {
-  const perMin = pxPerHour / 60;
-  // Guard against a night window that would swallow the whole day.
-  const ns = collapse && nightStart > nightEnd && nightEnd >= 0 && nightStart <= 24 ? nightStart : 24;
-  const ne = ns === 24 ? 0 : nightEnd;
-  const bounds = [0, ne * 60, ns * 60, 1440].filter((v, i, a) => i === 0 || v > a[i - 1]);
+/**
+ * The window worth drawing for a set of events: the span they cover, padded, widened to a decent
+ * working day so an empty calendar still looks like a day, and snapped to whole hours.
+ */
+export function fitWindow(events: { starts_at: number; ends_at: number; all_day: boolean }[], minutesOfDay: (ms: number) => number): { from: number; to: number } {
+  let lo = 9 * 60;
+  let hi = 18 * 60;
+  for (const e of events) {
+    if (e.all_day) continue;
+    const s = minutesOfDay(e.starts_at);
+    const t = minutesOfDay(e.ends_at - 1);
+    if (s < lo) lo = s;
+    // An event running past midnight reports a smaller end than start; let it push the day open.
+    if (t > hi || t < s) hi = t < s ? 1440 : t;
+  }
+  const from = Math.max(0, Math.floor((lo - 45) / 60) * 60);
+  const to = Math.min(1440, Math.ceil((hi + 45) / 60) * 60);
+  return { from, to: Math.max(to, from + 6 * 60) };
+}
 
+export function makeScale({ from, to, collapse, fit, pxPerHour }: ScaleOpts): TimeScale {
+  const lo = collapse ? Math.max(0, Math.min(1380, from)) : 0;
+  const hi = collapse ? Math.min(1440, Math.max(lo + 60, to)) : 1440;
+  const openMinutes = hi - lo;
+
+  // Fit the open part of the day to the height we've been given, within reason.
+  const bands = (lo > 0 ? BAND_PX : 0) + (hi < 1440 ? BAND_PX : 0);
+  const perHour = pxPerHour
+    ? pxPerHour
+    : fit && fit > bands
+      ? Math.max(MIN_PX_PER_HOUR, Math.min(MAX_PX_PER_HOUR, ((fit - bands) / openMinutes) * 60))
+      : 60;
+  const perMin = perHour / 60;
+
+  const bounds = [0, lo, hi, 1440].filter((v, i, a) => i === 0 || v > a[i - 1]);
   const segments: Segment[] = [];
   let y = 0;
   for (let i = 0; i < bounds.length - 1; i++) {
-    const from = bounds[i];
-    const to = bounds[i + 1];
-    const night = from < ne * 60 || to > ns * 60;
-    const height = night && collapse ? NIGHT_PX : (to - from) * perMin;
-    segments.push({ from, to, y, height, night: night && collapse });
+    const a = bounds[i];
+    const b = bounds[i + 1];
+    const band = b <= lo || a >= hi;
+    const height = band ? BAND_PX : (b - a) * perMin;
+    segments.push({ from: a, to: b, y, height, band });
     y += height;
   }
   const height = y;
@@ -78,21 +118,22 @@ export function makeScale({ nightStart, nightEnd, collapse, pxPerHour = PX_PER_H
     return 1440;
   };
 
-  // Hour rules are drawn only inside the open part of the day; a collapsed band gets one label.
+  // Label only the hours inside the open window; a collapsed band gets one glyph instead.
   const hours: { hour: number; y: number }[] = [];
-  for (let h = 0; h <= 24; h++) {
-    const inNight = segments.some((s) => s.night && h * 60 > s.from && h * 60 < s.to);
-    if (!inNight) hours.push({ hour: h, y: yOf(h * 60) });
+  const stepH = perHour < 54 ? 2 : 1;
+  for (let h = Math.ceil(lo / 60); h * 60 <= hi; h++) {
+    if ((h - Math.ceil(lo / 60)) % stepH === 0) hours.push({ hour: h, y: yOf(h * 60) });
   }
 
   return {
     height,
+    pxPerHour: perHour,
     segments,
     y: yOf,
     minutes: minutesOf,
     hours,
-    nightTop: segments.find((s) => s.night && s.from === 0) ?? null,
-    nightBottom: segments.find((s) => s.night && s.to === 1440) ?? null,
+    bandTop: segments.find((s) => s.band && s.from === 0) ?? null,
+    bandBottom: segments.find((s) => s.band && s.to === 1440) ?? null,
   };
 }
 

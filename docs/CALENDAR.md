@@ -18,15 +18,22 @@ the scope shows up in `connectable` and gets a "Connect Calendar" button that re
 
 ## Views
 
-- **Days** — the signature view. Day columns laid out left to right, scrolled horizontally, each
-  column a vertical timeline. Today is emphasised, past days dim, a red line marks now.
-- **Week** — the same columns, snapped to exactly one week.
+- **Week** — the home view, and the one HEY is built around: "week after week, not month after
+  month". Weeks stack as rows and scroll continuously in both directions, each row seven day cells.
+  A day cell is a *list of one-line chips* in time order — duration is not drawn at all, because at
+  this scale what matters is what's on, not how long it runs. Month names print inline where a
+  month turns, and a day's label sits above the row.
+- **Day** — the only place time is drawn to scale: one day, events positioned by hour, hour marks
+  down the right edge, a red line at now, and the hours outside the day collapsed into a
+  "Nighttime" band you can click open. It sits beside the week scroll on a wide screen.
 - **Month** — a conventional grid, for orientation.
 - **Year** — every day of the year; only all-day and multi-day items are drawn.
 - **Agenda** — a flat list of what's next.
 
-Nighttime (default 22:00–06:00) collapses into a single band you can click open, so the visible
-timeline is dense with waking hours. Overlapping events sit side by side, never stacked.
+The day timeline is *fitted*: the scale is built from the hours that day's events actually occupy
+and stretched to fill the pane, so a day reads as a full day rather than a few boxes adrift in a
+24-hour chart. What falls outside becomes the collapsed band. Overlapping events sit side by side,
+never stacked.
 
 ## Data model
 
@@ -114,12 +121,13 @@ settings, calendars, `view`/`setView`, `cursor`/`setCursor`, `today`, the loaded
 `nightOpen`/`setNightOpen`, `eventsOn(date)` → `{ allDay, timed }`, and the editor
 (`editor`, `openEvent`, `createEvent`, `closeEditor`).
 
-Views live in `src/web/calendar/`: `DaysView` (the filmstrip, also serves week), `MonthView`,
-`YearView`, `AgendaView`, with `EventSheet` as the editor. Journal and Habits are their own pages.
+Views live in `src/web/calendar/`: `WeekScroll` (the continuous week list) and `DayPane` (the
+single-day timeline) make up the home view, alongside `MonthView`, `YearView` and `AgendaView`,
+with `EventSheet` as the editor. `scale.ts` owns the fitted day geometry. Journal and Habits are their own pages.
 Mobile has its own screens under `src/web/mobile/`.
 
 ## Keyboard
 
 `0` toggles mail and calendar. Inside the calendar: `←`/`→` walk the days, `↑`/`↓` scroll the
-timeline, `t` today, `d` days, `w` week, `m` month, `y` year, `a` agenda, `n` new event, `j`
+timeline, `t` today, `d` day, `w` week, `m` month, `y` year, `a` agenda, `n` new event, `j`
 journal, `b` habits, `Esc` back to the sidebar.

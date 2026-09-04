@@ -40,7 +40,8 @@ lives in a resizable side panel and can see the thread you're reading.
 - **Power through new** — the whole "New for you" queue stacked on one page: reply, defer or file each one, `o` to start.
 - **Reply Later, Set Aside, Bubble Up** — trays docked in the Imbox, Focus & Reply mode, snooze with presets.
 - **Bundles** — collapse a chatty sender into one row per batch; read the batch like a feed.
-- **Calendar** — a horizontal filmstrip of days with the night hours collapsed, plus week, month, year and agenda views.
+- **Calendar** — weeks that scroll continuously, HEY-style, each day a list of chips rather than an hour grid, with a
+  fitted single-day timeline beside it; plus month, year and agenda views.
   Google Calendar over OAuth (two-way), subscribed `.ics`/`webcal` feeds (read-only), `.ics` import, and heyflare's own
   calendars. Habits, a journal, day labels and cover art, "sometime this week" tasks, countdowns, time tracking, and the
   next three days shown at the top of the Imbox. `0` flips between mail and calendar.

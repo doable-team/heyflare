@@ -10,7 +10,7 @@ import { useCalendarSourceMutations } from "../api";
 import { addDays, monthLabel, msAt, weekStartOf } from "../lib/caldate";
 
 const VIEWS: { id: CalendarView; label: string; key: string }[] = [
-  { id: "days", label: "Days", key: "d" },
+  { id: "days", label: "Day", key: "d" },
   { id: "week", label: "Week", key: "w" },
   { id: "month", label: "Month", key: "m" },
   { id: "year", label: "Year", key: "y" },

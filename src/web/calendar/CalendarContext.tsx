@@ -2,8 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { useSearchParams } from "react-router-dom";
 import type { CalEvent, Calendar, CalendarRange, CalendarSettings, CalendarView } from "@shared/types";
 import { useCalendarRange, useCalendarSettings, useCalendarSources } from "../api";
-import { addDays, daysBetween, todayKey, weekStartOf } from "../lib/caldate";
-import { makeScale, type TimeScale } from "./scale";
+import { addDays, daysBetween, minutesOfDay, todayKey, weekStartOf } from "../lib/caldate";
+import { fitWindow, makeScale, type TimeScale } from "./scale";
 
 /** What the event editor is currently holding: an existing occurrence, or a blank to fill in. */
 export type EditorTarget =
@@ -46,7 +46,7 @@ export const DEFAULT_SETTINGS: CalendarSettings = {
   night_end: 6,
   collapse_night: true,
   time_format: "12",
-  default_view: "days",
+  default_view: "week",
   show_declined: false,
   cover_art: false,
 };
@@ -65,9 +65,10 @@ function windowFor(view: CalendarView, date: string, weekStart: number): [string
     case "agenda":
       return [addDays(date, -1), addDays(date, 120)];
     case "week":
-      return [addDays(weekStartOf(date, weekStart), -14), addDays(weekStartOf(date, weekStart), 35)];
+      // The week scroll runs continuously, so it wants a deep window in both directions.
+      return [addDays(weekStartOf(date, weekStart), -35), addDays(weekStartOf(date, weekStart), 70)];
     default:
-      return [addDays(date, -21), addDays(date, 45)];
+      return [addDays(date, -7), addDays(date, 21)];
   }
 }
 
@@ -136,9 +137,13 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     setWin(([a, b]) => (side === "start" ? [addDays(a, -days), b] : [a, addDays(b, days)]));
   }, []);
 
+  // The timeline is fitted to the hours the loaded events actually occupy and stretched to fill the
+  // space on screen, so a day reads as a full day rather than a few boxes adrift in a 24-hour chart.
+  const [timelineHeight, setTimelineHeight] = useState(0);
+  const fitted = useMemo(() => fitWindow(rangeQ.data?.events ?? [], minutesOfDay), [rangeQ.data]);
   const scale = useMemo(
-    () => makeScale({ nightStart: settings.night_start, nightEnd: settings.night_end, collapse: settings.collapse_night && !nightOpen }),
-    [settings.night_start, settings.night_end, settings.collapse_night, nightOpen],
+    () => makeScale({ from: fitted.from, to: fitted.to, collapse: settings.collapse_night && !nightOpen, fit: timelineHeight || undefined }),
+    [fitted, settings.collapse_night, nightOpen, timelineHeight],
   );
 
   // One pass over the window's events, bucketed by day, so a column render is a lookup.
