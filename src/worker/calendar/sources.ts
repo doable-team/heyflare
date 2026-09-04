@@ -6,6 +6,7 @@ import type { Env } from "../env";
 import type { AccountRow, UserRow } from "../db";
 import { uid, now, chunk, placeholders, runBatch, logSync } from "../db";
 import { hasCalendarScope } from "../google";
+import { muteHex } from "@shared/color";
 import { VERSION } from "@shared/version";
 import type { CalendarRow } from "./types";
 import { parseIcs, type IcsEvent } from "./ical";
@@ -123,9 +124,9 @@ async function mirrorGoogleCalendars(env: Env, userId: string, account: AccountR
   const db = env.DB;
   const remote = await listRemoteCalendars(env, account);
   const existing = await db
-    .prepare(`SELECT id, remote_id FROM calendars WHERE user_id = ? AND account_id = ? AND source = 'google'`)
+    .prepare(`SELECT id, remote_id, color FROM calendars WHERE user_id = ? AND account_id = ? AND source = 'google'`)
     .bind(userId, account.id)
-    .all<{ id: string; remote_id: string | null }>();
+    .all<{ id: string; remote_id: string | null; color: string }>();
   const seen = new Set(remote.map((r) => r.remote_id));
   const t = now();
   let position = await nextPosition(db, userId);
@@ -152,7 +153,7 @@ async function mirrorGoogleCalendars(env: Env, userId: string, account: AccountR
           rc.remote_id,
           rc.name || account.email,
           rc.description ?? "",
-          rc.color || "#111111",
+          muteHex(rc.color) ?? "#3d3d3d",
           rc.timezone ?? "",
           rc.writable ? 1 : 0,
           position++,
@@ -162,6 +163,17 @@ async function mirrorGoogleCalendars(env: Env, userId: string, account: AccountR
     );
   }
   await runBatch(db, stmts, BATCH_SIZE);
+
+  // Google's palette is built for pale chips with dark text; heyflare fills the whole block. Any
+  // calendar still carrying the raw colour Google sent is one the owner has not chosen for
+  // themselves, so quiet it down. A colour they picked never matches the remote one and is left be.
+  for (const row of existing.results) {
+    const rc = remote.find((r) => r.remote_id === row.remote_id);
+    const muted = muteHex(rc?.color);
+    if (!rc || !muted || row.color === muted) continue;
+    if (row.color.toLowerCase() !== (rc.color ?? "").toLowerCase()) continue;
+    await db.prepare(`UPDATE calendars SET color = ?, updated_at = ? WHERE id = ?`).bind(muted, t, row.id).run();
+  }
 
   // Unsubscribed or deleted on Google's side: drop it here too, events and all.
   for (const row of existing.results) {

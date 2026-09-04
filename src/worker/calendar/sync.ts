@@ -13,19 +13,27 @@ const ICS_INTERVAL_MS = 3600_000;
 /** One busy account must not starve the others, or eat the invocation's CPU on its own. */
 const MAX_PER_RUN = 12;
 
+/** How long an account's calendar list may go unchecked before it is worth pulling again. */
+const LIST_INTERVAL_MS = 6 * 3600_000;
+
 /**
- * A Google account's calendar list is pulled once, at consent. If that call failed the account is
- * left holding the scope with nothing to show and no way back, because everything after it syncs
- * calendars that already exist. So: any connected account with no calendars at all gets another
- * attempt each run. Once it has even one, this costs nothing.
+ * Re-read a Google account's calendar list.
+ *
+ * It is pulled at consent, and if that call fails the account is left holding the scope with
+ * nothing to show and no way back — everything after it syncs calendars that already exist. So an
+ * account with no calendars is retried every run. An account that has some is re-read a few times a
+ * day, which is also how a calendar added on Google's side turns up here without being asked.
  */
 async function discoverMissing(env: Env): Promise<void> {
   const r = await env.DB.prepare(
     `SELECT a.* FROM accounts a
      WHERE a.provider = 'gmail' AND a.sync_status <> 'disconnected'
-       AND NOT EXISTS (SELECT 1 FROM calendars c WHERE c.account_id = a.id)
+       AND (NOT EXISTS (SELECT 1 FROM calendars c WHERE c.account_id = a.id)
+            OR COALESCE((SELECT MAX(c2.updated_at) FROM calendars c2 WHERE c2.account_id = a.id), 0) <= ?)
      LIMIT 4`
-  ).all<AccountRow>();
+  )
+    .bind(now() - LIST_INTERVAL_MS)
+    .all<AccountRow>();
   for (const acc of r.results) {
     if (!hasCalendarScope(acc.scopes)) continue;
     try {

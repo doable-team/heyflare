@@ -4,7 +4,8 @@ import { BookOpen, Plus } from "lucide-react";
 import type { CalEvent } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useCalendar } from "./CalendarContext";
-import { eventColors } from "./colors";
+import { eventColors, normalizeHex } from "./colors";
+import { InkCircle } from "./InkCircle";
 import { freeGaps, heyRange, heyTime, makeRibbon, spanLabel, type Ribbon, type RibbonRun } from "./scale";
 import { useCalendarDayMutation, useHabitMutations } from "../api";
 import { DayPhotoBackdrop, DayPhotoButton } from "./DayPhoto";
@@ -441,34 +442,35 @@ function Spine({
   const wide = width >= TIME_ON_BAR_PX;
   const share = 100 / slot.columns;
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={`${e.title || "(no title)"} · ${heyRange(e.starts_at, e.ends_at, format)}`}
-      className={cn(
-        "absolute z-20 overflow-hidden rounded-[3px] text-left transition-opacity hover:opacity-90",
-        e.rsvp === "declined" && "opacity-40",
-        e.status === "tentative" && "opacity-70",
-      )}
-      style={{
-        left,
-        width,
-        top: `calc(${slot.column * share}% + 2px)`,
-        height: `calc(${share}% - 4px)`,
-        background: c.background,
-        color: c.color,
-      }}
+    // The bar clips its own contents, so the ink ring lives on a wrapper that does not — the ring
+    // has to overshoot the bar's edges or it just reads as a border.
+    <div
+      className="absolute z-20"
+      style={{ left, width, top: `calc(${slot.column * share}% + 2px)`, height: `calc(${share}% - 4px)` }}
     >
-      {wide && (
-        <span className="absolute inset-x-1.5 top-[3px] truncate text-[10px] leading-[12px] tnum opacity-70">{heyRange(e.starts_at, e.ends_at, format)}</span>
-      )}
-      <span className={cn("flex h-full w-full items-center justify-center overflow-hidden px-0.5", wide && "pt-3")}>
-        <span className="max-h-full overflow-hidden text-[12px] font-semibold leading-none" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
-          {e.emoji ? `${e.emoji} ` : ""}
-          {e.title || "(no title)"}
+      {e.circled && <InkCircle color={normalizeHex(e.calendar_color) ?? "currentColor"} />}
+      <button
+        type="button"
+        onClick={onClick}
+        title={`${e.title || "(no title)"} · ${heyRange(e.starts_at, e.ends_at, format)}`}
+        className={cn(
+          "relative h-full w-full overflow-hidden rounded-[3px] text-left transition-opacity hover:opacity-90",
+          e.rsvp === "declined" && "opacity-40",
+          e.status === "tentative" && "opacity-70",
+        )}
+        style={{ background: c.background, color: c.color }}
+      >
+        {wide && (
+          <span className="absolute inset-x-1.5 top-[3px] truncate text-[10px] leading-[12px] tnum opacity-70">{heyRange(e.starts_at, e.ends_at, format)}</span>
+        )}
+        <span className={cn("flex h-full w-full items-center justify-center overflow-hidden px-0.5", wide && "pt-3")}>
+          <span className="max-h-full overflow-hidden text-[12px] font-semibold leading-none" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
+            {e.emoji ? `${e.emoji} ` : ""}
+            {e.title || "(no title)"}
+          </span>
         </span>
-      </span>
-    </button>
+      </button>
+    </div>
   );
 }
 

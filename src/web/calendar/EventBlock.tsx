@@ -1,7 +1,8 @@
 import { CheckCircle2, Circle, Lock, Repeat, Users, Video } from "lucide-react";
 import type { CalEvent } from "@shared/types";
 import { cn } from "@/lib/utils";
-import { eventColors } from "./colors";
+import { eventColors, normalizeHex } from "./colors";
+import { InkCircle } from "./InkCircle";
 import { heyRange, heyTime } from "./scale";
 
 /**
@@ -121,10 +122,14 @@ export function EventBlock({
   const left = `calc((100% - 4px) / ${columns} * ${column} + 2px)`;
 
   const title = e.title || "(no title)";
+  // The ring is drawn in the calendar's own colour, which is mostly outside the block where the
+  // page shows through; over the fill it reads as a darker pass of the same ink.
+  const ring = normalizeHex(e.calendar_color) ?? "currentColor";
   const icons = roomy && (e.conference_url || e.attendees.length > 0 || e.recurring || !e.writable);
 
   return (
     <div className="absolute z-20" style={{ top, height: h, width, left }}>
+      {e.circled && <InkCircle color={ring} />}
       <button
         type="button"
         onClick={onClick}
