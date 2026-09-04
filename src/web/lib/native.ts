@@ -34,6 +34,23 @@ function tauri(): Tauri | undefined {
 }
 export const isNative: boolean = typeof window !== "undefined" && !!(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
 
+/**
+ * Which native shell is running, if any. The two builds share this web app but not their chrome:
+ * only the Mac app has traffic lights to clear, a menu bar, a dock badge and a self-updater.
+ * WKWebView reports the real device in its user agent, and an iPad in desktop mode claims to be a
+ * Mac — the touch-point count is what separates them.
+ */
+function detectPlatform(): "macos" | "ios" | null {
+  if (!isNative) return null;
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+  if (/iPhone|iPad|iPod/.test(ua)) return "ios";
+  if (/Macintosh/.test(ua) && typeof navigator !== "undefined" && navigator.maxTouchPoints > 1) return "ios";
+  return "macos";
+}
+export const nativePlatform: "macos" | "ios" | null = detectPlatform();
+/** The Mac app specifically: window chrome, menu bar, dock badge, one-click updates. */
+export const isMac: boolean = nativePlatform === "macos";
+
 async function invoke<T = unknown>(cmd: string, args?: Record<string, unknown>): Promise<T | undefined> {
   const t = tauri();
   if (!t) return undefined;
@@ -48,10 +65,10 @@ async function invoke<T = unknown>(cmd: string, args?: Record<string, unknown>):
 /**
  * Send a URL to the default browser.
  *
- * In the Mac app we deliberately *navigate* rather than call the `open_external` command: the JS
+ * In the native apps we deliberately *navigate* rather than call the `open_external` command: the JS
  * bridge is not reliably injected into the remote page, and a silent no-op is worse than useless.
- * The app's window carries a navigation guard that catches anything leaving the server, opens it in
- * the browser and blocks the navigation, so the window never actually moves.
+ * Both shells carry a navigation guard that catches anything leaving the server, opens it in the
+ * system browser and blocks the navigation, so the window never actually moves.
  */
 export function openExternalUrl(url: string) {
   if (isNative) {
@@ -66,8 +83,10 @@ export function openExternalUrl(url: string) {
 }
 
 export const native = {
-  /** Dock badge (0 clears it). */
-  setBadge: (count: number) => void invoke("set_badge", { count: Math.max(0, Math.floor(count)) }),
+  /** Dock badge (0 clears it). Mac only — the iPhone build has no such command. */
+  setBadge: (count: number) => {
+    if (isMac) void invoke("set_badge", { count: Math.max(0, Math.floor(count)) });
+  },
   /** System notification; `url` is an in-app path opened when the user comes back to the window. */
   notify: (title: string, body: string, url?: string) => void invoke("notify", { title, body, url: url ?? null }),
   /** Path queued by a notification, consumed once. */

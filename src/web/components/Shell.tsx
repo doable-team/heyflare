@@ -4,7 +4,7 @@ import { ArrowUpCircle, Bookmark, CalendarClock, Check, ChevronDown, ChevronRigh
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { Mark } from "./Logo";
-import { isNative, native, onMenu, installExternalLinkHandler } from "../lib/native";
+import { isNative, isMac, native, onMenu, installExternalLinkHandler } from "../lib/native";
 import { startGoogleConnect } from "../lib/connect";
 import { ALL, useAccount } from "../context/AccountContext";
 import { useCompose } from "../context/ComposeContext";
@@ -157,10 +157,10 @@ function Overlays() {
     return () => window.removeEventListener("keydown", fn);
   }, []);
 
-  // Native macOS shell: menu bar actions, external links, notification deep links.
+  // Native shell: menu-bar actions (Mac only), external links, notification deep links.
   useEffect(() => {
     if (!isNative) return;
-    const offMenu = onMenu((id) => {
+    const offMenu = !isMac ? () => {} : onMenu((id) => {
       if (id.startsWith("nav:")) return nav(id.slice(4));
       switch (id) {
         case "compose": return openCompose();
@@ -195,7 +195,7 @@ function TopBar() {
   const title = pageTitle(loc.pathname);
   const scopeLabel = accounts.length > 1 ? (scope === ALL ? "All accounts" : account?.email) : undefined;
   return (
-    <header data-tauri-drag-region={isNative || undefined} className="sticky top-0 z-30 h-11 flex items-center gap-2 px-2 sm:px-3 bg-background/90 backdrop-blur">
+    <header data-tauri-drag-region={isMac || undefined} className="sticky top-0 z-30 h-11 flex items-center gap-2 px-2 sm:px-3 bg-background/90 backdrop-blur">
       <SidebarTrigger className="text-muted-foreground" />
       <div className="flex items-center gap-1.5 min-w-0 text-sm">
         <span className="font-medium truncate">{title}</span>
@@ -400,7 +400,7 @@ function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon" className="border-r-0">
-      <SidebarHeader data-tauri-drag-region={isNative || undefined} className={cn("gap-1 p-2", isNative && "pt-10")}>
+      <SidebarHeader data-tauri-drag-region={isMac || undefined} className={cn("gap-1 p-2", isMac && "pt-10")}>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton size="lg" className="h-9 data-[state=open]:bg-sidebar-accent group-data-[collapsible=icon]:!p-1">

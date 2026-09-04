@@ -1,7 +1,7 @@
 // Is a newer heyflare out? Compares what this server is running against the latest GitHub release.
 // Both halves fail silently: an offline app or a rate-limited API simply means "no update to show".
 import { useEffect, useState } from "react";
-import { isNative } from "./native";
+import { isMac } from "./native";
 
 const RELEASES = "https://api.github.com/repos/doable-team/heyflare/releases/latest";
 export const RELEASES_PAGE = "https://github.com/doable-team/heyflare/releases/latest";
@@ -156,7 +156,7 @@ export function useUpdateCheck(): UpdateInfo & { dismiss: () => void } {
     notes: cache?.notes ?? "",
     url: cache?.url ?? RELEASES_PAGE,
     updateAvailable,
-    native: isNative,
+    native: isMac,
     dismiss: () => {
       if (latest) dismissVersion(latest);
     },

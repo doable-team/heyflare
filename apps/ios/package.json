@@ -1,0 +1,16 @@
+{
+  "name": "heyflare-ios",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "ios:init": "tauri ios init",
+    "dev": "tauri ios dev",
+    "build": "tauri ios build",
+    "open": "tauri ios open",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4"
+  }
+}

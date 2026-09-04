@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "default",
+  "description": "Local (bundled) pages: the first-run server screen.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "store:default",
+    "notification:default",
+    "opener:default",
+    "allow-open-server",
+    "allow-get-server",
+    "allow-reset-server"
+  ]
+}

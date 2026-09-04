@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>heyflare</title>
+<style>
+  :root { color-scheme: light dark; --bg:#fff; --fg:#37352f; --muted:rgba(55,53,47,.65); --field:#f7f7f5; --btn:#37352f; --btnfg:#fff; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#191919; --fg:#d4d4d4; --muted:rgba(255,255,255,.55); --field:#202020; --btn:#e6e6e6; --btnfg:#191919; } }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 -apple-system, system-ui, sans-serif; -webkit-font-smoothing:antialiased; }
+  main { min-height:100%; display:flex; align-items:center; justify-content:center; padding:calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom)); }
+  .card { width:100%; max-width:400px; }
+  .mark { width:52px; height:52px; border-radius:13px; background:var(--btn); display:flex; align-items:center; justify-content:center; margin-bottom:22px; }
+  h1 { font-size:24px; line-height:30px; font-weight:600; letter-spacing:-.01em; margin:0 0 8px; }
+  p { margin:0 0 24px; color:var(--muted); font-size:15px; }
+  label { display:block; font-size:13px; color:var(--muted); margin-bottom:8px; }
+  input { width:100%; height:50px; border:0; border-radius:10px; background:var(--field); color:var(--fg); padding:0 14px; font:inherit; outline:none; box-shadow:0 0 0 1px transparent; }
+  input:focus { box-shadow:0 0 0 2px var(--fg); }
+  button { margin-top:16px; width:100%; height:50px; border:0; border-radius:10px; background:var(--btn); color:var(--btnfg); font:inherit; font-weight:600; }
+  button[disabled] { opacity:.6; }
+  .err { color:#c0392b; font-size:14px; min-height:20px; margin-top:10px; }
+  .hint { font-size:13px; color:var(--muted); margin-top:22px; }
+</style>
+</head>
+<body>
+<main>
+  <form class="card" id="f">
+    <div class="mark"><svg width="30" height="30" viewBox="0 0 64 64"><path d="M21 15v34M21 37c0-9 18-9 18 0v12" fill="none" stroke="var(--btnfg)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="47" cy="17" r="4.5" fill="var(--btnfg)"/></svg></div>
+    <h1>Connect to your heyflare</h1>
+    <p>Enter the address of the heyflare you deployed. You'll log in there as usual.</p>
+    <label for="url">Server address</label>
+    <input id="url" type="url" inputmode="url" placeholder="https://hey.far.hn" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+    <button id="go" type="submit">Continue</button>
+    <div class="err" id="err"></div>
+    <div class="hint">Don't have one yet? Deploy in a minute with <b>npm create heyflare@latest</b> or the Deploy to Cloudflare button on GitHub.</div>
+  </form>
+</main>
+<script>
+  const T = window.__TAURI__;
+  const f = document.getElementById("f"), input = document.getElementById("url"), err = document.getElementById("err"), go = document.getElementById("go");
+  (async () => { try { const saved = await T.core.invoke("get_server"); if (saved) input.value = saved; } catch {} })();
+  f.addEventListener("submit", async (e) => {
+    e.preventDefault(); err.textContent = ""; go.disabled = true; go.textContent = "Connecting…";
+    try { await T.core.invoke("open_server", { url: input.value || "https://hey.far.hn" }); }
+    catch (ex) { err.textContent = String(ex); go.disabled = false; go.textContent = "Continue"; }
+  });
+</script>
+</body>
+</html>
