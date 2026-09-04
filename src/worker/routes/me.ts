@@ -3,6 +3,7 @@ import type { AppEnv } from "../env";
 import type { AccountRow, UserRow } from "../db";
 import { now, toAccount, toUser, safeJson } from "../db";
 import { hashPassword, verifyPassword } from "../auth";
+import { isConfigured } from "../oauth";
 import { generateSecret, otpauthUrl, verifyTotp, generateRecoveryCodes, hashRecoveryCode, matchRecoveryCode } from "../totp";
 import type { UserSettings } from "@shared/types";
 
@@ -15,8 +16,8 @@ me.get("/", async (c) => {
     user: toUser(user),
     accounts: accounts.results.map(toAccount),
     setup_required: false,
-    google_configured: !!(c.env.GOOGLE_CLIENT_ID && c.env.GOOGLE_CLIENT_SECRET),
-    microsoft_configured: !!(c.env.MS_CLIENT_ID && c.env.MS_CLIENT_SECRET),
+    google_configured: await isConfigured(c.env, "google"),
+    microsoft_configured: await isConfigured(c.env, "microsoft"),
   });
 });
 

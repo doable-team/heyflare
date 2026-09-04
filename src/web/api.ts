@@ -503,6 +503,34 @@ export async function createDomain(body: { name: string; confirm?: boolean }): P
   if (!res.ok) throw new ApiError(res.status, DOMAIN_ERRORS[data?.error] ?? String(data?.error ?? res.statusText).replace(/_/g, " "));
   return data as T.Domain;
 }
+export interface OAuthCredentialStatus {
+  provider: "google" | "microsoft";
+  configured: boolean;
+  /** "env" means a Worker secret is set, so the stored value is ignored and the form is read-only. */
+  source: "env" | "db" | "none";
+  client_id: string;
+  secret_hint: string;
+}
+
+export function useOAuthCredentials() {
+  return useQuery({ queryKey: ["oauth"], queryFn: () => api.get<OAuthCredentialStatus[]>("/api/oauth"), staleTime: 30_000 });
+}
+
+export function useOAuthMutations() {
+  const qc = useQueryClient();
+  const inv = () => {
+    qc.invalidateQueries({ queryKey: ["oauth"] });
+    qc.invalidateQueries({ queryKey: keys.me });
+  };
+  return {
+    save: useMutation({
+      mutationFn: (b: { provider: string; client_id?: string; client_secret?: string | null }) =>
+        request<OAuthCredentialStatus>("PUT", `/api/oauth/${b.provider}`, { client_id: b.client_id, client_secret: b.client_secret }),
+      onSuccess: inv,
+    }),
+  };
+}
+
 export interface ImapDraft {
   email: string;
   display_name?: string;

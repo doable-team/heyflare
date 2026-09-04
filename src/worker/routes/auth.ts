@@ -20,7 +20,7 @@ async function userCount(db: D1Database): Promise<number> {
 // Single-owner instance: /auth/status tells the client whether first-run setup is still needed.
 auth.get("/status", async (c) => {
   const n = await userCount(c.env.DB);
-  return c.json({ setup_required: n === 0, google_configured: googleConfigured(c.env), microsoft_configured: microsoftConfigured(c.env) });
+  return c.json({ setup_required: n === 0, google_configured: await googleConfigured(c.env), microsoft_configured: await microsoftConfigured(c.env) });
 });
 
 // One-time setup: creates the sole owner. Disabled forever once a user exists.
@@ -154,7 +154,7 @@ export function statePrefixFor(mode: GoogleScopeMode): string {
 auth.get("/google/start", async (c) => {
   const user = await getSessionUser(c);
   if (!user) return c.redirect("/login?next=/settings/accounts");
-  if (!googleConfigured(c.env)) {
+  if (!(await googleConfigured(c.env))) {
     return c.json({ error: "google_not_configured", message: "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET secrets." }, 500);
   }
   const mode: GoogleScopeMode = c.req.query("calendar_only") === "1" ? "calendar" : c.req.query("calendar") === "1" ? "mail+calendar" : "mail";
@@ -163,7 +163,7 @@ auth.get("/google/start", async (c) => {
   // Prune old states opportunistically.
   c.executionCtx.waitUntil(c.env.DB.prepare(`DELETE FROM oauth_states WHERE created_at < ?`).bind(now() - 3600_000).run());
   const hint = c.req.query("login_hint") ?? undefined;
-  return c.redirect(googleAuthUrl(c.env, state, redirectUriFor(c), hint, mode));
+  return c.redirect(await googleAuthUrl(c.env, state, redirectUriFor(c), hint, mode));
 });
 
 /** Standalone page shown in the browser tab that finished a handoff (the app is a separate window). */
@@ -190,14 +190,14 @@ p{margin:0;color:rgba(55,53,47,.65)}
  */
 auth.get("/google/handoff", async (c) => {
   const state = c.req.query("state") ?? "";
-  if (!googleConfigured(c.env)) {
+  if (!(await googleConfigured(c.env))) {
     return c.json({ error: "google_not_configured", message: "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET secrets." }, 500);
   }
   if (!state.startsWith(HANDOFF_PREFIX)) return c.json({ error: "invalid_state" }, 400);
   const st = await c.env.DB.prepare(`SELECT state FROM oauth_states WHERE state = ? AND created_at > ?`).bind(state, now() - 3600_000).first<{ state: string }>();
   if (!st) return c.json({ error: "invalid_state" }, 400);
   const hint = c.req.query("login_hint") ?? undefined;
-  return c.redirect(googleAuthUrl(c.env, state, redirectUriFor(c), hint, scopeModeForState(state)));
+  return c.redirect(await googleAuthUrl(c.env, state, redirectUriFor(c), hint, scopeModeForState(state)));
 });
 
 auth.get("/google/callback", async (c) => {
@@ -276,14 +276,14 @@ function msRedirectUriFor(c: any): string {
 auth.get("/microsoft/start", async (c) => {
   const user = await getSessionUser(c);
   if (!user) return c.redirect("/login?next=/settings/accounts");
-  if (!microsoftConfigured(c.env)) {
+  if (!(await microsoftConfigured(c.env))) {
     return c.json({ error: "microsoft_not_configured", message: "Set MS_CLIENT_ID and MS_CLIENT_SECRET secrets." }, 500);
   }
   const state = uid();
   await c.env.DB.prepare(`INSERT INTO oauth_states (state, user_id, created_at) VALUES (?, ?, ?)`).bind(state, user.id, now()).run();
   c.executionCtx.waitUntil(c.env.DB.prepare(`DELETE FROM oauth_states WHERE created_at < ?`).bind(now() - 3600_000).run());
   const hint = c.req.query("login_hint") ?? undefined;
-  return c.redirect(msAuthUrl(c.env, state, msRedirectUriFor(c), hint));
+  return c.redirect(await msAuthUrl(c.env, state, msRedirectUriFor(c), hint));
 });
 
 auth.get("/microsoft/callback", async (c) => {

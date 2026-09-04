@@ -1,6 +1,7 @@
 import type { Env } from "./env";
 import type { AccountRow } from "./db";
 import { now } from "./db";
+import { resolveCreds } from "./oauth";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0/me/";
 /**
@@ -26,8 +27,8 @@ export class MicrosoftError extends Error {
   }
 }
 
-export function microsoftConfigured(env: Env): boolean {
-  return !!(env.MS_CLIENT_ID && env.MS_CLIENT_SECRET);
+export async function microsoftConfigured(env: Env): Promise<boolean> {
+  return (await resolveCreds(env, "microsoft")).source !== "none";
 }
 
 /**
@@ -44,9 +45,10 @@ export function hasMsMailScope(scopes: string | null | undefined): boolean {
 /** The same test as `hasMsMailScope`, as a SQL predicate over an `accounts` row. Keep the two in step. */
 export const MS_MAIL_SCOPE_SQL = `(scopes IS NULL OR scopes = '' OR scopes LIKE '%Mail.ReadWrite%')`;
 
-export function msAuthUrl(env: Env, state: string, redirectUri: string, loginHint?: string): string {
+export async function msAuthUrl(env: Env, state: string, redirectUri: string, loginHint?: string): Promise<string> {
+  const { clientId } = await resolveCreds(env, "microsoft");
   const u = new URL(`${MS_AUTHORITY}/authorize`);
-  u.searchParams.set("client_id", env.MS_CLIENT_ID!);
+  u.searchParams.set("client_id", clientId);
   u.searchParams.set("redirect_uri", redirectUri);
   u.searchParams.set("response_type", "code");
   u.searchParams.set("scope", MS_SCOPES.join(" "));
@@ -66,13 +68,14 @@ export interface MsTokenResponse {
 }
 
 export async function exchangeMsCode(env: Env, code: string, redirectUri: string): Promise<MsTokenResponse> {
+  const creds = await resolveCreds(env, "microsoft");
   const res = await fetch(`${MS_AUTHORITY}/token`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       code,
-      client_id: env.MS_CLIENT_ID!,
-      client_secret: env.MS_CLIENT_SECRET!,
+      client_id: creds.clientId,
+      client_secret: creds.clientSecret,
       redirect_uri: redirectUri,
       grant_type: "authorization_code",
     }),
@@ -109,12 +112,13 @@ async function refreshMsAccessToken(env: Env, account: AccountRow): Promise<stri
     await markDisconnected(env, account, "No refresh token; please reconnect the account.");
     throw new MicrosoftError(401, "no_refresh_token", "Account disconnected: no refresh token");
   }
+  const creds = await resolveCreds(env, "microsoft");
   const res = await fetch(`${MS_AUTHORITY}/token`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: env.MS_CLIENT_ID ?? "",
-      client_secret: env.MS_CLIENT_SECRET ?? "",
+      client_id: creds.clientId,
+      client_secret: creds.clientSecret,
       refresh_token: account.refresh_token,
       grant_type: "refresh_token",
       scope: MS_SCOPES.join(" "),

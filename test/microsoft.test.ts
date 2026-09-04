@@ -1,20 +1,29 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
+import { migrate, testEnv } from "./helpers";
 import { msAuthUrl, hasMsMailScope, microsoftConfigured, getMsAccessToken, MicrosoftError } from "../src/worker/microsoft";
 import type { Env } from "../src/worker/env";
 import type { AccountRow } from "../src/worker/db";
 
-const env = { MS_CLIENT_ID: "cid", MS_CLIENT_SECRET: "csecret" } as Env;
+// A Worker secret takes precedence over stored credentials, so these resolve without touching the
+// database; the unconfigured case does read it, hence the migrate() below.
+const env = { ...testEnv, MS_CLIENT_ID: "cid", MS_CLIENT_SECRET: "csecret" } as Env;
+
+beforeAll(migrate);
 
 describe("microsoftConfigured", () => {
-  it("needs both halves of the credential", () => {
-    expect(microsoftConfigured(env)).toBe(true);
-    expect(microsoftConfigured({ MS_CLIENT_ID: "cid" } as Env)).toBe(false);
-    expect(microsoftConfigured({} as Env)).toBe(false);
+  it("needs both halves of the credential", async () => {
+    expect(await microsoftConfigured(env)).toBe(true);
+    // Half a pair falls through to the stored credentials, which are empty here.
+    expect(await microsoftConfigured({ ...testEnv, MS_CLIENT_ID: "cid" } as Env)).toBe(false);
+    expect(await microsoftConfigured(testEnv)).toBe(false);
   });
 });
 
 describe("msAuthUrl", () => {
-  const url = new URL(msAuthUrl(env, "state123", "https://mail.example.com/auth/microsoft/callback"));
+  let url: URL;
+  beforeAll(async () => {
+    url = new URL(await msAuthUrl(env, "state123", "https://mail.example.com/auth/microsoft/callback"));
+  });
 
   it("uses the /common authority so personal and work accounts both work", () => {
     expect(url.origin + url.pathname).toBe("https://login.microsoftonline.com/common/oauth2/v2.0/authorize");
@@ -32,9 +41,9 @@ describe("msAuthUrl", () => {
     expect(url.searchParams.get("response_type")).toBe("code");
   });
 
-  it("passes a login hint only when given one", () => {
+  it("passes a login hint only when given one", async () => {
     expect(url.searchParams.get("login_hint")).toBeNull();
-    const hinted = new URL(msAuthUrl(env, "s", "https://x/cb", "me@outlook.com"));
+    const hinted = new URL(await msAuthUrl(env, "s", "https://x/cb", "me@outlook.com"));
     expect(hinted.searchParams.get("login_hint")).toBe("me@outlook.com");
   });
 });
@@ -68,9 +77,16 @@ describe("token refresh", () => {
     } as unknown as AccountRow;
   }
 
+  // Real DB for the credential lookup, but capture the account UPDATE so we can assert on it.
+  const realPrepare = testEnv.DB.prepare.bind(testEnv.DB);
   const dbEnv = {
     ...env,
-    DB: { prepare: () => ({ bind: (...args: unknown[]) => { updates.push(args); return { run: async () => ({}) }; } }) },
+    DB: {
+      prepare: (sql: string) => {
+        if (!sql.includes("UPDATE accounts")) return realPrepare(sql);
+        return { bind: (...args: unknown[]) => { updates.push(args); return { run: async () => ({}) }; } };
+      },
+    },
   } as unknown as Env;
 
   beforeEach(() => {

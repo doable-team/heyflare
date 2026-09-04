@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import type { Account, Domain, UserSettings } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useAccount } from "../context/AccountContext";
-import { DomainMxError, domainErrorMessage, useAccountMutations, useDomainMutations, useDomains, useMeMutations, useTwoFactor, useTwoFactorMutations, useImapMutations } from "../api";
+import { DomainMxError, domainErrorMessage, useAccountMutations, useDomainMutations, useDomains, useMeMutations, useTwoFactor, useTwoFactorMutations, useImapMutations, useOAuthCredentials, useOAuthMutations, type OAuthCredentialStatus } from "../api";
 import QRCode from "qrcode";
 import { Avatar, AccountGlyph } from "../components/Avatar";
 import { PageHeader } from "../components/EmptyState";
@@ -809,6 +809,82 @@ export function AddImapDialog({ open, onOpenChange, variant = "dialog" }: { open
   );
 }
 
+const PROVIDER_LABELS: Record<string, { name: string; hint: string; docs: string }> = {
+  google: { name: "Google", hint: "Client ID and secret from the Google Cloud OAuth client.", docs: "https://console.cloud.google.com/apis/credentials" },
+  microsoft: { name: "Microsoft", hint: "Application (client) ID and a client secret from your Entra app registration.", docs: "https://portal.azure.com" },
+};
+
+function CredentialRow({ c, compact }: { c: OAuthCredentialStatus; compact?: boolean }) {
+  const { save } = useOAuthMutations();
+  const meta = PROVIDER_LABELS[c.provider];
+  const managed = c.source === "env";
+  const [clientId, setClientId] = useState(c.client_id);
+  const [secret, setSecret] = useState("");
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => { if (!dirty) setClientId(c.client_id); }, [c.client_id, dirty]);
+
+  const submit = () =>
+    save.mutate(
+      { provider: c.provider, client_id: clientId.trim(), client_secret: secret.trim() ? secret.trim() : undefined },
+      {
+        onSuccess: () => { toast(`${meta.name} credentials saved`); setSecret(""); setDirty(false); },
+        onError: (e: unknown) => toast.error((e as Error).message),
+      }
+    );
+
+  return (
+    <div className="px-2 py-3 border-b border-border last:border-b-0">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-sm font-medium">{meta.name}</span>
+        {c.configured ? <Badge variant="secondary">Connected</Badge> : <Badge variant="outline">Not set</Badge>}
+        {managed ? <Badge variant="outline">Worker secret</Badge> : null}
+      </div>
+      {managed ? (
+        <div className="text-[13px] text-muted-foreground">
+          Set by a Worker secret, which always wins over anything stored here. Rotate it with{" "}
+          <code className="text-[12px]">wrangler secret put</code>, or remove the secret to manage it in this form.
+        </div>
+      ) : (
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor={`cid-${c.provider}`}>Client ID</FieldLabel>
+            <Input id={`cid-${c.provider}`} value={clientId} autoComplete="off" onChange={(e) => { setClientId(e.target.value); setDirty(true); }} className={cn(compact && "h-11 text-[16px]")} />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`csec-${c.provider}`}>Client secret</FieldLabel>
+            <Input id={`csec-${c.provider}`} type="password" autoComplete="off" value={secret} onChange={(e) => { setSecret(e.target.value); setDirty(true); }} placeholder={c.secret_hint ? `Stored · ${c.secret_hint}` : "Client secret"} className={cn(compact && "h-11 text-[16px]")} />
+            <FieldDescription className="flex flex-wrap items-center gap-2">
+              <span>{meta.hint} Encrypted on your server and never shown again.</span>
+              {c.secret_hint ? (
+                <button type="button" className="underline underline-offset-2" onClick={() => save.mutate({ provider: c.provider, client_secret: null }, { onSuccess: () => toast("Secret removed") })}>Remove</button>
+              ) : null}
+            </FieldDescription>
+          </Field>
+          <div>
+            <Button size={compact ? "lg" : "sm"} disabled={save.isPending || (!dirty && !secret)} onClick={submit}>
+              {save.isPending ? <Loader2 className="animate-spin" /> : null} Save
+            </Button>
+          </div>
+        </FieldGroup>
+      )}
+    </div>
+  );
+}
+
+/** Manage the OAuth app credentials used to connect Gmail and Outlook. */
+export function ConnectorCredentialsSection({ compact }: { compact?: boolean }) {
+  const { data, isLoading } = useOAuthCredentials();
+  return (
+    <Section title="Provider credentials" description="The OAuth apps heyflare uses to connect Gmail and Outlook. Rotate a secret here without redeploying.">
+      {isLoading ? (
+        <div className="px-2 py-2"><Skeleton className="h-16 w-full" /></div>
+      ) : (
+        <div>{(data ?? []).map((c) => <CredentialRow key={c.provider} c={c} compact={compact} />)}</div>
+      )}
+    </Section>
+  );
+}
+
 export function AccountsSection({ onNewMailbox }: { onNewMailbox?: () => void }) {
   const { accounts } = useAccount();
   const [addImap, setAddImap] = useState(false);
@@ -834,6 +910,7 @@ export function AccountsSection({ onNewMailbox }: { onNewMailbox?: () => void })
           <div>{remote.map((a) => <AccountBlock key={a.id} a={a} />)}</div>
         )}
       </Section>
+      <ConnectorCredentialsSection />
       <Section
         title="Domain mailboxes"
         description="Addresses on your own domains."

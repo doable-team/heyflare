@@ -128,6 +128,39 @@ domain mailbox receives but cannot send.
 
 ---
 
+## Where OAuth credentials live, and rotating them
+
+Gmail and Outlook each need an OAuth app's client ID and secret. heyflare reads them from two
+places, in this order:
+
+1. **Worker secrets** — `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, `MS_CLIENT_ID` /
+   `MS_CLIENT_SECRET`. Set with `wrangler secret put`, or `.dev.vars` locally. These always win.
+2. **Settings → Accounts → Provider credentials** — stored in the database, encrypted with AES-GCM
+   keyed off `SESSION_SECRET`, and never returned by the API.
+
+A Worker secret is the stronger place to keep one, because it lives in Cloudflare's secret store
+rather than your database. The stored fallback exists so a secret can be rotated from the browser
+without CLI access and a redeploy — which matters because **Microsoft client secrets expire**, 24
+months at the most and often sooner. When a Worker secret is set, the form shows the provider as
+managed and refuses to store a value that would be ignored.
+
+Rotating:
+
+```sh
+# Worker secret
+npx wrangler secret put MS_CLIENT_SECRET
+
+# or, if no Worker secret is set: Settings → Accounts → Provider credentials → paste → Save
+```
+
+Either way, create the new secret in the provider's console first, switch heyflare over, then delete
+the old one. Existing connected mailboxes keep working — the credentials authenticate the *app*, not
+your mailbox, so rotating one does not sign anybody out.
+
+Credentials are never written to the repository. `.dev.vars` is git-ignored.
+
+---
+
 ## Troubleshooting
 
 **Nothing appears after connecting.** Expected at first — nothing historical is imported. Send
