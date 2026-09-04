@@ -123,17 +123,27 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
   }, []);
   const showNow = now >= winFrom && now <= winTo;
 
-  // Land with the present a third of the way in, so there's context behind and room ahead.
+  /**
+   * Frame the day between its own two nights: the previous night at the left edge, the waking hours
+   * across the middle, the next night at the right. Anchoring a fixed fraction in put yesterday
+   * evening under your nose and pushed the day you asked for off to the right.
+   */
   const scrollRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const anchor = isToday(cursor) ? Date.now() : msAt(cursor, 9 * 60);
-    el.scrollLeft = Math.max(0, ribbon.pos(anchor) - el.clientWidth / 3);
+    const dayStart = msAt(cursor, 0);
+    const { night_start: ns, night_end: ne } = settings;
+    // The waking span of this day, which is what belongs in the middle. When night wraps midnight
+    // the day runs nightEnd → nightStart; when it doesn't (00:00–08:00) it runs nightEnd → midnight.
+    const wakeFrom = dayStart + ne * 3_600_000;
+    const wakeTo = ns > ne ? dayStart + ns * 3_600_000 : dayStart + 24 * 3_600_000;
+    const middle = (ribbon.pos(wakeFrom) + ribbon.pos(wakeTo)) / 2;
+    el.scrollLeft = Math.max(0, middle - el.clientWidth / 2);
     // `revealAt.nonce` is in the deps so "Today" re-anchors even when the cursor already held it
     // and you had simply scrolled the ribbon away.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ribbon, cursor, revealAt.nonce]);
+  }, [ribbon, cursor, revealAt.nonce, settings.night_start, settings.night_end]);
 
   // Tell the toolbar which month the ribbon is actually showing — a third in, where the eye is.
   const onRibbonScroll = () => {
