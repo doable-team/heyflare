@@ -178,9 +178,20 @@ Settings → Domains. The domain must be a zone on your Cloudflare account (full
 - **Inbound**: with a `CF_API_TOKEN` secret (Zone Read, Email Routing Rules Edit, Email Routing Settings Edit) heyflare
   enables Email Routing and points the catch-all rule at the Worker automatically; without it the UI shows the manual steps.
   Enabling routing takes over **all** mail for that domain — the app shows the current MX and asks first.
-- **Outbound**: Cloudflare **Email Sending** (Workers Paid, onboard the domain in the dashboard, then uncomment the
-  `send_email` binding in your config) or **Resend** (`RESEND_API_KEY` secret). Until one is configured, mailboxes receive
-  but can't send.
+- **Outbound**: Cloudflare **Email Sending** or **Resend**. Until one is configured, mailboxes receive but can't send,
+  and the composer says so rather than failing silently.
+  - **Cloudflare Email Sending** — needs all three, and the send fails until every one is done:
+    1. Onboard the domain under Email → Email Sending in the dashboard, and verify it.
+    2. Uncomment `"send_email": [{ "name": "EMAIL" }]` in your `wrangler.jsonc` (or `wrangler.local.jsonc`).
+    3. Redeploy, so the binding actually reaches the Worker.
+
+    A send that gets past the binding but is refused reports Cloudflare's own reason — `E_SENDER_DOMAIN_NOT_AVAILABLE`
+    means step 1 is unfinished, `E_RECIPIENT_NOT_ALLOWED` means the domain is still sandboxed to verified recipients.
+  - **Resend** — `wrangler secret put RESEND_API_KEY`, and verify the domain in Resend. No binding, no redeploy needed
+    beyond the secret.
+
+  Cloudflare stamps its own `Message-ID` and rejects any we set, so on that path the sent copy adopts the id Cloudflare
+  returns. Threading headers (`In-Reply-To`, `References`) are sent as normal.
 
 ## Local development
 ```sh

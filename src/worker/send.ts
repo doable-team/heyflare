@@ -103,10 +103,52 @@ interface DomainSendCtx {
 
 const fmt = (a: Address) => (a.name ? `${a.name.replace(/[<>"]/g, "")} <${a.email}>` : a.email);
 
+/**
+ * Cloudflare's Email Service takes an address as a plain string or as `{email, name}`. It does not
+ * document the `Name <addr>` form, so say it the way the API asks rather than hoping its parser is
+ * forgiving.
+ */
+const addr = (a: Address) => (a.name ? { email: a.email, name: a.name.replace(/[<>"]/g, "") } : { email: a.email });
+
+/**
+ * The headers Cloudflare will accept from us. Its allowlist is narrow and unforgiving: a header
+ * that is not on it — or that it considers its own — fails the *whole* send rather than being
+ * dropped. `Message-ID` is the one that matters here, because Cloudflare generates its own and
+ * rejects ours with E_HEADER_NOT_ALLOWED; every message this app sent through the binding carried
+ * one, so every one of them was refused. Threading headers are allowlisted and stay.
+ */
+const CF_ALLOWED_HEADERS = new Set(["in-reply-to", "references"]);
+const cfHeaders = (h: Record<string, string>): Record<string, string> =>
+  Object.fromEntries(Object.entries(h).filter(([k]) => CF_ALLOWED_HEADERS.has(k.toLowerCase()) || k.toLowerCase().startsWith("x-")));
+
+/**
+ * Cloudflare reports why it would not send as an `E_`-prefixed code. The codes worth translating
+ * are the ones a person can act on — the domain is not set up, or the recipient is not allowed —
+ * because otherwise the failure reads as though the app is broken when the account is not finished.
+ */
+function cloudflareSendReason(e: unknown): string {
+  const raw = (e as Error)?.message ?? String(e);
+  const code = /E_[A-Z_]+/.exec(raw)?.[0] ?? "";
+  const said: Record<string, string> = {
+    E_SENDER_DOMAIN_NOT_AVAILABLE: "that domain isn't onboarded to Cloudflare Email Sending yet",
+    E_SENDER_NOT_VERIFIED: "that sending domain isn't verified with Cloudflare yet",
+    E_RECIPIENT_NOT_ALLOWED: "Cloudflare won't deliver to that recipient from this domain yet",
+    E_RECIPIENT_SUPPRESSED: "that recipient is on Cloudflare's suppression list",
+    E_HEADER_NOT_ALLOWED: "Cloudflare rejected one of the message headers",
+    E_DAILY_LIMIT_EXCEEDED: "the daily send limit for this domain has been reached",
+    E_RATE_LIMIT_EXCEEDED: "Cloudflare is rate limiting sends from this domain",
+    E_CONTENT_TOO_LARGE: "the message is larger than Cloudflare will accept",
+  };
+  return said[code] ? `${said[code]} (${code})` : raw.slice(0, 300);
+}
+
 async function sendFromDomainMailbox(env: Env, account: AccountRow, p: SendParams, ctx: DomainSendCtx): Promise<{ thread_id: string; message_id: string }> {
   const db = env.DB;
   const domain = account.email.split("@")[1] || "localhost";
-  const messageId = `<${uid()}@${domain}>`;
+  // Ours until a provider tells us otherwise. Cloudflare stamps its own Message-ID and will not
+  // accept one from us, so the copy we keep has to adopt whatever it used — the reply that comes
+  // back will quote that, and threading matches on it.
+  let messageId = `<${uid()}@${domain}>`;
   const text = htmlToText(p.body_html);
   const headers: Record<string, string> = { "Message-ID": messageId };
   if (ctx.inReplyTo) headers["In-Reply-To"] = ctx.inReplyTo;
@@ -116,17 +158,25 @@ async function sendFromDomainMailbox(env: Env, account: AccountRow, p: SendParam
   const bcc = (p.bcc ?? []).map(fmt);
 
   if (env.EMAIL && typeof env.EMAIL.send === "function") {
-    await env.EMAIL.send({
-      from: fmt(ctx.from),
-      to,
-      cc: cc.length ? cc : undefined,
-      bcc: bcc.length ? bcc : undefined,
-      subject: ctx.subject,
-      html: p.body_html,
-      text,
-      headers,
-      attachments: (p.attachments ?? []).map((a) => ({ filename: a.filename, type: a.mime_type, content: a.data_base64, disposition: "attachment" })),
-    });
+    try {
+      const sent = await env.EMAIL.send({
+        from: addr(ctx.from),
+        to: p.to.map(addr),
+        cc: cc.length ? (p.cc ?? []).map(addr) : undefined,
+        bcc: bcc.length ? (p.bcc ?? []).map(addr) : undefined,
+        subject: ctx.subject,
+        html: p.body_html,
+        text,
+        headers: cfHeaders(headers),
+        attachments: (p.attachments ?? []).map((a) => ({ filename: a.filename, type: a.mime_type, content: a.data_base64, disposition: "attachment" })),
+      });
+      // Only if it really looks like a Message-ID; the field is documented only as a "unique email
+      // ID", so anything that is not an addr-spec is a tracking handle and no use for threading.
+      const given = (sent as { messageId?: string } | undefined)?.messageId?.trim();
+      if (given && given.includes("@")) messageId = given.startsWith("<") ? given : `<${given}>`;
+    } catch (e) {
+      throw new Error(`cloudflare_send_failed: ${cloudflareSendReason(e)}`);
+    }
   } else if (env.RESEND_API_KEY) {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",

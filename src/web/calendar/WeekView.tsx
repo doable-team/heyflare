@@ -337,7 +337,7 @@ function WeekRow({
     if (!commit || !span || !spanMoved(g.event, span)) return;
     const next: EventPreview = { id: g.event.id, event: g.event, ...span };
     setPending(next);
-        // A refused drag snaps back, which on its own looks like the app dropped it. Google's reason
+    // A refused drag snaps back, which on its own looks like the app dropped it. Google's reason
     // for refusing is the only thing that makes that snap legible — some events genuinely cannot
     // be moved — so it goes on screen rather than into a log nobody reads.
     update.mutate(
