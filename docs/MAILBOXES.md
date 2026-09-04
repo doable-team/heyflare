@@ -49,8 +49,15 @@ your own first: create one via **Microsoft Entra ID → Manage tenants → Creat
 3. **Redirect URI** (platform **Web**): `https://YOUR_HOST/auth/microsoft/callback`.
    Add `http://localhost:8787/auth/microsoft/callback` too for local development — Microsoft permits
    plain `http` for `localhost` specifically.
-4. **Certificates & secrets → New client secret**. Copy the **Value** column, not "Secret ID"; it is
-   shown only once.
+4. **Certificates & secrets → New client secret**, then copy the **Value** column.
+
+   Two columns in that table look like credentials and only one is. **Value** is the secret that
+   authenticates. **Secret ID** is a GUID naming the row — Azure's internal reference to that
+   credential, useless for signing in and harmless to share.
+
+   The Value is displayed **once**, right after you create it, and is masked permanently after you
+   navigate away; Microsoft stores only a hash, so there is no way to reveal it later. If you did not
+   copy it, you cannot recover it — create a new secret and delete the old one.
 5. **API permissions → Microsoft Graph → Delegated permissions**, add all four:
    `Mail.ReadWrite`, `Mail.Send`, `User.Read`, `offline_access`.
    `offline_access` is what yields a refresh token — without it, syncing stops after about an hour.
