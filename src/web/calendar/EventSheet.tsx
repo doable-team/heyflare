@@ -594,7 +594,9 @@ function EventForm({ target }: { target: EditorTarget }) {
           }
         }}
       >
-        <SheetHeader className="border-b border-border pb-3">
+        {/* The sheet is full-screen on a phone, so the header clears the notch and the action row
+            clears the home indicator. On a desktop both insets are zero and nothing changes. */}
+        <SheetHeader className="border-b border-border pb-3 pt-[calc(1rem+env(safe-area-inset-top))]">
           <SheetTitle>{ev ? "Event" : "New event"}</SheetTitle>
           <SheetDescription className="sr-only">Edit the details of a calendar event.</SheetDescription>
         </SheetHeader>
@@ -899,7 +901,7 @@ function EventForm({ target }: { target: EditorTarget }) {
           )}
         </div>
 
-        <div className="flex items-center gap-2 border-t border-border p-3">
+        <div className="flex items-center gap-2 border-t border-border p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
           {ev && !readOnly && (
             <Button variant="ghost" size="icon-sm" aria-label="Delete event" className="text-muted-foreground hover:text-destructive" onClick={requestDelete} disabled={busy}>
               <Trash2 />

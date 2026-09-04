@@ -36,7 +36,7 @@ function DayScreen() {
   const date = params.date && DATE_RE.test(params.date) ? params.date : todayKey();
   const nav = useNavigate();
   const qc = useQueryClient();
-  const { cursor, setCursor, setView, view, range, settings, eventsOn, openEvent } = useCalendar();
+  const { cursor, setCursor, setView, view, range, eventsOn, openEvent } = useCalendar();
   const { syncAll } = useCalendarSourceMutations();
   const habitMut = useHabitMutations();
 
