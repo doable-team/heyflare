@@ -19,6 +19,10 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: npm ci
         working-directory: packages/create-heyflare
+      # The template is generated from the repo and is not committed, so a checkout has none.
+      # Without this the test scaffolds an empty project and fails on a missing package.json.
+      - run: npm run sync-template
+        working-directory: packages/create-heyflare
       - run: npm test
         working-directory: packages/create-heyflare
       - run: npm publish --provenance --access public

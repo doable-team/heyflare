@@ -11,6 +11,14 @@ const out = join(pkgDir, "template");
 
 const EXCLUDE_PREFIX = ["docs/", "packages/", "scripts/", ".github/"];
 const EXCLUDE_EXACT = new Set(["DESIGN.md", "API.md", "wrangler.local.jsonc", ".dev.vars"]);
+/**
+ * Exceptions to the excluded prefixes above. `scripts/` is a repo-development directory and does
+ * not belong in someone's scaffolded app — except that the scaffolded `package.json` keeps a
+ * `prebuild` step which runs gen-version.mjs, so leaving it out breaks `npm run build` on a fresh
+ * install, which is the first thing `create-heyflare deploy` does. It reads only package.json and
+ * falls back to "unknown" without git, so it is safe outside this repo.
+ */
+const KEEP_EXACT = new Set(["scripts/gen-version.mjs"]);
 
 if (!existsSync(join(root, "wrangler.jsonc")) || !existsSync(join(root, "src/worker/index.ts"))) {
   console.error("sync-template: repo root not found at " + root);
@@ -21,7 +29,7 @@ rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 let n = 0;
 for (const rel of tracked) {
-  if (EXCLUDE_PREFIX.some((p) => rel.startsWith(p)) || EXCLUDE_EXACT.has(rel)) continue;
+  if (!KEEP_EXACT.has(rel) && (EXCLUDE_PREFIX.some((p) => rel.startsWith(p)) || EXCLUDE_EXACT.has(rel))) continue;
   if (rel.startsWith("dist/") || rel.startsWith(".wrangler/") || rel.startsWith("node_modules/")) continue;
   // npm strips .gitignore and package-lock.json from published packages; ship them under safe names.
   let dest = rel;
