@@ -239,6 +239,11 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
       <div className="relative min-h-0 flex-1">
         <DayPhotoBackdrop day={day} />
 
+        {/* The strip runs on forever, so whatever sits at either edge is cut mid-glyph. Fading the
+            last few pixels makes that read as "there is more" rather than as a rendering fault. */}
+        <div className="pointer-events-none absolute inset-y-0 left-0 z-30 w-6 bg-gradient-to-r from-background to-transparent" />
+        <div className="pointer-events-none absolute inset-y-0 right-0 z-30 w-6 bg-gradient-to-l from-background to-transparent" />
+
         <div ref={scrollRef} onScroll={onRibbonScroll} className="overscroll-contain absolute inset-0 overflow-x-auto overflow-y-hidden">
           <div className="relative h-full" style={{ width: Math.max(ribbon.length, 1) }}>
             {/* Which day you are scrolled into. */}

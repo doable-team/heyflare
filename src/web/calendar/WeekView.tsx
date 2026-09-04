@@ -239,7 +239,9 @@ function WeekRow({
               key={t.i}
               // Behind the events, not over them: it is a watermark telling you where the month
               // turns, and it must never sit on top of something you are trying to read.
-              className="pointer-events-none absolute z-0 max-h-[190px] overflow-hidden whitespace-nowrap text-[12px] uppercase tracking-[0.08em] text-foreground/20"
+              // A background chip, because the column's own hairline runs down exactly this line and
+              // would otherwise strike straight through the words.
+              className="pointer-events-none absolute z-0 max-h-[190px] overflow-hidden whitespace-nowrap bg-background px-[3px] py-1 text-[12px] uppercase tracking-[0.08em] text-foreground/25"
               style={{
                 left: `${(t.i / 7) * 100}%`,
                 top: HABITS_PX + HEADER_PX + 8,
