@@ -93,6 +93,7 @@ export function EventBlock({
   onClick,
   onToggleDone,
   focused,
+  onPhoto,
 }: {
   e: CalEvent;
   top: number;
@@ -103,6 +104,8 @@ export function EventBlock({
   onClick?: () => void;
   onToggleDone?: () => void;
   focused?: boolean;
+  /** Sitting over a day's photo: keep the fill opaque and ring it in white, the way HEY does. */
+  onPhoto?: boolean;
 }) {
   const h = Math.max(height, FLOOR_PX);
   const oneLine = h < ONE_LINE_PX;
@@ -129,6 +132,9 @@ export function EventBlock({
           oneLine ? "justify-center py-0" : "py-[3px]",
           maybe && "border border-dashed border-foreground/40",
           declined && "opacity-45",
+          // Over a photo the block keeps its solid fill and takes a white keyline; that ring is the
+          // whole separation device in HEY — no scrim on the picture, no shadow on the text.
+          onPhoto && "shadow-[0_0_0_2px_#fff]",
           focused && "ring-1 ring-ring ring-offset-0",
         )}
       >

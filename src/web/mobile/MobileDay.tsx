@@ -106,8 +106,14 @@ function DayScreen() {
           }}
         >
           {day?.cover_url && (
-            <div className="h-28 overflow-hidden bg-muted">
-              <img src={day.cover_url} alt="" className="h-full w-full object-cover grayscale" loading="lazy" />
+            <div className="relative h-28 overflow-hidden bg-muted">
+              <img
+                src={day.cover_url}
+                alt=""
+                loading="lazy"
+                className="h-full w-full object-cover"
+                style={{ objectPosition: day.cover_position || "50% 50%" }}
+              />
             </div>
           )}
           {day?.label && <div className="px-4 pt-2 text-[13px] font-medium">{day.label}</div>}

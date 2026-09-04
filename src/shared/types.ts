@@ -316,7 +316,8 @@ export interface AiDraftCard {
 export type CalendarSource = "local" | "google" | "ics";
 export type EventKind = "event" | "birthday" | "anniversary" | "todo";
 export type Rsvp = "" | "needsAction" | "accepted" | "declined" | "tentative";
-export type CalendarView = "days" | "week" | "month" | "year" | "agenda";
+/** HEY has three: a day, a week, a year. No month grid, no agenda list. */
+export type CalendarView = "days" | "week" | "year";
 
 export interface Calendar {
   id: string;
@@ -419,10 +420,23 @@ export interface TimeEntry {
   ended_at: number | null;
 }
 
+export interface DayCover {
+  id: string;
+  url: string;
+  width: number;
+  height: number;
+  size: number;
+  name: string;
+  created_at: number;
+}
+
 export interface CalendarDay {
   date: string;
   label: string;
   cover_url: string;
+  cover_id: string | null;
+  /** CSS object-position for the crop, e.g. "50% 30%". */
+  cover_position: string;
   has_journal: boolean;
   journal_updated_at: number | null;
 }

@@ -1,33 +1,37 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CalEvent, CalendarDay, Habit } from "@shared/types";
+import type { CalendarDay, Habit } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useCalendar } from "./CalendarContext";
 import { AllDayPill, EventBlock } from "./EventBlock";
 import { WeekTasks } from "./WeekTasks";
 import { eventColors } from "./colors";
-import { freeGaps, makeRibbon, snap, spanLabel, type Ribbon, type RibbonRun } from "./scale";
-import { isToday, layoutColumns, startOfDayMs, weekDays } from "../lib/caldate";
-import { useCalendarDayMutation, useEventMutations, useHabitMutations } from "../api";
+import { DayPhotoBackdrop, DayPhotoButton, hasPhoto } from "./DayPhoto";
+import { heyTime, snap } from "./scale";
+import { addDays, daysBetween, isToday, layoutColumns, startOfDayMs, weekStartOf } from "../lib/caldate";
+import { useEventMutations, useHabitMutations } from "../api";
 
 /**
- * The week — HEY Calendar's desktop home, rebuilt column for column.
+ * The week — HEY Calendar's desktop home, rebuilt from the real thing.
  *
- * Seven columns, one week, and no more: "the calendar grid in the Week view caps at 7 columns."
- * The ‹ › in the toolbar move the cursor a week at a time; nothing here scrolls to another week,
- * because a week you can see all of is the point.
+ * It is not one week. It is a **vertical stack of week rows** that runs on forever in both
+ * directions: you scroll through the year the way you scroll through a document, and the week you
+ * are currently pointed at is the one wearing a thin rounded frame.
  *
- * Two things follow from that, and they are what make this not a spreadsheet:
+ * Each row is a self-contained week. Top to bottom:
  *
- *  1. **There is no hour gutter and there are no hour rules.** A column's interior holds event
- *     boxes and free-time bands and nothing else. You read the shape of a day, not its coordinates.
+ *   · a habit rail — a hairline per day column with that day's habit buttons straddling it;
+ *   · the day headers, right-aligned, small, today reversed out of a filled blob;
+ *   · the timed body: seven columns, the **whole 24 hours, dead linear**, about 19px to the hour;
+ *   · "SOMETIME THIS WEEK:", this week's flexible tasks, always present even when empty.
  *
- *  2. **Free time is drawn.** Jason Fried: "Your day begins with 24 hours of free time, and you
- *     have to carve time out of your free time to add an event… your day is actually full." So the
- *     gaps between meetings are rendered at exactly the same scale as the meetings and stamped
- *     with their length — 2hrs, 45min — rather than left as background.
+ * Two things this view deliberately does *not* do, both of which belong to the day view:
  *
- * The night hours are the single break in the scale: `makeRibbon` squeezes them into a fixed block,
- * drawn here as a torn-edged patch of dark sky. Click it to open the night out at full scale.
+ *  1. **No night compression.** 1AM sits near the top of the column and 10:30PM near the bottom,
+ *     on one unbroken ruler. A week is for seeing shape across days, and a kinked axis would make
+ *     Tuesday's evening a different size from Wednesday's.
+ *
+ *  2. **No free-time bands and no duration stamps.** The ground is plain. There is also no hour
+ *     gutter and there are no hour rules — nothing in a column but events.
  */
 
 const WEEKDAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
@@ -38,23 +42,38 @@ const MONTHS_LONG = [
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** How far the fitted scale may be squeezed or stretched. Outside this a week stops reading. */
-const MIN_PPH = 18;
-const MAX_PPH = 46;
+/** The habit rail, and the header above the track. */
+const HABITS_PX = 22;
+const HEADER_PX = 34;
+/**
+ * The timed body. All 24 hours live in here at one scale — 460/24 ≈ 19.2px per hour, measured off
+ * HEY's own week view — so no row ever scrolls inside itself and every row is exactly as tall as
+ * every other, which is what makes the stack cheap to scroll and to anchor.
+ */
+const BODY_PX = 460;
+const PX_PER_MS = BODY_PX / DAY_MS;
+/** The "sometime this week" strip along the floor of the row. */
+const TASKS_PX = 28;
+/** Air between one week and the next. */
+const ROW_GAP_PX = 12;
 
-/** Fixed furniture above the track, so all seven tracks start on the same line. */
-const HABITS_PX = 18;
-const HEADER_PX = 30;
-const LABEL_PX = 16;
-/** One all-day pill plus the gap under it. */
-const ALLDAY_PX = 20;
+const ROW_PX = HABITS_PX + HEADER_PX + BODY_PX + TASKS_PX;
+const ROW_STRIDE_PX = ROW_PX + ROW_GAP_PX;
 
-/** A free-time band shorter than this has no room for its stamp. */
-const STAMP_MIN_PX = 26;
+/** How many all-day pills a column shows before it starts counting them instead. */
+const ALLDAY_MAX = 3;
 
 export function WeekView() {
-  const { settings, cursor, range } = useCalendar();
-  const days = useMemo(() => weekDays(cursor, settings.week_start), [cursor, settings.week_start]);
+  const { settings, cursor, from, to, extend, range } = useCalendar();
+
+  // Every week the loaded window touches, oldest first. The window only ever grows, so this list
+  // only ever gains rows — at the head or the tail — which is exactly what the anchor below assumes.
+  const weeks = useMemo(() => {
+    const first = weekStartOf(from, settings.week_start);
+    const last = weekStartOf(to, settings.week_start);
+    const n = Math.min(Math.max(Math.floor(daysBetween(first, last) / 7) + 1, 1), 520);
+    return Array.from({ length: n }, (_, i) => addDays(first, i * 7));
+  }, [from, to, settings.week_start]);
 
   const dayMeta = useMemo(() => {
     const m = new Map<string, CalendarDay>();
@@ -63,77 +82,81 @@ export function WeekView() {
   }, [range]);
   const habits = useMemo(() => (range?.habits ?? []).filter((h) => !h.archived), [range]);
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <WeekGrid days={days} dayMeta={dayMeta} habits={habits} />
-      <WeekTasks />
-    </div>
-  );
-}
-
-/**
- * The grid proper: the month rail, then seven equal columns divided by hairlines.
- *
- * Every column reserves the same height for its furniture — habits, header, label, the all-day
- * shelf at the floor — so the timed tracks are one band across the whole week and a single
- * `pxPerHour` makes 3pm on Monday sit level with 3pm on Friday.
- */
-function WeekGrid({ days, dayMeta, habits }: { days: string[]; dayMeta: Map<string, CalendarDay>; habits: Habit[] }) {
-  const { settings, nightOpen, eventsOn } = useCalendar();
-
-  // The all-day shelf is as deep as the busiest day's, in every column, or the tracks fall out of step.
-  const allDayPx = useMemo(() => {
-    const most = days.reduce((n, d) => Math.max(n, eventsOn(d).allDay.length), 0);
-    return most === 0 ? 0 : most * ALLDAY_PX + 4;
-  }, [days, eventsOn]);
-
-  // The track measures itself and the scale is solved from the height it turns out to have. The ref
-  // is a callback rather than an object because the first column is remounted whenever the week
-  // turns, and the observer has to follow the live node rather than sit on a detached one.
-  const [trackEl, setTrackEl] = useState<HTMLDivElement | null>(null);
-  const measure = useCallback((el: HTMLDivElement | null) => setTrackEl(el), []);
-  const [trackPx, setTrackPx] = useState(0);
-  useLayoutEffect(() => {
-    if (!trackEl) return;
-    setTrackPx(trackEl.clientHeight);
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => setTrackPx(trackEl.clientHeight));
-    ro.observe(trackEl);
-    return () => ro.disconnect();
-  }, [trackEl]);
-
-  const collapseNight = settings.collapse_night && !nightOpen;
+  const scroller = useRef<HTMLDivElement>(null);
+  const rows = useRef(new Map<string, HTMLDivElement>());
+  const registerRow = useCallback((week: string, el: HTMLDivElement | null) => {
+    if (el) rows.current.set(week, el);
+    else rows.current.delete(week);
+  }, []);
 
   /**
-   * Fit the scale to the height we were given.
-   *
-   * The ribbon's length is (collapsed night px) + (waking hours × pxPerHour), and the night part is
-   * a constant. Two probe ribbons recover both terms without hard-coding the night geometry: at
-   * 0 px/hour the length *is* the night block, and at 1 px/hour the extra is the waking hours.
+   * Growing at the head prepends rows above the viewport, which would yank everything you were
+   * looking at downwards. Measure the scroll height either side of the change and put the
+   * difference straight back into `scrollTop`, in the same frame, before paint.
    */
-  const pxPerHour = useMemo(() => {
-    const from = startOfDayMs(days[0] ?? "");
-    const base = { from, to: from + DAY_MS, nightStart: settings.night_start, nightEnd: settings.night_end, collapseNight };
-    const nightPx = makeRibbon({ ...base, pxPerHour: 0 }).length;
-    const wakingHours = Math.max(1, makeRibbon({ ...base, pxPerHour: 1 }).length - nightPx);
-    if (!trackPx) return 30;
-    return Math.max(MIN_PPH, Math.min(MAX_PPH, (trackPx - nightPx) / wakingHours));
-  }, [days, settings.night_start, settings.night_end, collapseNight, trackPx]);
+  const lastHeight = useRef(0);
+  const lastHead = useRef(weeks[0]);
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    if (lastHead.current !== weeks[0]) {
+      el.scrollTop += el.scrollHeight - lastHeight.current;
+      lastHead.current = weeks[0];
+    }
+    lastHeight.current = el.scrollHeight;
+  });
+
+  // Land on the cursor's week, and follow it whenever it leaves the screen.
+  const cursorWeek = weekStartOf(cursor, settings.week_start);
+  const landed = useRef(false);
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    const row = rows.current.get(cursorWeek);
+    if (!el || !row) return;
+    const target = Math.max(0, row.offsetTop - (el.clientHeight - row.offsetHeight) / 2);
+    if (!landed.current) {
+      landed.current = true;
+      el.scrollTop = target;
+      return;
+    }
+    // Already fully in view: leave the scroll where the reader put it.
+    const top = row.offsetTop - el.scrollTop;
+    if (top >= 0 && top + row.offsetHeight <= el.clientHeight) return;
+    // A jump of more than a screen and a half is a different place, not a nudge — don't animate it.
+    const far = Math.abs(target - el.scrollTop) > el.clientHeight * 1.5;
+    el.scrollTo({ top: target, behavior: far ? "auto" : "smooth" });
+    // Only the cursor moving may move the scroll. Growing the window must not, or scrolling far
+    // enough to trigger a load would snap you straight back to the week you started from.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cursorWeek]);
+
+  // Within a row of either end, load another four weeks. The guards are keyed on the window itself,
+  // so a burst of scroll events can't fire the same extension twice before React catches up.
+  const asked = useRef({ start: "", end: "" });
+  const onScroll = useCallback(() => {
+    const el = scroller.current;
+    if (!el) return;
+    if (el.scrollTop < ROW_STRIDE_PX && asked.current.start !== from) {
+      asked.current.start = from;
+      extend("start", 28);
+    }
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < ROW_STRIDE_PX && asked.current.end !== to) {
+      asked.current.end = to;
+      extend("end", 28);
+    }
+  }, [from, to, extend]);
 
   return (
-    <div className="flex min-h-0 flex-1 overflow-hidden rounded-md border border-border bg-background">
-      <MonthRail days={days} />
-      {/* The 8px of air is where the top halves of the habit badges live. */}
-      <div className="grid min-w-0 flex-1 grid-cols-[repeat(7,minmax(0,1fr))] pt-2">
-        {days.map((d, i) => (
-          <DayColumn
-            key={d}
-            date={d}
-            day={dayMeta.get(d)}
+    <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+      <div className="relative px-1 py-2">
+        {weeks.map((w) => (
+          <WeekRow
+            key={w}
+            weekStart={w}
+            current={w === cursorWeek}
+            dayMeta={dayMeta}
             habits={habits}
-            pxPerHour={pxPerHour}
-            allDayPx={allDayPx}
-            measure={i === 0 ? measure : undefined}
+            register={registerRow}
           />
         ))}
       </div>
@@ -142,111 +165,115 @@ function WeekGrid({ days, dayMeta, habits }: { days: string[]; dayMeta: Map<stri
 }
 
 /**
- * The left rail. Its only content is the month, set on its side in light grey — the week's place in
- * the year, stated once, taking no width from the days. A week that straddles two months prints
- * both, the rail split in proportion to how many days each month owns.
+ * One week: the month standing on its side at the left edge, seven columns, and the week's loose
+ * tasks along the floor. The row the cursor is in gets a rounded outline that lifts it out of the
+ * stack; the others carry the same border in nothing, so no row is ever a pixel taller.
  */
-function MonthRail({ days }: { days: string[] }) {
-  const groups = useMemo(() => {
-    const out: { month: number; days: number }[] = [];
-    for (const d of days) {
-      const month = Number(d.slice(5, 7)) - 1;
-      const last = out[out.length - 1];
-      if (last && last.month === month) last.days++;
-      else out.push({ month, days: 1 });
-    }
-    return out;
-  }, [days]);
+function WeekRow({
+  weekStart,
+  current,
+  dayMeta,
+  habits,
+  register,
+}: {
+  weekStart: string;
+  current: boolean;
+  dayMeta: Map<string, CalendarDay>;
+  habits: Habit[];
+  register: (week: string, el: HTMLDivElement | null) => void;
+}) {
+  const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
+
+  // A month that turns inside the row is announced on the divider it turns at, with its year.
+  const turns = useMemo(
+    () =>
+      days
+        .map((d, i) => ({ i, month: Number(d.slice(5, 7)) - 1, year: d.slice(0, 4) }))
+        .filter((d, i) => i > 0 && d.month !== Number(days[i - 1].slice(5, 7)) - 1),
+    [days],
+  );
 
   return (
-    <div className="flex w-7 shrink-0 flex-col border-r border-border">
-      {groups.map((g) => (
-        <div key={g.month} className="flex min-h-0 items-center justify-center overflow-hidden" style={{ flexGrow: g.days, flexBasis: 0 }}>
+    <div
+      ref={(el) => register(weekStart, el)}
+      style={{ height: ROW_PX, marginBottom: ROW_GAP_PX }}
+      className={cn("relative flex flex-col rounded-lg border", current ? "border-border" : "border-transparent")}
+    >
+      <div className="flex min-h-0 flex-1">
+        {/* The month, once, on its side — the week's place in the year, taking no width from the days. */}
+        <div className="relative flex w-6 shrink-0 items-center justify-center overflow-hidden">
           <span
-            className="whitespace-nowrap text-[11px] uppercase tracking-[0.2em] text-tertiary"
+            className="whitespace-nowrap text-[15px] uppercase tracking-[0.06em] text-foreground/25"
             style={{ writingMode: "vertical-rl" }}
           >
-            {MONTHS_LONG[g.month]}
+            {MONTHS_LONG[Number(weekStart.slice(5, 7)) - 1]}
           </span>
         </div>
-      ))}
+
+        <div className="relative grid min-w-0 flex-1 grid-cols-[repeat(7,minmax(0,1fr))]">
+          {days.map((d, i) => (
+            <DayColumn key={d} date={d} first={i === 0} day={dayMeta.get(d)} habits={habits} />
+          ))}
+
+          {turns.map((t) => (
+            <span
+              key={t.i}
+              className="pointer-events-none absolute z-40 whitespace-nowrap text-[15px] uppercase tracking-[0.06em] text-foreground/30"
+              style={{
+                left: `${(t.i / 7) * 100}%`,
+                top: HABITS_PX + HEADER_PX + 8,
+                writingMode: "vertical-rl",
+                transform: "translateX(-50%)",
+              }}
+            >
+              {MONTHS_LONG[t.month]} {t.year}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div className="shrink-0" style={{ height: TASKS_PX }}>
+        <WeekTasks weekStart={weekStart} />
+      </div>
     </div>
   );
 }
 
-/**
- * One day. Top to bottom: habit badges straddling the rail, the header, the day's name, the timed
- * track, and the all-day pills sitting on the floor.
- *
- * All-day events at the *bottom* is the opposite of Google and Apple, and it is deliberate: they
- * are the ground the day stands on rather than a banner hung above it.
- */
-function DayColumn({
-  date,
-  day,
-  habits,
-  pxPerHour,
-  allDayPx,
-  measure,
-}: {
-  date: string;
-  day: CalendarDay | undefined;
-  habits: Habit[];
-  pxPerHour: number;
-  allDayPx: number;
-  /** Only one column reports its height: the scale it yields is shared by all seven. */
-  measure?: (el: HTMLDivElement | null) => void;
-}) {
-  const { cursor, setCursor, openEvent, eventsOn } = useCalendar();
-  const { allDay } = eventsOn(date);
-  const today = isToday(date);
-
+/** One day: habits on their rail, the header, then the track. */
+function DayColumn({ date, first, day, habits }: { date: string; first: boolean; day: CalendarDay | undefined; habits: Habit[] }) {
   return (
-    <div
-      onMouseDown={() => setCursor(date)}
-      className={cn(
-        "group/col relative flex min-w-0 flex-col border-l border-t border-border first:border-l-0",
-        cursor === date && "bg-muted/25",
-      )}
-    >
-      {/* Not a thumbnail: the cover runs floor to ceiling, behind everything, barely there. */}
-      {day?.cover_url && (
-        <img
-          src={day.cover_url}
-          alt=""
-          loading="lazy"
-          className="pointer-events-none absolute inset-0 z-0 h-full w-full object-cover opacity-[0.16] grayscale"
+    <div className="group/day relative flex min-w-0 flex-col">
+      <HabitRail date={date} habits={habits} />
+      <DayHeader date={date} photo={hasPhoto(day)} />
+      <Track date={date} first={first} day={day} />
+      {/* HEY's entry point: hover the day's top-left corner and a photo icon appears over it. */}
+      <div className="absolute left-1.5 z-30" style={{ top: HABITS_PX + HEADER_PX + 6 }}>
+        <DayPhotoButton
+          date={date}
+          day={day}
+          className={cn(
+            "opacity-0 transition-opacity focus-visible:opacity-100 group-hover/day:opacity-100",
+            hasPhoto(day) && "opacity-80",
+          )}
         />
-      )}
-
-      <div className="relative z-10 flex min-h-0 flex-1 flex-col">
-        <HabitBadges date={date} habits={habits} />
-        <DayHeader date={date} today={today} />
-        <DayLabel date={date} label={day?.label ?? ""} />
-        <Track date={date} pxPerHour={pxPerHour} today={today} measure={measure} />
-        {allDayPx > 0 && (
-          <div className="flex shrink-0 flex-col justify-end gap-[2px] px-1 pb-1" style={{ height: allDayPx }}>
-            {allDay.map((e) => (
-              <AllDayPill key={e.id} e={e} onClick={() => openEvent(e)} />
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );
 }
 
 /**
- * The habits, as small circles straddling the top rail — half above the column's border, so they
- * read as buttons pinned to the calendar rather than another row of content inside it.
+ * The habits, as small circles straddling a hairline that runs the width of the column — the line
+ * passes behind them, so they read as buttons pinned to the week rather than another row of
+ * content inside it. Outlined when the habit is undone, filled in its own colour when it is done.
  */
-function HabitBadges({ date, habits }: { date: string; habits: Habit[] }) {
+function HabitRail({ date, habits }: { date: string; habits: Habit[] }) {
   const { toggle } = useHabitMutations();
   const dow = new Date(`${date}T00:00:00`).getDay();
   const mine = habits.filter((h) => h.days.length === 0 || h.days.includes(dow));
 
   return (
-    <div className="relative z-10 -mt-2 flex shrink-0 items-center justify-center gap-1" style={{ height: HABITS_PX }}>
+    <div className="relative flex shrink-0 items-center justify-center gap-1" style={{ height: HABITS_PX }}>
+      <span className="pointer-events-none absolute inset-x-1.5 top-1/2 h-px -translate-y-1/2 bg-border" />
       {mine.map((h) => {
         const done = h.completions?.includes(date) ?? false;
         const { background, color } = eventColors(h.color);
@@ -262,7 +289,7 @@ function HabitBadges({ date, habits }: { date: string; habits: Habit[] }) {
             }}
             style={done ? { background, color, borderColor: background } : undefined}
             className={cn(
-              "inline-flex size-[18px] shrink-0 items-center justify-center rounded-full border text-[9px] leading-none transition-colors",
+              "relative z-10 inline-flex size-[19px] shrink-0 items-center justify-center rounded-full border text-[9.5px] leading-none transition-colors",
               done ? "border-transparent" : "border-border bg-background text-tertiary hover:border-foreground/40 hover:text-foreground",
             )}
           >
@@ -275,118 +302,59 @@ function HabitBadges({ date, habits }: { date: string; habits: Habit[] }) {
 }
 
 /**
- * `MON 18`, right-aligned and deliberately small — on HEY the header is barely bigger than the
+ * `SUN 30`, right-aligned and deliberately small — on HEY the header is barely bigger than the
  * event text, because the header is not the point of the view. Today is reversed out of a solid
  * blob; HEY uses its orange, and this app being monochrome, the foreground colour stands in.
  */
-function DayHeader({ date, today }: { date: string; today: boolean }) {
+function DayHeader({ date, photo }: { date: string; photo?: boolean }) {
   const d = new Date(`${date}T00:00:00`);
+  const today = isToday(date);
   return (
-    <div className="flex shrink-0 items-center justify-end px-1.5" style={{ height: HEADER_PX }}>
-      <span className={cn("inline-flex items-baseline gap-1", today && "rounded-full bg-foreground px-1.5 py-0.5 text-background")}>
-        <span className={cn("text-[10.5px] uppercase leading-none tracking-[0.09em]", !today && "text-tertiary")}>{WEEKDAYS[d.getDay()]}</span>
-        <span className="text-[15px] font-bold leading-none tnum">{d.getDate()}</span>
+    <div className="relative z-20 flex shrink-0 items-center justify-end px-1.5" style={{ height: HEADER_PX }}>
+      <span
+        className={cn(
+          "inline-flex items-baseline gap-1",
+          today && "rounded-full bg-foreground px-2 py-[3px] text-background",
+          // Over a photo the number goes plain white — no shadow, no halo — as HEY does.
+          !today && photo && "text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.45)]",
+        )}
+      >
+        <span className={cn("text-[11px] uppercase leading-none tracking-[0.1em]", !today && !photo && "text-tertiary")}>{WEEKDAYS[d.getDay()]}</span>
+        <span className="text-[16px] font-bold leading-none tnum">{d.getDate()}</span>
       </span>
     </div>
   );
 }
 
-/** A day is allowed a name of its own — "Ada's birthday", "Ship day". One line, click to write it. */
-function DayLabel({ date, label }: { date: string; label: string }) {
-  const mut = useCalendarDayMutation();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(label);
-  useEffect(() => setDraft(label), [label]);
-
-  const save = () => {
-    setEditing(false);
-    if (draft !== label) mut.mutate({ date, label: draft });
-  };
-
-  if (editing) {
-    return (
-      <input
-        autoFocus
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={save}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") save();
-          if (e.key === "Escape") {
-            setDraft(label);
-            setEditing(false);
-          }
-        }}
-        placeholder="Name this day"
-        style={{ height: LABEL_PX }}
-        className="w-full shrink-0 bg-transparent px-1 text-center text-[10.5px] outline-none placeholder:text-tertiary"
-      />
-    );
-  }
-  return (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        setEditing(true);
-      }}
-      title={label || "Name this day"}
-      style={{ height: LABEL_PX }}
-      className={cn(
-        "w-full shrink-0 truncate px-1 text-center text-[10.5px] leading-[16px]",
-        label ? "text-muted-foreground" : "text-transparent group-hover/col:text-tertiary",
-      )}
-    >
-      {label || "Name this day"}
-    </button>
-  );
-}
-
 /**
- * The body of a column: free time, night, events, now — drawn on one ribbon, to one scale.
+ * The body of a column: the day's photo, its events, its all-day pills on the floor, and — on
+ * today only — a dotted line where the hour hand is.
  *
- * There is nothing else in here. No hour labels, no rules. The bands *are* the hours.
+ * The ruler is linear and complete: midnight at the top, midnight at the bottom, 24 hours in
+ * between at one rate. No hour rules, no labels, no bands. The boxes *are* the day.
  */
-function Track({
-  date,
-  pxPerHour,
-  today,
-  measure,
-}: {
-  date: string;
-  pxPerHour: number;
-  today: boolean;
-  measure?: (el: HTMLDivElement | null) => void;
-}) {
-  const { settings, nightOpen, setNightOpen, eventsOn, openEvent, createEvent } = useCalendar();
+function Track({ date, first, day }: { date: string; first: boolean; day: CalendarDay | undefined }) {
+  const { settings, cursor, setCursor, eventsOn, openEvent, createEvent } = useCalendar();
   const { setDone } = useEventMutations();
-  const { timed } = eventsOn(date);
-
-  const box = useRef<HTMLDivElement>(null);
-  const setBox = useCallback(
-    (el: HTMLDivElement | null) => {
-      box.current = el;
-      measure?.(el);
-    },
-    [measure],
-  );
+  const { timed, allDay } = eventsOn(date);
+  const today = isToday(date);
 
   const dayStart = useMemo(() => startOfDayMs(date), [date]);
-  const ribbon = useMemo(
-    () =>
-      makeRibbon({
-        from: dayStart,
-        to: dayStart + DAY_MS,
-        pxPerHour,
-        nightStart: settings.night_start,
-        nightEnd: settings.night_end,
-        collapseNight: settings.collapse_night && !nightOpen,
-      }),
-    [dayStart, pxPerHour, settings.night_start, settings.night_end, settings.collapse_night, nightOpen],
-  );
+  const posOf = useCallback((ms: number) => Math.max(0, Math.min(BODY_PX, (ms - dayStart) * PX_PER_MS)), [dayStart]);
 
   const layout = useMemo(() => layoutColumns(timed), [timed]);
-  const gaps = useMemo(() => wakingGaps(ribbon, timed), [ribbon, timed]);
+
+  const box = useRef<HTMLDivElement>(null);
+  const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
+  const msAtY = useCallback(
+    (clientY: number) => {
+      const r = box.current?.getBoundingClientRect();
+      if (!r) return dayStart;
+      const mins = (Math.max(0, Math.min(BODY_PX, clientY - r.top)) / PX_PER_MS) / 60_000;
+      return dayStart + snap(Math.round(mins)) * 60_000;
+    },
+    [dayStart],
+  );
 
   // The now marker ticks itself; only today's column has one.
   const [now, setNow] = useState(() => Date.now());
@@ -396,22 +364,21 @@ function Track({
     return () => window.clearInterval(t);
   }, [today]);
 
-  const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
-  const msAtY = useCallback(
-    (clientY: number) => {
-      const r = box.current?.getBoundingClientRect();
-      if (!r) return dayStart;
-      return dayStart + snap(Math.round((ribbon.at(clientY - r.top) - dayStart) / 60_000)) * 60_000;
-    },
-    [ribbon, dayStart],
-  );
+  const extra = allDay.length - ALLDAY_MAX;
 
   return (
     <div
-      ref={setBox}
-      className="relative min-h-0 flex-1 select-none overflow-hidden"
+      ref={box}
+      style={{ height: BODY_PX }}
+      className={cn(
+        "relative min-w-0 shrink-0 select-none overflow-hidden border-border",
+        !first && "border-l",
+        cursor === date && "bg-muted/25",
+      )}
       onMouseDown={(e) => {
-        if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
+        if (e.button !== 0) return;
+        setCursor(date);
+        if ((e.target as HTMLElement).closest("button")) return;
         const from = msAtY(e.clientY);
         setDrag({ from, to: from + 30 * 60_000 });
       }}
@@ -425,32 +392,17 @@ function Track({
         createEvent({ starts_at: a, ends_at: b === a ? a + 30 * 60_000 : b });
       }}
     >
-      {/* Free time, at the same scale as everything else, stamped with what it is worth. */}
-      {gaps.map((g) => {
-        const top = ribbon.pos(g.from);
-        const height = ribbon.pos(g.to) - top;
-        if (height < 2) return null;
-        return (
-          <div key={g.from} className="pointer-events-none absolute inset-x-0 bg-muted/60" style={{ top, height }}>
-            {height >= STAMP_MIN_PX && (
-              <span className="absolute inset-x-0 bottom-[2px] text-center text-[9.5px] leading-none text-tertiary">
-                {spanLabel(g.to - g.from)}
-              </span>
-            )}
-          </div>
-        );
-      })}
-
-      {ribbon.runs.filter((r) => r.night).map((r) => (
-        <Night key={r.from} run={r} onToggle={() => setNightOpen(!nightOpen)} open={nightOpen} />
-      ))}
+      {/* Not a thumbnail, and not dimmed: the photo fills the column at full strength. Legibility
+          comes from the events on top of it, which stay opaque and gain a white keyline. */}
+      <DayPhotoBackdrop day={day} className="z-0" />
 
       {timed.map((e, i) => {
-        const top = ribbon.pos(Math.max(e.starts_at, dayStart));
-        const bottom = ribbon.pos(Math.min(e.ends_at, dayStart + DAY_MS));
+        const top = posOf(Math.max(e.starts_at, dayStart));
+        const bottom = posOf(Math.min(e.ends_at, dayStart + DAY_MS));
         return (
           <EventBlock
             key={e.id}
+            onPhoto={hasPhoto(day)}
             e={e}
             top={top}
             height={bottom - top}
@@ -467,90 +419,30 @@ function Track({
         <div
           className="pointer-events-none absolute inset-x-0.5 z-30 rounded-[3px] border border-dashed border-foreground/60 bg-foreground/5"
           style={{
-            top: ribbon.pos(Math.min(drag.from, drag.to)),
-            height: Math.max(ribbon.pos(Math.max(drag.from, drag.to)) - ribbon.pos(Math.min(drag.from, drag.to)), 8),
+            top: posOf(Math.min(drag.from, drag.to)),
+            height: Math.max(posOf(Math.max(drag.from, drag.to)) - posOf(Math.min(drag.from, drag.to)), 8),
           }}
         />
       )}
 
+      {/* All-day things sit on the floor of the day — the ground it stands on, not a banner. */}
+      {allDay.length > 0 && (
+        <div className="pointer-events-auto absolute inset-x-1 bottom-1 z-30 flex flex-col gap-[2px]">
+          {allDay.slice(0, ALLDAY_MAX).map((e) => (
+            <AllDayPill key={e.id} e={e} onClick={() => openEvent(e)} />
+          ))}
+          {extra > 0 && <span className="px-2 text-[10px] leading-none text-tertiary">+{extra} more</span>}
+        </div>
+      )}
+
       {today && now >= dayStart && now < dayStart + DAY_MS && (
-        <div className="pointer-events-none absolute inset-x-0 z-30" style={{ top: ribbon.pos(now) }}>
-          <div className="h-px bg-red-500" />
-          <div className="absolute -top-[3px] left-0 size-[7px] rounded-full bg-red-500" />
+        <div className="pointer-events-none absolute inset-x-0 z-40" style={{ top: posOf(now) }}>
+          <div className="border-t border-dotted border-red-500" />
+          <span className="absolute left-0 -top-[7px] bg-background/80 pr-1 text-[9px] leading-none tnum text-red-500">
+            {heyTime(now, settings.time_format)}
+          </span>
         </div>
       )}
     </div>
   );
-}
-
-/** The gaps between busy events, inside the waking runs only — night is never "free time". */
-function wakingGaps(ribbon: Ribbon, events: CalEvent[]): { from: number; to: number }[] {
-  const out: { from: number; to: number }[] = [];
-  for (const r of ribbon.runs) {
-    if (r.night) continue;
-    for (const g of freeGaps(events, r.from, r.to)) out.push(g);
-  }
-  return out;
-}
-
-/** Zigzag torn-paper edges, top and bottom, with the body of the block left solid between them. */
-const SAW = "repeating-linear-gradient(135deg, #000 0 4px, rgba(0,0,0,0) 4px 8px)";
-const TORN: React.CSSProperties = {
-  maskImage: `${SAW}, ${SAW}, linear-gradient(#000, #000)`,
-  WebkitMaskImage: `${SAW}, ${SAW}, linear-gradient(#000, #000)`,
-  maskSize: "100% 5px, 100% 5px, 100% calc(100% - 10px)",
-  WebkitMaskSize: "100% 5px, 100% 5px, 100% calc(100% - 10px)",
-  maskPosition: "top left, bottom left, left 5px",
-  WebkitMaskPosition: "top left, bottom left, left 5px",
-  maskRepeat: "repeat-x, repeat-x, no-repeat",
-  WebkitMaskRepeat: "repeat-x, repeat-x, no-repeat",
-};
-
-/**
- * Night: the one place the scale is allowed to lie. Eight hours become eighty pixels, torn off at
- * both edges so the break in the ruler is visible rather than pretended away. Click to open it out.
- */
-function Night({ run, onToggle, open }: { run: RibbonRun; onToggle: () => void; open: boolean }) {
-  const sky = useMemo(() => stars(run.from, Math.max(3, Math.min(10, Math.round(run.size / 12)))), [run.from, run.size]);
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-label={open ? "Collapse the night" : "Open the night out"}
-      title={open ? "Collapse the night" : "Open the night out"}
-      className="absolute inset-x-0 z-10 overflow-hidden bg-[#1c1c24]"
-      style={{ top: run.pos, height: run.size, ...TORN }}
-    >
-      {sky.map((s, i) => (
-        <span
-          key={i}
-          className="absolute rounded-full bg-white"
-          style={{ left: `${s.x}%`, top: `${s.y}%`, width: s.r, height: s.r, opacity: s.o }}
-        />
-      ))}
-      {/* The midnight fold, drawn down the middle of the block the way HEY scores its night. */}
-      <span className="absolute inset-y-0 left-1/2 w-px bg-black" />
-      {run.size >= 26 && (
-        <span className="absolute inset-x-0 bottom-[3px] text-center text-[9px] leading-none text-white/60">Nighttime</span>
-      )}
-    </button>
-  );
-}
-
-/**
- * Stars, placed from the run's own start instant so a re-render never reshuffles the sky.
- * A plain LCG: cheap, deterministic, and nobody is checking its spectral properties.
- */
-function stars(seed: number, count: number): { x: number; y: number; r: number; o: number }[] {
-  let s = (seed >>> 0) || 1;
-  const rnd = () => {
-    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
-    return s / 4294967296;
-  };
-  return Array.from({ length: count }, () => ({
-    x: 6 + rnd() * 88,
-    y: 12 + rnd() * 74,
-    r: rnd() < 0.25 ? 2 : 1,
-    o: 0.35 + rnd() * 0.5,
-  }));
 }

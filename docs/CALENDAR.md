@@ -18,22 +18,34 @@ the scope shows up in `connectable` and gets a "Connect Calendar" button that re
 
 ## Views
 
-- **Week** — the home view, and the one HEY is built around: "week after week, not month after
-  month". Weeks stack as rows and scroll continuously in both directions, each row seven day cells.
-  A day cell is a *list of one-line chips* in time order — duration is not drawn at all, because at
-  this scale what matters is what's on, not how long it runs. Month names print inline where a
-  month turns, and a day's label sits above the row.
-- **Day** — the only place time is drawn to scale: one day, events positioned by hour, hour marks
-  down the right edge, a red line at now, and the hours outside the day collapsed into a
-  "Nighttime" band you can click open. It sits beside the week scroll on a wide screen.
-- **Month** — a conventional grid, for orientation.
-- **Year** — every day of the year; only all-day and multi-day items are drawn.
-- **Agenda** — a flat list of what's next.
+HEY has three, and so does this: a **day**, a **week** and a **year**. There is no month grid and
+no agenda list.
 
-The day timeline is *fitted*: the scale is built from the hours that day's events actually occupy
-and stretched to fill the pane, so a day reads as a full day rather than a few boxes adrift in a
-24-hour chart. What falls outside becomes the collapsed band. Overlapping events sit side by side,
-never stacked.
+- **Week** — the home view. Weeks stack as rows and scroll continuously in both directions; the
+  week you are on is framed. Each row is seven columns carrying the full 24 hours, linear, with
+  events drawn to scale. No hour gutter and no hour rules. Habit badges straddle a rail along the
+  top, all-day events are stadium pills at the foot of the column, and every row carries its own
+  "sometime this week" strip. The month name is set rotated down the row's left edge, and again on
+  the column boundary where a month turns.
+- **Day** — horizontal. Time runs left to right at about 43px an hour and each event is a
+  full-height bar whose *width* is its duration, its title rotated to read bottom-to-top: Jason
+  Fried's "spine of a book in a library". Because night compresses to a fixed 80px, the track runs
+  straight through midnight with no day boundary. Free time is drawn here at full scale and stamped
+  with its length — your day starts full and you carve events out of it.
+- **Year** — every day of the year; only all-day and multi-day items are drawn.
+
+Mobile is deliberately conventional: a month grid with the day's agenda under it, and a vertical
+day timeline. HEY's own phone app is vertical too — the horizontal ribbon does not survive a thumb.
+
+## Day photos
+
+A day can carry a picture, the way you would tape one to a paper wall calendar. It sits behind that
+day's events at full strength under a scrim, so the photo reads as a photo and the text on top stays
+legible. Photos are uploaded through the picker on a day, downscaled in the browser to 1800px on
+the long edge, and stored as bytes in D1 (`day_covers`) rather than an object store, which this
+deployment does not have. `calendar_days.cover_id` points at the stored photo so one picture can be
+reused across days; `cover_url` may instead hold an external URL, and `cover_position` carries the
+crop.
 
 ## Data model
 
@@ -93,7 +105,9 @@ An `:id` may be `<row>@<YYYY-MM-DD>`, addressing one occurrence of a recurring m
 
 - `GET/PUT  /api/calendar/settings`
 - `GET/POST/PATCH/DELETE /api/calendar/habits`, `POST /api/calendar/habits/:id/toggle` `{ date }`
-- `GET/PUT  /api/calendar/days/:date` — label and cover art
+- `GET/PUT  /api/calendar/days/:date` — label, photo (`cover_id`, `cover_url`, `cover_position`)
+- `GET/POST/DELETE /api/calendar/covers` — the day-photo library; `POST` takes raw image bytes with
+  the type in `content-type`, `GET /covers/:id` serves them
 - `GET/PUT  /api/calendar/journal/:date`, `GET /api/calendar/journal` — the index
 - `GET/POST/PATCH/DELETE /api/calendar/flex-tasks` — `?week=YYYY-MM-DD`
 - `GET/POST /api/calendar/time`, `POST /api/calendar/time/:id/stop`, `PATCH`/`DELETE`
@@ -121,13 +135,13 @@ settings, calendars, `view`/`setView`, `cursor`/`setCursor`, `today`, the loaded
 `nightOpen`/`setNightOpen`, `eventsOn(date)` → `{ allDay, timed }`, and the editor
 (`editor`, `openEvent`, `createEvent`, `closeEditor`).
 
-Views live in `src/web/calendar/`: `WeekScroll` (the continuous week list) and `DayPane` (the
-single-day timeline) make up the home view, alongside `MonthView`, `YearView` and `AgendaView`,
-with `EventSheet` as the editor. `scale.ts` owns the fitted day geometry. Journal and Habits are their own pages.
+Views live in `src/web/calendar/`: `WeekView` (the scrolling stack of week rows), `DayRibbon` (the
+horizontal day) and `YearView`, with `EventSheet` as the editor and `DayPhoto` as the photo picker.
+`scale.ts` owns the ribbon — the piecewise minute-to-pixel mapping that both time views read. Journal and Habits are their own pages.
 Mobile has its own screens under `src/web/mobile/`.
 
 ## Keyboard
 
 `0` toggles mail and calendar. Inside the calendar: `←`/`→` walk the days, `↑`/`↓` scroll the
-timeline, `t` today, `d` day, `w` week, `m` month, `y` year, `a` agenda, `n` new event, `j`
-journal, `b` habits, `Esc` back to the sidebar.
+timeline, `t` today, `d` day, `w` week, `y` year, `n` new event, `j` journal, `b` habits, `Esc` back to the
+sidebar.

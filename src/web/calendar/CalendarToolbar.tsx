@@ -12,19 +12,12 @@ import { addDays, monthLabel, msAt, weekStartOf } from "../lib/caldate";
 const VIEWS: { id: CalendarView; label: string; key: string }[] = [
   { id: "days", label: "Day", key: "d" },
   { id: "week", label: "Week", key: "w" },
-  { id: "month", label: "Month", key: "m" },
   { id: "year", label: "Year", key: "y" },
-  { id: "agenda", label: "Agenda", key: "a" },
 ];
 
 /** Step size for ‹ › in each view. */
 export function step(view: CalendarView, date: string, delta: number, weekStart: number): string {
   if (view === "week") return addDays(weekStartOf(date, weekStart), delta * 7);
-  if (view === "month") {
-    const [y, m] = date.split("-").map(Number);
-    const d = new Date(y, m - 1 + delta, 1);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
-  }
   if (view === "year") return `${Number(date.slice(0, 4)) + delta}${date.slice(4)}`;
   return addDays(date, delta);
 }

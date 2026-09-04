@@ -162,6 +162,8 @@ export function toCalendarDay(r: CalendarDayRow): CalendarDay {
     date: r.date,
     label: r.label,
     cover_url: r.cover_url,
+    cover_id: r.cover_id ?? null,
+    cover_position: r.cover_position || "50% 50%",
     has_journal: !!(r.journal_html && r.journal_html.trim()),
     journal_updated_at: r.journal_updated_at,
   };
@@ -175,7 +177,7 @@ export function toSettings(r: CalendarSettingsRow): CalendarSettings {
     night_end: r.night_end,
     collapse_night: !!r.collapse_night,
     time_format: r.time_format === "24" ? "24" : "12",
-    default_view: (["days", "week", "month", "year", "agenda"].includes(r.default_view) ? r.default_view : "days") as CalendarView,
+    default_view: (["days", "week", "year"].includes(r.default_view) ? r.default_view : "week") as CalendarView,
     show_declined: !!r.show_declined,
     cover_art: !!r.cover_art,
   };
@@ -248,7 +250,7 @@ export async function putSettings(db: D1Database, userId: string, patch: Setting
     collapse_night: patch.collapse_night !== undefined ? (patch.collapse_night ? 1 : 0) : cur.collapse_night,
     time_format: patch.time_format !== undefined ? (String(patch.time_format) === "24" ? "24" : "12") : cur.time_format,
     default_view:
-      patch.default_view !== undefined && ["days", "week", "month", "year", "agenda"].includes(String(patch.default_view))
+      patch.default_view !== undefined && ["days", "week", "year"].includes(String(patch.default_view))
         ? String(patch.default_view)
         : cur.default_view,
     show_declined: patch.show_declined !== undefined ? (patch.show_declined ? 1 : 0) : cur.show_declined,

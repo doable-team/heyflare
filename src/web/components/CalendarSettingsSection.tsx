@@ -23,8 +23,8 @@ const RAMP = ["#111111", "#3d3d3d", "#5c5c5c", "#7a7a7a", "#9b9b9b", "#bcbcbc", 
 const SOURCE_ORDER: CalendarSource[] = ["local", "google", "ics"];
 const SOURCE_LABEL: Record<CalendarSource, string> = { local: "In heyflare", google: "Google Calendar", ics: "Subscribed links" };
 
-const VIEW_LABEL: Record<CalendarView, string> = { days: "Days", week: "Week", month: "Month", year: "Year", agenda: "Agenda" };
-const VIEWS: CalendarView[] = ["days", "week", "month", "year", "agenda"];
+const VIEW_LABEL: Record<CalendarView, string> = { days: "Day", week: "Week", year: "Year" };
+const VIEWS: CalendarView[] = ["days", "week", "year"];
 
 /* ---------- colour ---------- */
 

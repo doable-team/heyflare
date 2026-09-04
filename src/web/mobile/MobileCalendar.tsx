@@ -44,7 +44,8 @@ function MonthScreen() {
 
   // The provider sizes its loaded window from the view; a month screen wants the month's window.
   useEffect(() => {
-    if (view !== "month") setView("month");
+    // The phone draws its own month grid; "week" is only here to pull a wide enough window.
+    if (view !== "week") setView("week");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

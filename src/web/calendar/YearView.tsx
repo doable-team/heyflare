@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CalEvent } from "@shared/types";
+import type { CalEvent, CalendarDay } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useCalendar } from "./CalendarContext";
+import { DayPhotoBackdrop, hasPhoto } from "./DayPhoto";
 import { addDays, isPast, isToday, isWeekend, monthLabel, msAt, weekdayLabel } from "../lib/caldate";
 
 /**
@@ -20,7 +21,9 @@ import { addDays, isPast, isToday, isWeekend, monthLabel, msAt, weekdayLabel } f
 const FLASH_MS = 550;
 
 export function YearView() {
-  const { cursor, setCursor, setView, eventsOn, openEvent, createEvent } = useCalendar();
+  const { cursor, setCursor, setView, eventsOn, openEvent, createEvent, range } = useCalendar();
+  // Day photos show through here too, read-only — the year is where you notice you had a life.
+  const dayByKey = useMemo(() => new Map((range?.days ?? []).map((d) => [d.date, d])), [range?.days]);
   const year = cursor.slice(0, 4);
 
   const months = useMemo(
@@ -54,6 +57,7 @@ export function YearView() {
             cursor={cursor}
             flash={flash}
             eventsOn={eventsOn}
+            dayByKey={dayByKey}
             onPick={pick}
             onOpenEvent={openEvent}
             onCreate={(date) => {
@@ -72,6 +76,7 @@ function Month({
   cursor,
   flash,
   eventsOn,
+  dayByKey,
   onPick,
   onOpenEvent,
   onCreate,
@@ -80,6 +85,7 @@ function Month({
   cursor: string;
   flash: string | null;
   eventsOn: (date: string) => { allDay: CalEvent[]; timed: CalEvent[] };
+  dayByKey: Map<string, CalendarDay>;
   onPick: (date: string) => void;
   onOpenEvent: (e: CalEvent) => void;
   onCreate: (date: string) => void;
@@ -101,6 +107,7 @@ function Month({
             key={d}
             date={d}
             allDay={eventsOn(d).allDay}
+            day={dayByKey.get(d)}
             selected={d === cursor}
             lit={d === flash}
             onPick={onPick}
@@ -116,6 +123,7 @@ function Month({
 function Row({
   date,
   allDay,
+  day,
   selected,
   lit,
   onPick,
@@ -124,6 +132,7 @@ function Row({
 }: {
   date: string;
   allDay: CalEvent[];
+  day: CalendarDay | undefined;
   selected: boolean;
   lit: boolean;
   onPick: (date: string) => void;
@@ -132,30 +141,45 @@ function Row({
 }) {
   const today = isToday(date);
   const n = Number(date.slice(8));
+  const photo = hasPhoto(day);
 
   return (
     <div
       className={cn(
         // The highlight goes on instantly and fades out over the transition — no library needed.
-        "flex h-[19px] items-center gap-1 rounded-[3px] transition-colors duration-500",
+        "relative flex h-[19px] items-center gap-1 overflow-hidden rounded-[3px] transition-colors duration-500",
         isWeekend(date) && "bg-muted/40",
         selected && "bg-muted/70",
         lit && "bg-foreground/15 duration-0",
       )}
     >
+      <DayPhotoBackdrop day={day} className="z-0" />
       <button
         type="button"
         onClick={() => onPick(date)}
         title={date}
-        className="flex h-full shrink-0 items-center gap-1 pl-1 pr-0.5"
+        className="relative z-10 flex h-full shrink-0 items-center gap-1 pl-1 pr-0.5"
       >
-        <span className={cn("w-[15px] text-[9.5px] uppercase tracking-wide", today ? "text-foreground" : "text-tertiary")}>
+        <span
+          className={cn(
+            "w-[15px] text-[9.5px] uppercase tracking-wide",
+            photo ? "text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.5)]" : today ? "text-foreground" : "text-tertiary",
+          )}
+        >
           {weekdayLabel(date).slice(0, 2)}
         </span>
         <span
           className={cn(
             "flex size-[16px] items-center justify-center rounded-full text-[11px] tnum leading-none",
-            today ? "bg-foreground font-semibold text-background" : isPast(date) ? "text-muted-foreground" : n === 1 ? "font-medium" : "",
+            today
+              ? "bg-foreground font-semibold text-background"
+              : photo
+                ? "font-semibold text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.5)]"
+                : isPast(date)
+                  ? "text-muted-foreground"
+                  : n === 1
+                    ? "font-medium"
+                    : "",
           )}
         >
           {n}
@@ -169,7 +193,8 @@ function Row({
           onClick={() => onOpenEvent(e)}
           title={e.title || "(no title)"}
           className={cn(
-            "min-w-0 shrink border-l-2 pl-1 text-left text-[11px] leading-none hover:bg-muted",
+            "relative z-10 min-w-0 shrink border-l-2 pl-1 text-left text-[11px] leading-none hover:bg-muted",
+            photo && "bg-background/85 pr-1 rounded-[2px]",
             e.rsvp === "declined" && "opacity-45 line-through",
           )}
           style={{ borderLeftColor: accent(e) }}

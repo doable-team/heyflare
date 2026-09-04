@@ -114,6 +114,7 @@ export const keys = {
   journal: ["cal", "journal"] as const,
   journalDay: (d: string) => ["cal", "journal", d] as const,
   calDay: (d: string) => ["cal", "day", d] as const,
+  dayCovers: ["cal", "covers"] as const,
   flexTasks: (w: string) => ["cal", "flex", w] as const,
   timeEntries: ["cal", "time"] as const,
   calSettings: ["cal", "settings"] as const,
@@ -879,10 +880,50 @@ export function useCalendarDay(date: string | undefined) {
     enabled: !!date,
   });
 }
+/** The photo library — every picture stuck on a day, newest first, so one can be reused. */
+export function useDayCovers(enabled = true) {
+  return useQuery({ queryKey: keys.dayCovers, queryFn: () => api.get<T.DayCover[]>("/api/calendar/covers"), enabled, staleTime: 60_000 });
+}
+
+export function useDayCoverMutations() {
+  const qc = useQueryClient();
+  const inv = () => {
+    qc.invalidateQueries({ queryKey: keys.dayCovers });
+    invalidateCalendar(qc);
+  };
+  return {
+    /** Downscales in the browser, then posts the raw bytes — no multipart, no base64. */
+    upload: useMutation({
+      mutationFn: async (file: File) => {
+        const { prepareCover } = await import("./lib/image");
+        const img = await prepareCover(file);
+        const res = await fetch("/api/calendar/covers", {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "content-type": img.type,
+            "x-image-width": String(img.width),
+            "x-image-height": String(img.height),
+            "x-image-name": encodeURIComponent(file.name).slice(0, 120),
+          },
+          body: img.blob,
+        });
+        const text = await res.text();
+        const data = text ? JSON.parse(text) : null;
+        if (!res.ok) throw new ApiError(res.status, humanize((data as T.ApiError | null)?.error || "upload failed"));
+        return data as T.DayCover;
+      },
+      onSuccess: inv,
+    }),
+    remove: useMutation({ mutationFn: (id: string) => api.del<{ ok: boolean }>(`/api/calendar/covers/${id}`), onSuccess: inv }),
+  };
+}
+
 export function useCalendarDayMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ date, ...b }: { date: string; label?: string; cover_url?: string }) => request<T.CalendarDay>("PUT", `/api/calendar/days/${date}`, b),
+    mutationFn: ({ date, ...b }: { date: string; label?: string; cover_url?: string; cover_id?: string | null; cover_position?: string }) =>
+      request<T.CalendarDay>("PUT", `/api/calendar/days/${date}`, b),
     onSuccess: (data, v) => {
       qc.setQueryData(keys.calDay(v.date), data);
       invalidateCalendar(qc);

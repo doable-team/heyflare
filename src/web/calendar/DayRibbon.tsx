@@ -7,6 +7,7 @@ import { useCalendar } from "./CalendarContext";
 import { eventColors } from "./colors";
 import { freeGaps, heyRange, heyTime, makeRibbon, spanLabel, type Ribbon, type RibbonRun } from "./scale";
 import { useCalendarDayMutation, useHabitMutations } from "../api";
+import { DayPhotoBackdrop, DayPhotoButton } from "./DayPhoto";
 import {
   addDays,
   dateKey,
@@ -165,6 +166,7 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
           <Link to={`/journal/${cursor}`} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" title="Journal">
             <BookOpen size={15} />
           </Link>
+          <DayPhotoButton date={cursor} day={day} className="p-1" />
           <button
             type="button"
             onClick={() => createEvent({ starts_at: msAt(cursor, 9 * 60), ends_at: msAt(cursor, 10 * 60) })}
@@ -231,9 +233,7 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
 
       {/* The cover photo runs floor-to-ceiling behind the whole strip, not as a thumbnail. */}
       <div className="relative min-h-0 flex-1">
-        {day?.cover_url && (
-          <img src={day.cover_url} alt="" loading="lazy" className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-[0.13] grayscale" />
-        )}
+        <DayPhotoBackdrop day={day} />
 
         <div ref={scrollRef} className="absolute inset-0 overflow-x-auto overflow-y-hidden">
           <div className="relative h-full" style={{ width: Math.max(ribbon.length, 1) }}>

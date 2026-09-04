@@ -85,7 +85,20 @@ export interface CalendarDayRow {
   cover_url: string;
   journal_html: string;
   journal_updated_at: number | null;
+  cover_id: string | null;
+  cover_position: string;
   updated_at: number;
+}
+
+export interface DayCoverRow {
+  id: string;
+  user_id: string;
+  mime: string;
+  width: number;
+  height: number;
+  size: number;
+  name: string;
+  created_at: number;
 }
 
 export interface FlexTaskRow {

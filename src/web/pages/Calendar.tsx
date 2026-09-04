@@ -4,9 +4,7 @@ import { CalendarProvider, useCalendar } from "../calendar/CalendarContext";
 import { CalendarToolbar, step } from "../calendar/CalendarToolbar";
 import { WeekView } from "../calendar/WeekView";
 import { DayRibbon } from "../calendar/DayRibbon";
-import { MonthView } from "../calendar/MonthView";
 import { YearView } from "../calendar/YearView";
-import { AgendaView } from "../calendar/AgendaView";
 import { EventSheet } from "../calendar/EventSheet";
 import { useKeys } from "../lib/keys";
 import { arrows, focus, overlayOpen } from "../lib/focusStore";
@@ -48,9 +46,7 @@ function CalendarInner() {
     t: () => ok() && setCursor(today),
     d: () => ok() && setView("days"),
     w: () => ok() && setView("week"),
-    m: () => ok() && setView("month"),
     y: () => ok() && setView("year"),
-    a: () => ok() && setView("agenda"),
     n: () => ok() && createEvent({ starts_at: msAt(cursor, 9 * 60), ends_at: msAt(cursor, 10 * 60) }),
     j: () => ok() && nav(`/journal/${cursor}`),
     b: () => ok() && nav("/habits"),
@@ -62,12 +58,8 @@ function CalendarInner() {
   return (
     <div className="flex h-[calc(100dvh-6.5rem)] min-h-96 flex-col">
       <CalendarToolbar />
-      {view === "month" ? (
-        <MonthView />
-      ) : view === "year" ? (
+      {view === "year" ? (
         <YearView />
-      ) : view === "agenda" ? (
-        <AgendaView />
       ) : view === "days" ? (
         <div className="flex min-h-0 flex-1"><DayRibbon full /></div>
       ) : (

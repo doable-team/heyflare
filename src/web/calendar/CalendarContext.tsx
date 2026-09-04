@@ -51,23 +51,19 @@ export const DEFAULT_SETTINGS: CalendarSettings = {
   cover_art: false,
 };
 
-const VIEWS: CalendarView[] = ["days", "week", "month", "year", "agenda"];
+const VIEWS: CalendarView[] = ["days", "week", "year"];
 
-/** The window a view needs loaded around a date. Days and week grow as you scroll; the rest snap. */
+/** The window a view needs loaded around a date. Day and week grow as you scroll; the year snaps. */
 function windowFor(view: CalendarView, date: string, weekStart: number): [string, string] {
   switch (view) {
-    case "month": {
-      const first = `${date.slice(0, 7)}-01`;
-      return [addDays(weekStartOf(first, weekStart), -7), addDays(first, 48)];
-    }
     case "year":
       return [`${date.slice(0, 4)}-01-01`, `${date.slice(0, 4)}-12-31`];
-    case "agenda":
-      return [addDays(date, -1), addDays(date, 120)];
-    case "week":
-      // Exactly the seven days on screen, plus a day either side so an event that starts late on
-      // Sunday night still lands.
-      return [addDays(weekStartOf(date, weekStart), -1), addDays(weekStartOf(date, weekStart), 7)];
+    case "week": {
+      // The week view is a stack of week rows that scrolls on forever, so it needs weeks either
+      // side of the one you are pointed at — five back, ten forward — and grows from there.
+      const ws = weekStartOf(date, weekStart);
+      return [addDays(ws, -35), addDays(ws, 70)];
+    }
     default:
       // The day view is a continuous ribbon that scrolls through midnight, so it needs its
       // neighbours loaded on both sides.
@@ -85,7 +81,7 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   const urlDate = params.get("d");
   const [cursor, setCursorState] = useState<string>(urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate) ? urlDate : today);
   const urlView = params.get("v") as CalendarView | null;
-  const [view, setViewState] = useState<CalendarView>(urlView && VIEWS.includes(urlView) ? urlView : "days");
+  const [view, setViewState] = useState<CalendarView>(urlView && VIEWS.includes(urlView) ? urlView : "week");
   const [nightOpen, setNightOpen] = useState(false);
   const [editor, setEditor] = useState<EditorTarget | null>(null);
 
@@ -101,7 +97,7 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setWin(windowFor(view, cursor, settings.week_start));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, settings.week_start, view === "year" ? cursor.slice(0, 4) : view === "month" ? cursor.slice(0, 7) : ""]);
+  }, [view, settings.week_start, view === "year" ? cursor.slice(0, 4) : ""]);
   const [from, to] = win;
 
   const rangeQ = useCalendarRange(from, to);
