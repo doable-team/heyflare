@@ -374,6 +374,18 @@ calendar.post("/sources/subscribe", async (c) => {
 // Sync every syncable source. Individual failures are reported, not thrown.
 calendar.post("/sources/sync", async (c) => {
   const userId = c.get("user").id;
+  // Rediscover first: a calendar list is only pulled at consent time, and if that call failed the
+  // account sits there with the scope granted and nothing to show. Refresh has to be able to fix it.
+  const gmail = await c.env.DB.prepare(`SELECT * FROM accounts WHERE user_id = ? AND provider = 'gmail'`).bind(userId).all<AccountRow>();
+  const discovery: { email: string; error: string }[] = [];
+  for (const acc of gmail.results) {
+    if (!hasCalendarScope(acc.scopes)) continue;
+    try {
+      await ensureDefaultCalendars(c.env, userId, acc);
+    } catch (e) {
+      discovery.push({ email: acc.email, error: (e instanceof Error ? e.message : String(e ?? "")).slice(0, 300) });
+    }
+  }
   const rows = await listCalendars(c.env.DB, userId);
   const results: { id: string; changed: number; error?: string }[] = [];
   for (const cal of rows) {
@@ -386,7 +398,7 @@ calendar.post("/sources/sync", async (c) => {
     }
   }
   const { rows: fresh, accounts, counts } = await calendarPayload(c, userId);
-  return c.json({ ok: true, results, calendars: asCalendars(fresh, accounts, counts) });
+  return c.json({ ok: true, results, discovery, calendars: asCalendars(fresh, accounts, counts) });
 });
 
 // An uploaded .ics body becomes editable local events on one of the owner's calendars.

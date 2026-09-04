@@ -2,18 +2,48 @@
 // run every invocation; ICS feeds are a whole-file download, so they wait out the hour.
 
 import type { Env } from "../env";
+import type { AccountRow } from "../db";
 import { now } from "../db";
+import { hasCalendarScope } from "../google";
 import type { CalendarRow } from "./types";
-import { syncCalendarNow } from "./sources";
+import { ensureDefaultCalendars, syncCalendarNow } from "./sources";
 
 /** How stale a subscribed feed has to be before it is worth re-downloading. */
 const ICS_INTERVAL_MS = 3600_000;
 /** One busy account must not starve the others, or eat the invocation's CPU on its own. */
 const MAX_PER_RUN = 12;
 
+/**
+ * A Google account's calendar list is pulled once, at consent. If that call failed the account is
+ * left holding the scope with nothing to show and no way back, because everything after it syncs
+ * calendars that already exist. So: any connected account with no calendars at all gets another
+ * attempt each run. Once it has even one, this costs nothing.
+ */
+async function discoverMissing(env: Env): Promise<void> {
+  const r = await env.DB.prepare(
+    `SELECT a.* FROM accounts a
+     WHERE a.provider = 'gmail' AND a.sync_status <> 'disconnected'
+       AND NOT EXISTS (SELECT 1 FROM calendars c WHERE c.account_id = a.id)
+     LIMIT 4`
+  ).all<AccountRow>();
+  for (const acc of r.results) {
+    if (!hasCalendarScope(acc.scopes)) continue;
+    try {
+      await ensureDefaultCalendars(env, acc.user_id, acc);
+    } catch (e) {
+      console.error("calendar discovery failed", acc.email, e);
+    }
+  }
+}
+
 /** Cron entry point: refresh every calendar that is due. Never throws. */
 export async function runCalendarSync(env: Env): Promise<void> {
   const db = env.DB;
+  try {
+    await discoverMissing(env);
+  } catch (e) {
+    console.error("calendar discovery pass failed", e);
+  }
   let due: CalendarRow[] = [];
   try {
     const r = await db
