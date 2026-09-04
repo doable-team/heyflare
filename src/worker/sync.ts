@@ -675,13 +675,23 @@ export async function incrementalSync(env: Env, account: AccountRow): Promise<{ 
   }
   if (affectedThreads.size) await recomputeThreadFlags(db, [...affectedThreads]);
 
-  account.history_id = latestHistoryId;
-  await db.prepare(`UPDATE accounts SET history_id = ? WHERE id = ?`).bind(account.history_id, account.id).run();
+  // Gmail hands back a historyId on every poll, but it only moves when something happened. Writing
+  // it unchanged once a minute per account costs a row a minute and tells us nothing.
+  if (latestHistoryId !== account.history_id) {
+    account.history_id = latestHistoryId;
+    await db.prepare(`UPDATE accounts SET history_id = ? WHERE id = ?`).bind(account.history_id, account.id).run();
+  }
   if (added || deletedIds.size || labelStmts.length) {
     await logSync(db, account.id, "info", `Incremental sync: +${added} msgs, -${deletedIds.size} deleted, ${labelStmts.length} label changes`);
   }
   return { added };
 }
+
+/**
+ * How stale `last_synced_at` may get on an account that keeps polling and finding nothing. The cron
+ * runs every minute; without this every account would write a row a minute forever just to say so.
+ */
+const HEARTBEAT_MS = 10 * 60_000;
 
 /** Sync one account: continues initial sync (up to N chunks) or does an incremental sync. Safe for cron and manual calls. */
 export async function syncAccount(env: Env, account: AccountRow): Promise<{ added: number; status: string }> {
@@ -692,7 +702,11 @@ export async function syncAccount(env: Env, account: AccountRow): Promise<{ adde
   // alone rather than writing a sync error every minute. (An empty `scopes` predates the column and
   // does have mail — see hasMailScope.)
   if (!hasMailScope(account.scopes)) return { added: 0, status: "no_mail_scope" };
-  await db.prepare(`UPDATE accounts SET sync_status = 'syncing' WHERE id = ?`).bind(account.id).run();
+  // The 'syncing' marker exists so a long run isn't started twice by overlapping cron ticks, and so
+  // the UI can show a spinner. An incremental poll finishes in well under a second and needs
+  // neither, so only the initial backfill pays for the marker.
+  const slow = !account.initial_sync_done;
+  if (slow) await db.prepare(`UPDATE accounts SET sync_status = 'syncing' WHERE id = ?`).bind(account.id).run();
   let added = 0;
   try {
     if (!account.initial_sync_done) {
@@ -712,10 +726,20 @@ export async function syncAccount(env: Env, account: AccountRow): Promise<{ adde
         }
       }
     }
-    await db
-      .prepare(`UPDATE accounts SET sync_status = 'idle', sync_error = NULL, last_synced_at = ? WHERE id = ? AND sync_status <> 'disconnected'`)
-      .bind(now(), account.id)
-      .run();
+    // A quiet tick has nothing to record. Stamping `last_synced_at` anyway would be a write a
+    // minute per account purely so a label can say "just now"; the heartbeat keeps that label
+    // honest to within HEARTBEAT_MS at a fraction of the cost.
+    const stale = now() - (account.last_synced_at ?? 0) > HEARTBEAT_MS;
+    if (added || slow || stale || account.sync_status !== "idle" || account.sync_error) {
+      const t = now();
+      account.last_synced_at = t;
+      account.sync_status = "idle";
+      account.sync_error = null;
+      await db
+        .prepare(`UPDATE accounts SET sync_status = 'idle', sync_error = NULL, last_synced_at = ? WHERE id = ? AND sync_status <> 'disconnected'`)
+        .bind(t, account.id)
+        .run();
+    }
     return { added, status: "ok" };
   } catch (e) {
     const msg = (e as Error).message ?? String(e);

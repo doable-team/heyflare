@@ -11,8 +11,16 @@ import { ensureDefaultCalendars, syncCalendarNow } from "./sources";
 
 /** How stale a subscribed feed has to be before it is worth re-downloading. */
 const ICS_INTERVAL_MS = 3600_000;
-/** One busy account must not starve the others, or eat the invocation's CPU on its own. */
-const MAX_PER_RUN = 12;
+/**
+ * One busy account must not starve the others, or eat the invocation's CPU on its own.
+ *
+ * Worth keeping above the number of calendars a user actually holds. Calendars are taken oldest
+ * `last_synced_at` first, and a poll that finds nothing no longer writes one, so past the cap a
+ * calendar only reaches the front of the queue as fast as the others' heartbeat writes push them
+ * to the back — every 10 minutes rather than every tick. Nothing starves, but the cadence the user
+ * asked for only holds while the cap covers them all.
+ */
+const MAX_PER_RUN = 40;
 
 /** How long an account's calendar list may go unchecked before it is worth pulling again. */
 const LIST_INTERVAL_MS = 6 * 3600_000;

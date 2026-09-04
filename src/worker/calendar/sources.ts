@@ -487,16 +487,13 @@ export async function syncCalendarNow(env: Env, cal: CalendarRow): Promise<{ cha
   // Nothing to do until the account is reconnected — not an error worth showing.
   if (account.sync_status === "disconnected" || !account.refresh_token || !hasCalendarScope(account.scopes)) return { changed: 0 };
 
-  await db.prepare(`UPDATE calendars SET sync_status = 'syncing', updated_at = ? WHERE id = ?`).bind(now(), cal.id).run();
+  // syncGoogleCalendar owns every status transition on the row — 'syncing' going in, and 'idle' or
+  // 'error' coming out. Writing them here as well doubled the cost of a sync that found nothing.
   try {
     const r = await syncGoogleCalendar(env, cal, account);
-    const t = now();
-    await db.prepare(`UPDATE calendars SET sync_status = 'idle', sync_error = NULL, last_synced_at = ?, updated_at = ? WHERE id = ?`).bind(t, t, cal.id).run();
     return { changed: r.changed + r.deleted };
   } catch (e) {
     const msg = (e as Error).message ?? String(e);
-    const t = now();
-    await db.prepare(`UPDATE calendars SET sync_status = 'error', sync_error = ?, last_synced_at = ?, updated_at = ? WHERE id = ?`).bind(msg.slice(0, 1000), t, t, cal.id).run();
     await logSync(db, cal.account_id, "error", `Calendar sync failed for "${cal.name}": ${msg}`);
     throw e;
   }

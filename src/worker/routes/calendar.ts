@@ -299,7 +299,20 @@ async function calendarPayload(c: Context<AppEnv>, userId: string): Promise<{ ro
   const [rows, accounts, counts] = await Promise.all([
     listCalendars(db, userId),
     db.prepare(`SELECT * FROM accounts WHERE user_id = ? ORDER BY created_at ASC`).bind(userId).all<AccountRow>(),
-    db.prepare(`SELECT calendar_id, COUNT(*) AS n FROM events WHERE user_id = ? GROUP BY calendar_id`).bind(userId).all<{ calendar_id: string; n: number }>(),
+    // Only local calendars ever show this count (it is the subtitle in Settings), and only they are
+    // small enough to count cheaply. Counting every calendar meant scanning the user's whole events
+    // table — thousands of rows, on every load of the calendar page — to label a handful of them.
+    // Driven from `calendars`, not from `events`: this way SQLite seeks idx_events_calendar once per
+    // local calendar instead of scanning every event the user owns. Filtering by `user_id` and
+    // joining afterwards reads the whole table first and throws almost all of it away.
+    db
+      .prepare(
+        `SELECT calendar_id, COUNT(*) AS n FROM events
+         WHERE calendar_id IN (SELECT id FROM calendars WHERE user_id = ? AND source = 'local')
+         GROUP BY calendar_id`
+      )
+      .bind(userId)
+      .all<{ calendar_id: string; n: number }>(),
   ]);
   return { rows, accounts: accounts.results, counts: new Map(counts.results.map((r) => [r.calendar_id, r.n])) };
 }

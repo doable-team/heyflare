@@ -387,13 +387,18 @@ async function pull(
   return { changed, deleted, nextSyncToken };
 }
 
+/** How stale a quiet calendar's `last_synced_at` may get before it is written for its own sake. */
+const HEARTBEAT_MS = 10 * 60_000;
+
 /** Pull this calendar's events into the `events` table. Incremental when `sync_token` is set. */
 export async function syncGoogleCalendar(env: Env, cal: CalendarRow, account: AccountRow): Promise<{ changed: number; deleted: number }> {
   requireScope(account);
   const db = env.DB;
   remoteCalendarId(cal);
 
-  await db.prepare(`UPDATE calendars SET sync_status = 'syncing', updated_at = ? WHERE id = ?`).bind(now(), cal.id).run();
+  // No 'syncing' marker on the way in: a token-based poll answers in well under a second, and the
+  // cron is the only caller that runs often enough to care. Marking it would cost a row a minute
+  // per calendar to describe a state nobody is ever fast enough to observe.
   try {
     let res: { changed: number; deleted: number; nextSyncToken: string | null };
     try {
@@ -411,14 +416,26 @@ export async function syncGoogleCalendar(env: Env, cal: CalendarRow, account: Ac
     }
 
     const t = now();
-    cal.sync_token = res.nextSyncToken ?? cal.sync_token;
+    const token = res.nextSyncToken ?? cal.sync_token;
+    // Google issues a fresh sync token on every poll, but the previous one stays valid until it
+    // expires — so a poll that found nothing has nothing worth persisting. Storing the new token
+    // anyway, along with a timestamp, is a write per calendar per minute that changes no answer
+    // this app can give. The heartbeat keeps "last synced" honest without paying that every tick.
+    const quiet = res.changed === 0 && res.deleted === 0;
+    const stale = t - (cal.last_synced_at ?? 0) > HEARTBEAT_MS;
+    // Read the row's previous state before overwriting it: a calendar coming back from an error
+    // has to be written even on a poll that found nothing, or the UI keeps showing the old failure.
+    const recovering = cal.sync_status !== "idle" || !!cal.sync_error;
     cal.sync_status = "idle";
     cal.sync_error = null;
-    cal.last_synced_at = t;
-    await db
-      .prepare(`UPDATE calendars SET sync_token = ?, sync_status = 'idle', sync_error = NULL, last_synced_at = ?, updated_at = ? WHERE id = ?`)
-      .bind(cal.sync_token, t, t, cal.id)
-      .run();
+    if (!quiet || stale || recovering) {
+      cal.sync_token = token;
+      cal.last_synced_at = t;
+      await db
+        .prepare(`UPDATE calendars SET sync_token = ?, sync_status = 'idle', sync_error = NULL, last_synced_at = ?, updated_at = ? WHERE id = ?`)
+        .bind(cal.sync_token, t, t, cal.id)
+        .run();
+    }
     return { changed: res.changed, deleted: res.deleted };
   } catch (e) {
     const msg = (e as Error).message ?? String(e);

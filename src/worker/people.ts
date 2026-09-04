@@ -83,6 +83,8 @@ export async function syncContactPhotos(env: Env, account: AccountRow): Promise<
     throw e;
   }
   // Address book: every person Google knows about, for compose autocomplete.
+  // The upsert only writes when a name or photo actually differs. Without that guard a repeat pass
+  // rewrites `updated_at` on all ~1,000 rows for nothing, and D1 bills every one of them.
   const t0 = now();
   const bookStmts: D1PreparedStatement[] = [];
   for (const [email, entry] of people) {
@@ -91,7 +93,9 @@ export async function syncContactPhotos(env: Env, account: AccountRow): Promise<
         .prepare(
           `INSERT INTO address_book (account_id, email, name, avatar_url, updated_at) VALUES (?, ?, ?, ?, ?)
            ON CONFLICT(account_id, email) DO UPDATE SET name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE address_book.name END,
-             avatar_url = CASE WHEN excluded.avatar_url <> '' THEN excluded.avatar_url ELSE address_book.avatar_url END, updated_at = excluded.updated_at`
+             avatar_url = CASE WHEN excluded.avatar_url <> '' THEN excluded.avatar_url ELSE address_book.avatar_url END, updated_at = excluded.updated_at
+           WHERE (excluded.name <> '' AND address_book.name <> excluded.name)
+              OR (excluded.avatar_url <> '' AND address_book.avatar_url <> excluded.avatar_url)`
         )
         .bind(account.id, email, entry.name, entry.photo, t0)
     );
