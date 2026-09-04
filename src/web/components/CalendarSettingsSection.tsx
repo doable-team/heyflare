@@ -80,7 +80,7 @@ function ColourPicker({ value, onChange }: { value: string; onChange: (hex: stri
           />
           <Button type="button" size="sm" variant="outline" className="h-7 shrink-0" disabled={!valid} onClick={apply}>Use</Button>
         </div>
-        {!valid && <p className="mt-1.5 text-[11px] text-muted-foreground">Six hex digits after a #, like #767676.</p>}
+        {!valid && <p className="mt-1.5 text-[11px] text-muted-foreground">Six hex digits, like #767676.</p>}
       </PopoverContent>
     </Popover>
   );
@@ -105,19 +105,19 @@ function CalendarRow({ c }: { c: Calendar }) {
     update.mutate({ id: c.id, name: v }, { onError: (e) => { setName(c.name); fail(e); } });
   };
 
-  // The account's email now sits on the group header, so a Google row only has to say when it last
-  // came down. A feed says where it comes from; a local calendar, how much is on it.
+  // The account's email is on the group header, so a row only carries what tells it apart: a feed's
+  // address, a local calendar's size, and when a synced one last came down.
   const where =
     c.source === "ics"
-      ? c.url ?? "Subscribed link"
-      : c.source === "local"
-        ? `Made here${typeof c.event_count === "number" ? ` · ${c.event_count} event${c.event_count === 1 ? "" : "s"}` : ""}`
+      ? c.url ?? ""
+      : c.source === "local" && typeof c.event_count === "number"
+        ? `${c.event_count} event${c.event_count === 1 ? "" : "s"}`
         : "";
-  const synced = c.source === "local" ? "" : c.last_synced_at ? `synced ${fmtRelative(c.last_synced_at)}` : "not synced yet";
+  const synced = c.source !== "local" && c.last_synced_at ? fmtRelative(c.last_synced_at) : "";
   const note = [where, synced].filter(Boolean).join(" · ");
 
   return (
-    <li className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border py-2 last:border-b-0">
+    <li className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border py-1.5 last:border-b-0">
       <Checkbox
         checked={c.visible}
         aria-label={`Show ${c.name} in the calendar`}
@@ -155,16 +155,18 @@ function CalendarRow({ c }: { c: Calendar }) {
         )}
         {c.source !== "local" && (
           <Button
-            size="sm"
+            size="icon-sm"
             variant="ghost"
             className="text-muted-foreground"
+            title="Sync"
+            aria-label={`Sync ${c.name}`}
             disabled={sync.isPending}
             onClick={() => sync.mutate(c.id, { onSuccess: (r) => (r.error ? toast.error(r.error) : toast(`${c.name} is up to date`)), onError: fail })}
           >
-            <RefreshCw className={cn(sync.isPending && "animate-spin")} /> Sync
+            <RefreshCw className={cn(sync.isPending && "animate-spin")} />
           </Button>
         )}
-        <Button size="icon-sm" variant="ghost" className="text-muted-foreground" aria-label={`Remove ${c.name}`} onClick={() => setDel(true)}>
+        <Button size="icon-sm" variant="ghost" className="text-muted-foreground" title="Remove" aria-label={`Remove ${c.name}`} onClick={() => setDel(true)}>
           <Trash2 />
         </Button>
       </div>
@@ -175,10 +177,10 @@ function CalendarRow({ c }: { c: Calendar }) {
         title={`Remove ${c.name}?`}
         body={
           c.source === "google"
-            ? "This removes the calendar and its events from heyflare. Google Calendar itself is untouched — a re-sync brings it back."
+            ? "Removes it and its events from heyflare. Google Calendar is untouched — a re-sync brings it back."
             : c.source === "ics"
-              ? "This stops following the link and deletes the events it brought in. The feed itself is untouched."
-              : "This deletes the calendar and every event on it. There's no undo."
+              ? "Stops following the link and deletes the events it brought in. The feed is untouched."
+              : "Deletes the calendar and every event on it. There's no undo."
         }
         action="Remove calendar"
         onConfirm={() => remove.mutate(c.id, { onSuccess: () => toast(`${c.name} removed`), onError: (e) => toast.error((e as Error).message) })}
@@ -192,25 +194,23 @@ function CalendarRow({ c }: { c: Calendar }) {
 /** A heading with its calendars listed under it, indented so the ownership reads at a glance. */
 function CalendarGroup({ header, empty, list }: { header: React.ReactNode; empty: string; list: Calendar[] }) {
   return (
-    <div className="mb-5 last:mb-0">
+    <div className="mb-3 last:mb-0">
       {header}
       {list.length === 0 ? (
-        <div className="py-1.5 pl-8 pr-2 text-xs text-muted-foreground">{empty}</div>
+        <div className="py-1.5 pl-6 pr-2 text-xs text-muted-foreground">{empty}</div>
       ) : (
-        <ul className="pl-8 pr-2">{list.map((c) => <CalendarRow key={c.id} c={c} />)}</ul>
+        <ul className="pl-6 pr-2">{list.map((c) => <CalendarRow key={c.id} c={c} />)}</ul>
       )}
     </div>
   );
 }
 
 /** A plain heading for the calendars no Google account owns. */
-function PlainHeader({ title, hint, actions }: { title: string; hint: string; actions?: React.ReactNode }) {
+function PlainHeader({ title, hint, actions }: { title: string; hint?: string; actions?: React.ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-2 py-2">
-      <div className="min-w-0 flex-1 basis-48">
-        <div className="text-sm font-medium">{title}</div>
-        <div className="mt-0.5 text-xs text-muted-foreground">{hint}</div>
-      </div>
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border px-2 py-1.5">
+      <span className="text-xs font-medium text-muted-foreground">{title}</span>
+      {hint && <span className="min-w-0 truncate text-xs text-muted-foreground/80">{hint}</span>}
       {actions && <div className="ml-auto flex shrink-0 items-center gap-1">{actions}</div>}
     </div>
   );
@@ -230,10 +230,7 @@ function CalendarErrorNote({ message }: { message: string }) {
     <div className="mt-1 rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs">
       {disabled ? (
         <>
-          <div className="font-medium">Google hasn't enabled the Calendar API for this project.</div>
-          <div className="mt-0.5 text-muted-foreground">
-            Turn it on once in the Google Cloud console and heyflare will pick the calendars up on its next pass — nothing to reconnect.
-          </div>
+          <div>The Calendar API is off for this Google Cloud project. Turn it on and the calendars appear on the next pass.</div>
           {link && (
             <a href={link} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block underline underline-offset-2">
               Enable the Google Calendar API
@@ -242,20 +239,12 @@ function CalendarErrorNote({ message }: { message: string }) {
         </>
       ) : (
         <>
-          <div className="font-medium">Couldn't read this account's calendars.</div>
+          <div>Couldn't read this account's calendars.</div>
           <div className="mt-0.5 break-words text-muted-foreground">{message.slice(0, 300)}</div>
         </>
       )}
     </div>
   );
-}
-
-/** What heyflare holds this account's token for, said plainly. */
-function connectedFor(a: GoogleCalendarAccount): string {
-  if (a.mail && a.calendar) return "Mail and calendar";
-  if (a.calendar) return "Calendar only";
-  if (a.mail) return "Mail only";
-  return "Nothing yet";
 }
 
 function calendarCount(n: number): string {
@@ -273,23 +262,26 @@ function AccountGroup({ a, list, pending, onConnect }: { a: GoogleCalendarAccoun
   const count = list.length;
 
   const header = (
-    <div className="border-b border-border px-2 py-2">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <div className="min-w-0 flex-1 basis-48">
-          <div className="truncate text-sm font-medium">{a.email}</div>
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            {connectedFor(a)}
-            {a.calendar ? ` · ${calendarCount(count)} here` : " · no calendars here"}
-          </div>
-        </div>
+    <div className="border-b border-border px-2 py-1.5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="min-w-0 truncate text-[13px] font-medium">{a.email}</span>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {a.calendar ? calendarCount(count) : a.mail ? "mail only" : "not connected"}
+        </span>
         <div className="ml-auto flex shrink-0 items-center gap-1">
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => onConnect(a)}>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            title={a.calendar ? "Runs Google's consent screen again — fixes an expired or revoked grant" : undefined}
+            onClick={() => onConnect(a)}
+          >
             {a.calendar ? <RefreshCw /> : <CalendarPlus />}
             {busy ? "Opening…" : a.calendar ? "Reconnect" : "Connect calendar"}
           </Button>
           {a.calendar && (
             <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={disconnect.isPending} onClick={() => setConfirm(true)}>
-              <CalendarX2 /> Disconnect calendar
+              <CalendarX2 /> Disconnect
             </Button>
           )}
         </div>
@@ -300,7 +292,7 @@ function AccountGroup({ a, list, pending, onConnect }: { a: GoogleCalendarAccoun
         open={confirm}
         onOpenChange={setConfirm}
         title={`Disconnect ${a.email}'s calendar?`}
-        body={`This removes ${count ? calendarCount(count) : "this account's calendars"} and every event on them from heyflare. Nothing changes in Google, and its mail stays connected. You can connect the calendar again whenever you like.`}
+        body={`Removes ${count ? calendarCount(count) : "this account's calendars"} and every event on them from heyflare. Nothing changes in Google, its mail stays connected, and you can connect the calendar again later.`}
         action="Disconnect calendar"
         onConfirm={() =>
           disconnect.mutate(a.id, {
@@ -314,7 +306,7 @@ function AccountGroup({ a, list, pending, onConnect }: { a: GoogleCalendarAccoun
 
   // Without the scope there is nothing to list and the button above says so; with it, an empty
   // account gets one quiet line rather than a gap. The reason, when Google gave one, is on the header.
-  if (!a.calendar && count === 0) return <div className="mb-5 last:mb-0">{header}</div>;
+  if (!a.calendar && count === 0) return <div className="mb-3 last:mb-0">{header}</div>;
   return <CalendarGroup header={header} empty="No calendars yet." list={list} />;
 }
 
@@ -349,10 +341,7 @@ function Calendars({ calendars, accounts, loading, error }: { calendars: Calenda
   const orphans = calendars.filter((c) => c.source === "google" && !accounts.some((a) => a.id === c.account_id));
 
   return (
-    <Section
-      title="Calendars"
-      description="Everything the calendar draws from, under whoever owns it. Untick one to keep it out of the views without deleting anything."
-    >
+    <Section title="Calendars" description="Untick to hide, without deleting.">
       {loading && (
         <div className="space-y-2 px-2">
           <Skeleton className="h-8 w-full" />
@@ -364,9 +353,9 @@ function Calendars({ calendars, accounts, loading, error }: { calendars: Calenda
       {!loading && !error && (
         <>
           {accounts.length === 0 && (
-            <div className="mb-5 px-2 py-2 text-[13px] text-muted-foreground">
-              No Google account is connected yet. Connect one for mail under{" "}
-              <Link to="/settings#accounts" className="underline underline-offset-2 hover:text-foreground">Accounts</Link>, or connect one just for calendar below.
+            <div className="mb-3 px-2 py-1.5 text-xs text-muted-foreground">
+              No Google account yet — connect one for mail under{" "}
+              <Link to="/settings#accounts" className="underline underline-offset-2 hover:text-foreground">Accounts</Link>, or for calendar below.
             </div>
           )}
           {accounts.map((a) => (
@@ -383,7 +372,7 @@ function Calendars({ calendars, accounts, loading, error }: { calendars: Calenda
 
           {orphans.length > 0 && (
             <CalendarGroup
-              header={<PlainHeader title="Google Calendar" hint="Synced from an account that is no longer connected." />}
+              header={<PlainHeader title="Google Calendar" hint="account no longer connected" />}
               empty=""
               list={orphans}
             />
@@ -393,7 +382,6 @@ function Calendars({ calendars, accounts, loading, error }: { calendars: Calenda
             header={
               <PlainHeader
                 title="In heyflare"
-                hint="Made here and fully editable. Nothing leaves this server."
                 actions={
                   <Button
                     size="sm"
@@ -402,7 +390,7 @@ function Calendars({ calendars, accounts, loading, error }: { calendars: Calenda
                     onClick={() =>
                       create.mutate(
                         { name: "New calendar", color: "#111111" },
-                        { onSuccess: () => toast("Calendar added — rename it in the list."), onError: (e) => toast.error((e as Error).message) },
+                        { onSuccess: () => toast("Calendar added"), onError: (e) => toast.error((e as Error).message) },
                       )
                     }
                   >
@@ -416,23 +404,21 @@ function Calendars({ calendars, accounts, loading, error }: { calendars: Calenda
           />
 
           {ics.length > 0 && (
-            <CalendarGroup
-              header={<PlainHeader title="Subscribed links" hint="Read-only feeds that refresh about once an hour." />}
-              empty=""
-              list={ics}
-            />
+            <CalendarGroup header={<PlainHeader title="Subscribed links" />} empty="" list={ics} />
           )}
         </>
       )}
 
-      <div className="mt-4 px-2">
-        <Button size="sm" variant="outline" disabled={pending === NEW_ACCOUNT} onClick={() => open(NEW_ACCOUNT, { calendar_only: true })}>
-          <CalendarPlus /> {pending === NEW_ACCOUNT ? "Opening…" : "Connect a Google account for calendar only"}
+      <div className="mt-3 px-2">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={pending === NEW_ACCOUNT}
+          title="Asks Google for calendar access only, never mail"
+          onClick={() => open(NEW_ACCOUNT, { calendar_only: true })}
+        >
+          <CalendarPlus /> {pending === NEW_ACCOUNT ? "Opening…" : "Connect a calendar-only account"}
         </Button>
-        <p className="mt-1.5 text-xs text-muted-foreground">Asks Google for calendar access and no mail access at all.</p>
-        {accounts.some((a) => a.calendar) && (
-          <p className="mt-1 text-xs text-muted-foreground">Reconnect runs Google's consent screen again — that's how you fix a grant Google has expired or you have revoked.</p>
-        )}
       </div>
     </Section>
   );
@@ -492,7 +478,7 @@ function SubscribeBlock({ calendars }: { calendars: Calendar[] }) {
   };
 
   return (
-    <Section title="Subscribe to a calendar link" description="Any .ics or webcal:// address — a team roster, a sports schedule, a public holiday feed.">
+    <Section title="Subscribe to a calendar link">
       <div className="px-2">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Input
@@ -513,11 +499,10 @@ function SubscribeBlock({ calendars }: { calendars: Calendar[] }) {
           </Button>
         </div>
         {err && <p className="mt-1.5 text-[13px]">{err}</p>}
-        <p className="mt-1.5 text-xs text-muted-foreground">Subscribed calendars are read-only and refresh about once an hour. An imported file becomes fully editable instead.</p>
+        <p className="mt-1.5 text-xs text-muted-foreground">Read-only, refreshed about once an hour.</p>
 
-        <div className="mt-5 border-t border-border pt-4">
-          <div className="text-sm">Import an .ics file</div>
-          <p className="mt-0.5 text-xs text-muted-foreground">Its events are copied into the calendar you pick, where you can edit them like your own.</p>
+        <div className="mt-4 border-t border-border pt-3">
+          <div className="text-xs font-medium text-muted-foreground">Import an .ics file into a calendar</div>
           <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
             <Select value={dest} onValueChange={setDest} disabled={writable.length === 0}>
               <SelectTrigger size="sm" className="sm:w-56"><SelectValue placeholder="No calendar to import into" /></SelectTrigger>
@@ -537,7 +522,7 @@ function SubscribeBlock({ calendars }: { calendars: Calendar[] }) {
               onClick={() =>
                 create.mutate(
                   { name: "New calendar", color: "#111111" },
-                  { onSuccess: (c) => { setDest(c.id); toast("Calendar added — rename it above."); }, onError: (e) => toast.error((e as Error).message) },
+                  { onSuccess: (c) => { setDest(c.id); toast("Calendar added"); }, onError: (e) => toast.error((e as Error).message) },
                 )
               }
             >
@@ -628,7 +613,7 @@ function CalendarPreferences({ compact }: { compact?: boolean }) {
   const itemCls = compact ? "h-10 text-[14px] justify-center" : undefined;
 
   return (
-    <Section title="Calendar preferences" description="How the calendar reads. Changes save as you make them.">
+    <Section title="Calendar preferences">
       <Row label="Week starts on">
         <Toggle
           className={toggleCls}
@@ -647,7 +632,7 @@ function CalendarPreferences({ compact }: { compact?: boolean }) {
           onChange={(v) => save({ time_format: v as CalendarSettings["time_format"] })}
         />
       </Row>
-      <Row label="Default view" hint="What opens when you go to the calendar.">
+      <Row label="Default view">
         <Select value={s.default_view} onValueChange={(v) => save({ default_view: v as CalendarView })}>
           <SelectTrigger size="sm" className="min-w-36"><SelectValue /></SelectTrigger>
           <SelectContent align="end">
@@ -655,10 +640,10 @@ function CalendarPreferences({ compact }: { compact?: boolean }) {
           </SelectContent>
         </Select>
       </Row>
-      <Row label="Collapse the night" hint="Folds the sleeping hours into one band you can click open, so the day is mostly waking hours.">
+      <Row label="Collapse the night" hint="Folds the sleeping hours into one band you can click open.">
         <Switch checked={s.collapse_night} onCheckedChange={(v) => save({ collapse_night: v })} />
       </Row>
-      <Row label="Night runs from" hint={s.collapse_night ? undefined : "Turn collapsing on to set these."}>
+      <Row label="Night runs from">
         <div className="flex items-center gap-2">
           <Select value={String(s.night_start)} disabled={!s.collapse_night} onValueChange={(v) => save({ night_start: Number(v) })}>
             <SelectTrigger size="sm" className="w-24" aria-label="Night starts"><SelectValue /></SelectTrigger>
@@ -675,10 +660,10 @@ function CalendarPreferences({ compact }: { compact?: boolean }) {
           </Select>
         </div>
       </Row>
-      <Row label="Show events you've declined" hint="Off hides anything you said no to.">
+      <Row label="Show events you've declined">
         <Switch checked={s.show_declined} onCheckedChange={(v) => save({ show_declined: v })} />
       </Row>
-      <Row label="Timezone" hint="Used to place events on a day. Events keep their own time either way.">
+      <Row label="Timezone">
         <Select value={s.timezone || DEVICE} onValueChange={(v) => save({ timezone: v === DEVICE ? "" : v })}>
           <SelectTrigger size="sm" className="min-w-56"><SelectValue /></SelectTrigger>
           <SelectContent align="end" className="max-h-72">
