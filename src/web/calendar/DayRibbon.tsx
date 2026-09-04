@@ -197,8 +197,9 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
                 setEditingLabel(false);
               }
             }}
-            placeholder="Name this day"
-            className="mt-1 h-5 w-full bg-transparent text-center text-[12px] outline-none placeholder:text-tertiary"
+            placeholder=""
+            aria-label="Name this day"
+            className="mt-1 h-5 w-full bg-transparent text-center text-[12px] outline-none"
           />
         ) : (
           <button
@@ -308,7 +309,7 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
               {ribbon.hours
                 .filter((h) => h.hour % hourStep === 0)
                 .map((h) => (
-                  <div key={h.ms} className="pointer-events-none absolute inset-y-0 border-l border-border/40" style={{ left: h.pos }} />
+                  <div key={h.ms} className="pointer-events-none absolute bottom-0 border-l border-border/40" style={{ left: h.pos, top: -(HOURS_H - 2) }} />
                 ))}
 
               {ribbon.runs.filter((r) => r.night).map((r) => (

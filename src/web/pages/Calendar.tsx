@@ -7,7 +7,7 @@ import { DayRibbon } from "../calendar/DayRibbon";
 import { YearView } from "../calendar/YearView";
 import { EventSheet } from "../calendar/EventSheet";
 import { useKeys } from "../lib/keys";
-import { focus, overlayOpen } from "../lib/focusStore";
+import { overlayOpen, useFocusRegion } from "../lib/focusStore";
 import { addDays, msAt } from "../lib/caldate";
 
 export default function CalendarPage() {
@@ -35,10 +35,16 @@ function CalendarInner() {
 
   // ↑ ↓ walk the calendar; ← → keep their meaning everywhere else in the app — out to the sidebar
   // and over to the assistant — so the calendar deliberately does not claim them.
+  //
+  // The region check matters: while focus is in the sidebar its own ↑ ↓ walk the nav, and both
+  // listeners sit on the window, so without this the calendar moved a week for every nav step.
+  const region = useFocusRegion();
   const ok = () => !overlayOpen() && !editor;
+  // The arrows are the only keys the sidebar also wants, so they alone check where focus is.
+  const arrowOk = () => ok() && region === "content";
   useKeys({
-    ArrowUp: () => ok() && setCursor(step(view, cursor, -1, settings.week_start)),
-    ArrowDown: () => ok() && setCursor(step(view, cursor, 1, settings.week_start)),
+    ArrowUp: () => arrowOk() && setCursor(step(view, cursor, -1, settings.week_start)),
+    ArrowDown: () => arrowOk() && setCursor(step(view, cursor, 1, settings.week_start)),
     t: () => ok() && reveal(today),
     d: () => ok() && setView("days"),
     w: () => ok() && setView("week"),
@@ -46,9 +52,8 @@ function CalendarInner() {
     n: () => ok() && createEvent({ starts_at: msAt(cursor, 9 * 60), ends_at: msAt(cursor, 10 * 60) }),
     j: () => ok() && nav(`/journal/${cursor}`),
     b: () => ok() && nav("/habits"),
-    Escape: () => !editor && focus.toSidebar(),
-    PageUp: () => ok() && setCursor(addDays(cursor, -7)),
-    PageDown: () => ok() && setCursor(addDays(cursor, 7)),
+    PageUp: () => arrowOk() && setCursor(addDays(cursor, -7)),
+    PageDown: () => arrowOk() && setCursor(addDays(cursor, 7)),
   });
 
   return (
