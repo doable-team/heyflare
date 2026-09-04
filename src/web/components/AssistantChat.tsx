@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { ArrowUp, Check, Loader2, Paperclip, PenSquare, Plus, Send, Sparkles, Square, TriangleAlert, X } from "lucide-react";
@@ -202,6 +202,9 @@ function toolLabel(name: string, input: any): string {
 
 export const SUGGESTIONS = ["What's new for me today?", "Anything waiting in the Screener?", "Summarise my unread mail", "Draft a reply to the latest email from …"];
 
+/** Past this the box stops growing and scrolls instead, so the conversation never leaves the screen. */
+const INPUT_MAX_PX = 160;
+
 export function AssistantChat({
   conversationId,
   onConversationId,
@@ -235,6 +238,22 @@ export function AssistantChat({
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  /**
+   * Grow the box to fit what is in it.
+   *
+   * Counting newlines — which is what this did — only sees the lines someone typed deliberately.
+   * A long sentence with no break in it wraps onto four visual lines while still being one string,
+   * so the field stayed a single row and the message scrolled out of sight as it was written.
+   * Only the browser knows how the text actually wrapped, and `scrollHeight` is where it says so:
+   * collapse the height first, or a box that has grown can never measure itself smaller again.
+   */
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, INPUT_MAX_PX)}px`;
+  }, [input]);
   /** Conversation whose turns are held locally (streamed here); server data must not overwrite them mid-flight or drop transient errors. */
   const streamedConv = useRef<string | null>(null);
   const busyRef = useRef(false);
@@ -416,10 +435,10 @@ export function AssistantChat({
                 if (onClose) onClose();
               }
             }}
-            rows={Math.min(6, Math.max(1, input.split("\n").length))}
+            rows={1}
             placeholder={notConfigured ? "Add an API key in Settings → AI first" : onAddContext ? "Ask about your mail, @ for context" : "Ask about your mail, or tell me what to write…"}
             disabled={!!notConfigured}
-            className="flex-1 resize-none bg-transparent outline-none text-[14px] leading-6 placeholder:text-muted-foreground max-h-40"
+            className="flex-1 resize-none overflow-y-auto bg-transparent outline-none text-[14px] leading-6 placeholder:text-muted-foreground"
           />
           {busy ? (
             <Button type="button" size="icon-sm" variant="ghost" onClick={stop} aria-label="Stop"><Square className="size-3.5" /></Button>
