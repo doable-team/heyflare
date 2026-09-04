@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { ArrowUpCircle, Bookmark, CalendarClock, Check, ChevronDown, ChevronRight, Clock, Eye, FileText, Files, FolderOpen, Inbox, Keyboard, Layers, LogOut, Mail, Monitor, Moon, PenSquare, Plus, Rss, Scissors, Search, Send, Settings, Shield, ShieldOff, Sun, Tag, Trash2, Users, Sparkles } from "lucide-react";
+import { ArrowUpCircle, Bookmark, CalendarClock, CalendarDays, Check, ChevronDown, ChevronRight, Clock, Eye, FileText, Files, FolderOpen, Inbox, Keyboard, Layers, LogOut, Mail, Monitor, Moon, PenSquare, Plus, Rss, Scissors, Search, Send, Settings, Shield, ShieldOff, Sun, Tag, Trash2, Users, Sparkles } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { Mark } from "./Logo";
@@ -10,7 +10,7 @@ import { ALL, useAccount } from "../context/AccountContext";
 import { useCompose } from "../context/ComposeContext";
 import { api, useCounts, useMeMutations } from "../api";
 import { useKeys } from "../lib/keys";
-import { focus, overlayOpen, useFocusRegion } from "../lib/focusStore";
+import { arrows, focus, overlayOpen, useFocusRegion } from "../lib/focusStore";
 import { Avatar } from "./Avatar";
 import { CommandPalette } from "./CommandPalette";
 import { AssistantPanel } from "./AssistantPanel";
@@ -38,7 +38,7 @@ const TITLES: [string, string][] = [
   ["/feed", "The Feed"], ["/paper-trail", "Paper Trail"], ["/power-through", "Power through new"], ["/screener", "Screener"], ["/screened-out", "Screened out"], ["/reply-later", "Reply Later"],
   ["/set-aside", "Set Aside"], ["/bubble-up", "Bubble Up"], ["/previously-seen", "Previously Seen"], ["/contacts", "Contacts"], ["/clips", "Clips"],
   ["/collections", "Collections"], ["/files", "Files"], ["/labels", "Labels"], ["/sent", "Sent"], ["/drafts", "Drafts"], ["/scheduled", "Scheduled"],
-  ["/everything", "Everything"], ["/trash", "Trash"], ["/settings", "Settings"], ["/search", "Search"], ["/compose", "New message"], ["/t/", "Thread"], ["/bundle/", "Bundle"], ["/assistant", "Assistant"],
+  ["/everything", "Everything"], ["/trash", "Trash"], ["/settings", "Settings"], ["/search", "Search"], ["/compose", "New message"], ["/t/", "Thread"], ["/bundle/", "Bundle"], ["/assistant", "Assistant"], ["/calendar", "Calendar"],
 ];
 function pageTitle(path: string): string {
   if (path === "/") return "Imbox";
@@ -141,6 +141,7 @@ function Overlays() {
     s: () => setOverlay({ palette: true }),
     "?": () => setOverlay({ help: true }),
     i: () => nav("/"),
+    "0": () => nav(location.pathname.startsWith("/calendar") ? "/" : "/calendar"),
   });
   useEffect(() => {
     const fn = (e: KeyboardEvent) => {
@@ -262,6 +263,7 @@ function AppSidebar() {
     { to: "/feed", label: "The Feed", icon: <Rss />, count: c?.feed_new },
     { to: "/paper-trail", label: "Paper Trail", icon: <FileText />, count: c?.paper_trail_new },
     { to: "/screener", label: "Screener", icon: <Shield />, count: c?.screener },
+    { to: "/calendar", label: "Calendar", icon: <CalendarDays />, kbd: "0" },
   ];
   const trays: NavItem[] = [
     { to: "/reply-later", label: "Reply Later", icon: <Clock />, count: c?.reply_later },
@@ -316,7 +318,7 @@ function AppSidebar() {
     document.querySelector('[data-nav-focused="true"]')?.scrollIntoView({ block: "nearest" });
   }, [region, focusIdx]);
 
-  const arrowsOk = () => !isMobile && !overlayOpen();
+  const arrowsOk = () => !isMobile && !overlayOpen() && (region === "sidebar" || !arrows.claimed());
   useKeys({
     ArrowLeft: () => {
       if (!arrowsOk()) return;

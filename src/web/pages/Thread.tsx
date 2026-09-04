@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft, ArrowUpCircle, Bookmark, Check, ChevronDown, ChevronsDownUp, Clock, Download, FileText, FolderOpen, Forward, GitMerge, Inbox, Mail, MoreHorizontal, Paperclip, Pencil, Pin, Reply, ReplyAll, Rss, Scissors, ScrollText, StickyNote, Tag, Trash2, X, Layers, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowUpCircle, Bookmark, Check, ChevronDown, ChevronsDownUp, Clock, Download, FileText, FolderOpen, Forward, GitMerge, Inbox, Mail, MoreHorizontal, Paperclip, Pencil, Pin, Reply, ReplyAll, Rss, Scissors, CalendarPlus, ScrollText, StickyNote, Tag, Trash2, X, Layers, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import type { Address, Message, ThreadDetail } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useAssistant } from "../lib/assistantStore";
-import { attachmentUrl, useClipMutations, useThread, useThreadAction } from "../api";
+import { attachmentUrl, useClipMutations, useEventFromThread, useThread, useThreadAction } from "../api";
 import { useAccount } from "../context/AccountContext";
 import { HtmlBody } from "../components/HtmlBody";
 import { Composer, fileIcon, type ComposerInitial } from "../components/Composer";
@@ -238,6 +238,7 @@ export default function Thread() {
   const { user, accountFor, glyphFor, multi } = useAccount();
   const q = useThread(id, peek);
   const act = useThreadAction(id);
+  const toEvent = useEventFromThread();
   const clips = useClipMutations();
   const t = q.data;
   const col = useMainColumn();
@@ -632,6 +633,19 @@ export default function Thread() {
                 ))}
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => summ.run()} disabled={summ.pending}><Sparkles /> {summ.pending ? "Summarising…" : "Summarise with AI"}</DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={toEvent.isPending}
+                onSelect={async () => {
+                  try {
+                    const prefill = await toEvent.mutateAsync(t.id);
+                    nav("/calendar", { state: { newEvent: prefill } });
+                  } catch {
+                    /* the calendar page will still open empty if this fails */
+                  }
+                }}
+              >
+                <CalendarPlus /> Create event
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => { setSubjectDraft(t.subject); setRenaming(true); }}><Pencil /> Rename subject</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setNoteOpen(true)}><StickyNote /> {t.note ? "Edit note" : "Stick a note on it"} <DropdownMenuShortcut>n</DropdownMenuShortcut></DropdownMenuItem>
               <DropdownMenuSub>

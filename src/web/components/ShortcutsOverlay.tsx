@@ -19,6 +19,10 @@ const GROUPS: { title: string; keys: [string, string][] }[] = [
     keys: [["o", "Start (from the Imbox)"], ["j / k", "Next / previous"], ["r", "Reply inline"], ["l", "Reply later"], ["a", "Set aside"], ["e", "Mark seen"], ["#", "Trash"], ["↵", "Open the full thread"], ["esc", "Back to the Imbox"]],
   },
   {
+    title: "Calendar",
+    keys: [["0", "Mail ⇄ Calendar"], ["← / →", "Previous / next day"], ["↑ / ↓", "Scroll the day"], ["t", "Today"], ["d / w / m / y / a", "Days, week, month, year, agenda"], ["n", "New event"], ["j", "Journal"], ["b", "Habits"]],
+  },
+  {
     title: "Everywhere",
     keys: [["c", "Compose"], ["⌘↵", "Send message"], ["q", "Undo send"], ["i", "Back to Imbox"], ["esc", "Close / clear"], ["?", "This overlay"]],
   },

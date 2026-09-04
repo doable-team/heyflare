@@ -135,3 +135,35 @@ Notion visual language: same grayscale tokens, Geist, 6px radius, but layouts de
   already works on a narrow screen, but wrapped in the mobile shell (no desktop sidebar, no desktop header).
 - Touch targets ≥ 44px; no hover-only affordances; `overscroll-behavior` and `touch-action` set so swipes don't fight scrolling;
   `100dvh` heights; `env(safe-area-inset-*)` padding; no horizontal overflow at 360px.
+
+## 9. Calendar — time as a filmstrip
+
+The calendar keeps the same monochrome rules as the mail side, with one deliberate exception: a
+calendar's colour. It appears only as a 2px left border on an event, never as a fill, so a screen
+full of meetings still reads as black on white.
+
+**The day column** is the unit. Days run left to right and time runs down inside each of them, in a
+single scroll container: the hour gutter is `sticky left`, the day headers are `sticky top`. Both
+axes then behave correctly without synchronising two scrollers. Stacking runs corner `z-40`, day
+headers `z-30`, gutter `z-[25]`, the now line `z-20`, event blocks `z-10`.
+
+**The timeline is not a linear scale.** Night collapses to a 26px band you can click open, so the
+hours you actually live in fill the screen. That makes the minute-to-pixel mapping piecewise across
+three segments; `src/web/calendar/scale.ts` owns it, and every event, hour rule and now line reads
+its `y()`. Nothing should compute a y offset any other way.
+
+**Overlaps sit side by side, never stacked.** `layoutColumns` in `src/web/lib/caldate.ts` cuts
+overlapping events into clusters and assigns each a column, so a double-booked hour shows both
+halves rather than hiding one.
+
+**Density.** 56px per hour, 11–12px type inside a block, 208px day columns in the filmstrip and
+flexible columns in week view. An event under 34px tall drops to a single line with the time on the
+right. Today's date sits in a filled circle; past days dim to about 82%; weekends take `bg-muted/30`.
+
+**A day is more than its meetings.** The column header carries a cover image, an editable label,
+the day's habits as tick-able pills, and the all-day banners, in that order — the personal part of
+the day above the scheduled part.
+
+Views: `days` (the filmstrip), `week`, `month`, `year` (all-day and multi-day items only, so a year
+stays legible), `agenda`. Mobile gets its own month-plus-agenda screen and a full-screen day, not a
+shrunken filmstrip — a strip of thumb-width columns does not work.

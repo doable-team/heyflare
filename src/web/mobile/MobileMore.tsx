@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowUpCircle, Bookmark, CalendarClock, ChevronRight, Clock, Eye, Files, FolderOpen, LogOut, Mail, Monitor, Moon, PenSquare, Scissors, Search, Send, Settings, ShieldOff, Sun, Tag, Trash2, Users, Sparkles } from "lucide-react";
+import { ArrowUpCircle, Bookmark, BookOpen, CalendarClock, CalendarDays, ChevronRight, Clock, Eye, FileText, Files, FolderOpen, LogOut, Mail, Monitor, Moon, PenSquare, Repeat, Scissors, Search, Send, Settings, ShieldOff, Sun, Tag, Trash2, Users, Sparkles } from "lucide-react";
 import { api, useCounts, useMeMutations } from "../api";
 import { useAccount } from "../context/AccountContext";
 import { Avatar } from "../components/Avatar";
@@ -69,6 +69,11 @@ export default function MobileMore() {
         <Row to="/search" icon={<Search />} label="Search" />
         <Row icon={<PenSquare />} label="New message" onClick={() => nav("/compose")} />
       </Group>
+      <Group title="Calendar">
+        <Row to="/calendar" icon={<CalendarDays />} label="Calendar" />
+        <Row to="/journal" icon={<BookOpen />} label="Journal" />
+        <Row to="/habits" icon={<Repeat />} label="Habits" />
+      </Group>
       <Group title="Trays">
         <Row to="/reply-later" icon={<Clock />} label="Reply Later" count={c?.reply_later} />
         <Row to="/set-aside" icon={<Bookmark />} label="Set Aside" count={c?.set_aside} />
@@ -85,6 +90,8 @@ export default function MobileMore() {
         <Row to="/scheduled" icon={<CalendarClock />} label="Scheduled" />
       </Group>
       <Group title="Everything else">
+        {/* Paper Trail gave up its tab-bar slot to the calendar; it stays one tap away here. */}
+        <Row to="/paper-trail" icon={<FileText />} label="Paper Trail" />
         <Row to="/sent" icon={<Send />} label="Sent" />
         <Row to="/everything" icon={<Mail />} label="Everything" />
         <Row to="/screened-out" icon={<ShieldOff />} label="Screened out" />

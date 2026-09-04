@@ -4,6 +4,8 @@ import { now } from "./db";
 
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me/";
 const BATCH_URL = "https://www.googleapis.com/batch/gmail/v1";
+/** Granted on every connect. Calendar is asked for separately so mail-only users aren't scared off. */
+export const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar";
 const SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/contacts.other.readonly",
@@ -28,12 +30,17 @@ export function googleConfigured(env: Env): boolean {
   return !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
 }
 
-export function googleAuthUrl(env: Env, state: string, redirectUri: string, loginHint?: string): string {
+/** True when this account's refresh token already carries the Calendar scope. */
+export function hasCalendarScope(scopes: string | null | undefined): boolean {
+  return (scopes ?? "").split(/\s+/).includes(CALENDAR_SCOPE);
+}
+
+export function googleAuthUrl(env: Env, state: string, redirectUri: string, loginHint?: string, calendar = false): string {
   const u = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   u.searchParams.set("client_id", env.GOOGLE_CLIENT_ID!);
   u.searchParams.set("redirect_uri", redirectUri);
   u.searchParams.set("response_type", "code");
-  u.searchParams.set("scope", SCOPES.join(" "));
+  u.searchParams.set("scope", (calendar ? [...SCOPES, CALENDAR_SCOPE] : SCOPES).join(" "));
   u.searchParams.set("access_type", "offline");
   u.searchParams.set("prompt", "consent");
   u.searchParams.set("include_granted_scopes", "true");

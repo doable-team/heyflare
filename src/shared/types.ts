@@ -311,3 +311,157 @@ export interface AiDraftCard {
   subject: string;
   body_text: string;
 }
+
+/* ---------- Calendar ---------- */
+export type CalendarSource = "local" | "google" | "ics";
+export type EventKind = "event" | "birthday" | "anniversary" | "todo";
+export type Rsvp = "" | "needsAction" | "accepted" | "declined" | "tentative";
+export type CalendarView = "days" | "week" | "month" | "year" | "agenda";
+
+export interface Calendar {
+  id: string;
+  account_id: string | null;
+  account_email?: string | null;
+  source: CalendarSource;
+  remote_id: string | null;
+  url: string | null;
+  name: string;
+  description: string;
+  color: string;
+  timezone: string;
+  visible: boolean;
+  writable: boolean;
+  is_default: boolean;
+  position: number;
+  last_synced_at: number | null;
+  sync_status: "idle" | "syncing" | "error";
+  sync_error: string | null;
+  event_count?: number;
+}
+
+export interface EventAttendee {
+  email: string;
+  name?: string;
+  rsvp?: Rsvp;
+  optional?: boolean;
+  organizer?: boolean;
+}
+
+export interface Reminder {
+  minutes: number;
+}
+
+/** One occurrence, ready to draw. Recurring masters are expanded server-side into these. */
+export interface CalEvent {
+  id: string;            // "<row id>" or "<row id>@<YYYY-MM-DD>" for an expanded occurrence
+  event_id: string;      // the stored row
+  occurrence_date: string | null;
+  calendar_id: string;
+  calendar_name: string;
+  calendar_color: string;
+  source: CalendarSource;
+  writable: boolean;
+  kind: EventKind;
+  title: string;
+  description: string;
+  location: string;
+  emoji: string;
+  all_day: boolean;
+  starts_at: number;
+  ends_at: number;
+  start_date: string | null;
+  end_date: string | null;
+  timezone: string;
+  rrule: string | null;
+  recurring: boolean;
+  status: "confirmed" | "tentative" | "cancelled";
+  busy: boolean;
+  countdown: boolean;
+  circled: boolean;
+  organizer: Address | null;
+  attendees: EventAttendee[];
+  rsvp: Rsvp;
+  conference_url: string;
+  url: string;
+  reminders: Reminder[];
+  thread_id: string | null;
+  done: boolean;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface Habit {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+  days: number[];
+  position: number;
+  archived: boolean;
+  /** YYYY-MM-DD values inside the requested window. */
+  completions?: string[];
+  streak?: number;
+}
+
+export interface FlexTask {
+  id: string;
+  week_start: string;
+  title: string;
+  done: boolean;
+  position: number;
+}
+
+export interface TimeEntry {
+  id: string;
+  title: string;
+  event_id: string | null;
+  started_at: number;
+  ended_at: number | null;
+}
+
+export interface CalendarDay {
+  date: string;
+  label: string;
+  cover_url: string;
+  has_journal: boolean;
+  journal_updated_at: number | null;
+}
+
+export interface JournalEntry extends CalendarDay {
+  journal_html: string;
+}
+
+/** A row of the journal index: the day, plus the first plain-text line of its entry. */
+export interface JournalIndexEntry extends CalendarDay {
+  excerpt: string;
+}
+
+export interface CalendarSettings {
+  timezone: string;
+  week_start: number;
+  night_start: number;
+  night_end: number;
+  collapse_night: boolean;
+  time_format: "12" | "24";
+  default_view: CalendarView;
+  show_declined: boolean;
+  cover_art: boolean;
+}
+
+/** GET /api/calendar/events?from=&to= — everything needed to draw a range of days. */
+export interface CalendarRange {
+  from: string;
+  to: string;
+  events: CalEvent[];
+  habits: Habit[];
+  days: CalendarDay[];
+  flex_tasks: FlexTask[];
+  time_entries: TimeEntry[];
+}
+
+export interface CalendarSourcesResponse {
+  calendars: Calendar[];
+  settings: CalendarSettings;
+  /** Gmail accounts that have not yet granted the Calendar scope. */
+  connectable: { id: string; email: string }[];
+}

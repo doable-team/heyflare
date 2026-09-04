@@ -3,7 +3,8 @@
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/doable-team/heyflare) [![npm](https://img.shields.io/npm/v/create-heyflare?label=npm%20create%20heyflare)](https://www.npmjs.com/package/create-heyflare) [![License: MIT](https://img.shields.io/badge/license-MIT-black)](LICENSE)
 
 A self-hosted, HEY-style email client that runs entirely on Cloudflare — **with a built-in AI agent** that reads, triages and
-drafts for you. Connect Gmail accounts and mailboxes on your own domains, screen first-time senders, and read a calm, unified Imbox. Single owner, minimal black-and-white UI, tailor-made
+drafts for you. Connect Gmail accounts and mailboxes on your own domains, screen first-time senders, read a calm, unified Imbox, and keep a
+HEY-style calendar next to it. Single owner, minimal black-and-white UI, tailor-made
 mobile app UI, no external services beyond Google's APIs and Cloudflare.
 
 ## Built-in AI agent
@@ -39,6 +40,10 @@ lives in a resizable side panel and can see the thread you're reading.
 - **Power through new** — the whole "New for you" queue stacked on one page: reply, defer or file each one, `o` to start.
 - **Reply Later, Set Aside, Bubble Up** — trays docked in the Imbox, Focus & Reply mode, snooze with presets.
 - **Bundles** — collapse a chatty sender into one row per batch; read the batch like a feed.
+- **Calendar** — a horizontal filmstrip of days with the night hours collapsed, plus week, month, year and agenda views.
+  Google Calendar over OAuth (two-way), subscribed `.ics`/`webcal` feeds (read-only), `.ics` import, and heyflare's own
+  calendars. Habits, a journal, day labels and cover art, "sometime this week" tasks, countdowns, time tracking, and the
+  next three days shown at the top of the Imbox. `0` flips between mail and calendar.
 - **Unified inbox** across every connected account, with per-account glyphs and a From picker in compose.
 - **Gmail** via OAuth (incremental history sync every minute plus sync-on-focus; sending through Gmail).
 - **Custom domain mailboxes** — inbound through Cloudflare Email Routing, outbound through Cloudflare Email Sending or Resend.
@@ -90,10 +95,11 @@ Prerequisites: a Cloudflare account, Node 20+, and a Google Cloud project.
 
 ### 1. Google OAuth client
 1. https://console.cloud.google.com → create a project.
-2. **APIs & Services → Library**: enable **Gmail API** and **People API**.
+2. **APIs & Services → Library**: enable **Gmail API**, **People API** and, for the calendar, **Google Calendar API**.
 3. **OAuth consent screen**: External; add your Gmail addresses as test users (publish the app later to lift the 7-day
    refresh-token limit for test users). Scopes: `gmail.modify`, `contacts.other.readonly`, `contacts.readonly`,
-   `directory.readonly`, `openid`, `email`, `profile`.
+   `directory.readonly`, `openid`, `email`, `profile`. Add `https://www.googleapis.com/auth/calendar` if you want the
+   calendar — heyflare asks for it separately, from Settings → Calendar, so connecting mail alone never touches it.
 4. **Credentials → OAuth client ID → Web application**:
    - Authorized JavaScript origins: `https://YOUR_HOST`
    - Authorized redirect URIs: `https://YOUR_HOST/auth/google/callback` and `http://localhost:8787/auth/google/callback`
@@ -190,6 +196,7 @@ TOTP (Google Authenticator, 1Password, Authy…) with 10 single-use recovery cod
 ## Docs
 - `API.md` — the worker/web API contract.
 - `DESIGN.md` — the design system (Notion-minimal, shadcn, mobile spec).
+- [`docs/CALENDAR.md`](docs/CALENDAR.md) — how the calendar is put together: sources, views, schema, API, sync.
 - [`docs/UPDATING.md`](docs/UPDATING.md) — what an update changes, how to update, how to roll back.
 
 ## License

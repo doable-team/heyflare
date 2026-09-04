@@ -107,12 +107,27 @@ export const keys = {
   files: ["files"] as const,
   drafts: ["drafts"] as const,
   search: (q: string) => ["search", q] as const,
+  // Calendar. Every calendar key starts with "cal" so invalidateCalendar can sweep them in one call.
+  calRange: (from: string, to: string) => ["cal", "range", from, to] as const,
+  calSources: ["cal", "sources"] as const,
+  habits: ["cal", "habits"] as const,
+  journal: ["cal", "journal"] as const,
+  journalDay: (d: string) => ["cal", "journal", d] as const,
+  calDay: (d: string) => ["cal", "day", d] as const,
+  flexTasks: (w: string) => ["cal", "flex", w] as const,
+  timeEntries: ["cal", "time"] as const,
+  calSettings: ["cal", "settings"] as const,
 };
 
 export function invalidateMail(qc: QueryClient) {
   for (const k of [["imbox"], ["threads"], ["feed"], ["thread"], ["counts"], ["screener"], ["screened-out"], ["search"], ["collection"], ["contact"], ["clips"]]) {
     qc.invalidateQueries({ queryKey: k });
   }
+}
+
+/** Invalidate every calendar cache: ranges, sources, habits, days, journal, flex tasks, time, settings. */
+export function invalidateCalendar(qc: QueryClient) {
+  qc.invalidateQueries({ queryKey: ["cal"] });
 }
 
 /** Optimistically drop threads from list caches (imbox + paged lists). */
@@ -643,5 +658,298 @@ export function usePowerThroughMutations() {
         invalidateMail(qc);
       },
     }),
+  };
+}
+
+// ---------- Calendar ----------
+/** How a write applies to a recurring event: just this occurrence, this and later, or the series. */
+export type EventScope = "this" | "following" | "all";
+
+/** The writable half of a CalEvent. Everything is optional on PATCH; POST needs at least a title. */
+export interface EventInput {
+  calendar_id?: string;
+  kind?: T.EventKind;
+  title?: string;
+  description?: string;
+  location?: string;
+  emoji?: string;
+  all_day?: boolean;
+  starts_at?: number;
+  ends_at?: number;
+  start_date?: string | null;
+  end_date?: string | null;
+  timezone?: string;
+  rrule?: string | null;
+  status?: T.CalEvent["status"];
+  busy?: boolean;
+  countdown?: boolean;
+  circled?: boolean;
+  attendees?: T.EventAttendee[];
+  conference_url?: string;
+  url?: string;
+  reminders?: T.Reminder[];
+  thread_id?: string | null;
+  done?: boolean;
+}
+
+/** POST /api/calendar/events/from-thread — a half-filled event to open the composer with. */
+export interface EventPrefill extends EventInput {
+  thread_id: string | null;
+  /** Suggested times parsed out of the message, if any. */
+  suggestions?: { starts_at: number; ends_at: number }[];
+}
+
+/** `:id` may be `<row>@<YYYY-MM-DD>`, addressing one occurrence of a recurring master. */
+function eventPath(id: string): string {
+  return `/api/calendar/events/${encodeURIComponent(id)}`;
+}
+
+/** Download URL for a single event as `.ics`. */
+export function eventIcsUrl(id: string): string {
+  return `${eventPath(id)}.ics`;
+}
+
+// --- Range ---
+/**
+ * Everything needed to draw `from`..`to` (inclusive dates): events, habits, day labels and
+ * cover art, the week's flex tasks and time entries.
+ *
+ * `placeholderData` keeps the previous window on screen while the next one loads, so scrolling
+ * the day strip never blanks the columns.
+ */
+export function useCalendarRange(from: string, to: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.calRange(from, to),
+    queryFn: () => api.get<T.CalendarRange>(`/api/calendar/events${qs({ from, to })}`),
+    enabled: enabled && !!from && !!to,
+    placeholderData: (prev) => prev,
+    staleTime: 30_000,
+  });
+}
+
+// --- Sources ---
+export function useCalendarSources(enabled = true) {
+  return useQuery({
+    queryKey: keys.calSources,
+    queryFn: () => api.get<T.CalendarSourcesResponse>("/api/calendar/sources"),
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+export function useCalendarSourceMutations() {
+  const qc = useQueryClient();
+  const inv = () => invalidateCalendar(qc);
+  return {
+    create: useMutation({ mutationFn: (b: { name: string; color?: string }) => api.post<T.Calendar>("/api/calendar/sources", b), onSuccess: inv }),
+    subscribe: useMutation({ mutationFn: (b: { url: string; name?: string; color?: string }) => api.post<T.Calendar>("/api/calendar/sources/subscribe", b), onSuccess: inv }),
+    update: useMutation({
+      mutationFn: ({ id, ...b }: { id: string; name?: string; color?: string; visible?: boolean; is_default?: boolean }) => api.patch<T.Calendar>(`/api/calendar/sources/${id}`, b),
+      onSuccess: inv,
+    }),
+    remove: useMutation({ mutationFn: (id: string) => api.del<{ ok: boolean }>(`/api/calendar/sources/${id}`), onSuccess: inv }),
+    sync: useMutation({ mutationFn: (id: string) => api.post<{ ok: boolean; error?: string | null }>(`/api/calendar/sources/${id}/sync`), onSuccess: inv }),
+    syncAll: useMutation({ mutationFn: () => api.post<{ ok: boolean; synced?: number }>("/api/calendar/sources/sync"), onSuccess: inv }),
+    /** Upload an `.ics` body; its events land in a local calendar and become editable. */
+    importIcs: useMutation({
+      mutationFn: (b: { ics: string; calendar_id?: string; name?: string; color?: string }) => api.post<{ ok: boolean; imported: number; calendar?: T.Calendar }>("/api/calendar/sources/import", b),
+      onSuccess: inv,
+    }),
+  };
+}
+
+/** Kicks off Google consent for the Calendar scope; open the returned URL. */
+export function useCalendarConnectLink() {
+  return useMutation({ mutationFn: (b: { account_id?: string } = {}) => api.post<{ url: string }>("/api/calendar/google/connect-link", b) });
+}
+
+// --- Settings ---
+export function useCalendarSettings(enabled = true) {
+  return useQuery({
+    queryKey: keys.calSettings,
+    queryFn: () => api.get<T.CalendarSettings>("/api/calendar/settings"),
+    enabled,
+    staleTime: 60_000,
+  });
+}
+export function useCalendarSettingsMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (b: Partial<T.CalendarSettings>) => request<T.CalendarSettings>("PUT", "/api/calendar/settings", b),
+    onSuccess: (data) => {
+      qc.setQueryData(keys.calSettings, data);
+      invalidateCalendar(qc);
+    },
+  });
+}
+
+// --- Events ---
+export function useEventMutations() {
+  const qc = useQueryClient();
+  const inv = () => invalidateCalendar(qc);
+  return {
+    create: useMutation({ mutationFn: (b: EventInput) => api.post<T.CalEvent>("/api/calendar/events", b), onSuccess: inv }),
+    /** `scope` rides as a query param, per the recurring-event contract. */
+    update: useMutation({
+      mutationFn: ({ id, scope, ...b }: EventInput & { id: string; scope?: EventScope }) => api.patch<T.CalEvent>(`${eventPath(id)}${qs({ scope })}`, b),
+      onSuccess: inv,
+    }),
+    remove: useMutation({
+      mutationFn: ({ id, scope }: { id: string; scope?: EventScope }) => api.del<{ ok: boolean }>(`${eventPath(id)}${qs({ scope })}`),
+      onSuccess: inv,
+    }),
+    rsvp: useMutation({ mutationFn: ({ id, rsvp }: { id: string; rsvp: T.Rsvp }) => api.post<T.CalEvent>(`${eventPath(id)}/rsvp`, { rsvp }), onSuccess: inv }),
+    /** Todos: `date` marks one occurrence of a repeating todo done. */
+    setDone: useMutation({ mutationFn: ({ id, done, date }: { id: string; done: boolean; date?: string }) => api.post<T.CalEvent>(`${eventPath(id)}/done`, { done, date }), onSuccess: inv }),
+  };
+}
+
+/** Turn an email into a half-filled event. Returns the prefill; it does not create anything. */
+export function useEventFromThread() {
+  return useMutation({ mutationFn: (thread_id: string) => api.post<EventPrefill>("/api/calendar/events/from-thread", { thread_id }) });
+}
+
+// --- Habits ---
+export function useHabits(from?: string, to?: string, enabled = true) {
+  return useQuery({
+    queryKey: [...keys.habits, from ?? "", to ?? ""],
+    queryFn: () => api.get<T.Habit[]>(`/api/calendar/habits${qs({ from, to })}`),
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+export interface HabitInput {
+  name?: string;
+  icon?: string;
+  color?: string;
+  /** Weekdays the habit is expected on, 0 = Sunday. Empty means every day. */
+  days?: number[];
+  position?: number;
+  archived?: boolean;
+}
+
+export function useHabitMutations() {
+  const qc = useQueryClient();
+  const inv = () => invalidateCalendar(qc);
+  return {
+    create: useMutation({ mutationFn: (b: HabitInput & { name: string }) => api.post<T.Habit>("/api/calendar/habits", b), onSuccess: inv }),
+    update: useMutation({ mutationFn: ({ id, ...b }: HabitInput & { id: string }) => api.patch<T.Habit>(`/api/calendar/habits/${id}`, b), onSuccess: inv }),
+    remove: useMutation({ mutationFn: (id: string) => api.del<{ ok: boolean }>(`/api/calendar/habits/${id}`), onSuccess: inv }),
+    /**
+     * Ticking a habit has to feel instant, so this one is optimistic: every cached range
+     * gets the completion added (or removed) before the request goes out, and the snapshots
+     * are rolled back if the server disagrees.
+     */
+    toggle: useMutation({
+      mutationFn: ({ id, date }: { id: string; date: string }) => api.post<{ ok: boolean; done: boolean }>(`/api/calendar/habits/${id}/toggle`, { date }),
+      onMutate: async ({ id, date }) => {
+        // Stop in-flight range fetches from landing on top of the optimistic patch.
+        await qc.cancelQueries({ queryKey: ["cal", "range"] });
+        const snapshots = qc.getQueriesData<T.CalendarRange>({ queryKey: ["cal", "range"] });
+        qc.setQueriesData<T.CalendarRange>({ queryKey: ["cal", "range"] }, (old) => {
+          if (!old) return old;
+          let hit = false;
+          const habits = old.habits.map((h) => {
+            if (h.id !== id) return h;
+            hit = true;
+            const done = h.completions?.includes(date) ?? false;
+            const completions = done ? (h.completions ?? []).filter((d) => d !== date) : [...(h.completions ?? []), date].sort();
+            // streak is server-computed; nudge it so the badge doesn't lag the tick.
+            const streak = h.streak === undefined ? undefined : Math.max(0, h.streak + (done ? -1 : 1));
+            return { ...h, completions, streak };
+          });
+          return hit ? { ...old, habits } : old;
+        });
+        return { snapshots };
+      },
+      onError: (_e, _v, ctx) => {
+        for (const [key, data] of ctx?.snapshots ?? []) qc.setQueryData(key, data);
+      },
+      onSettled: inv,
+    }),
+  };
+}
+
+// --- Days (label + cover art) ---
+export function useCalendarDay(date: string | undefined) {
+  return useQuery({
+    queryKey: keys.calDay(date ?? ""),
+    queryFn: () => api.get<T.CalendarDay>(`/api/calendar/days/${date}`),
+    enabled: !!date,
+  });
+}
+export function useCalendarDayMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ date, ...b }: { date: string; label?: string; cover_url?: string }) => request<T.CalendarDay>("PUT", `/api/calendar/days/${date}`, b),
+    onSuccess: (data, v) => {
+      qc.setQueryData(keys.calDay(v.date), data);
+      invalidateCalendar(qc);
+    },
+  });
+}
+
+// --- Journal ---
+export function useJournal(date: string | undefined) {
+  return useQuery({
+    queryKey: keys.journalDay(date ?? ""),
+    queryFn: () => api.get<T.JournalEntry>(`/api/calendar/journal/${date}`),
+    enabled: !!date,
+  });
+}
+/** Every day that has a journal entry, for the journal index. */
+export function useJournalIndex(enabled = true) {
+  return useQuery({ queryKey: keys.journal, queryFn: () => api.get<T.JournalIndexEntry[]>("/api/calendar/journal"), enabled, staleTime: 30_000 });
+}
+export function useJournalMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ date, ...b }: { date: string; journal_html: string }) => request<T.JournalEntry>("PUT", `/api/calendar/journal/${date}`, b),
+    onSuccess: (data, v) => {
+      qc.setQueryData(keys.journalDay(v.date), data);
+      invalidateCalendar(qc);
+    },
+  });
+}
+
+// --- Flex tasks ("sometime this week") ---
+export function useFlexTasks(weekStart: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.flexTasks(weekStart),
+    queryFn: () => api.get<T.FlexTask[]>(`/api/calendar/flex-tasks${qs({ week: weekStart })}`),
+    enabled: enabled && !!weekStart,
+    staleTime: 30_000,
+  });
+}
+export function useFlexTaskMutations() {
+  const qc = useQueryClient();
+  const inv = () => invalidateCalendar(qc);
+  return {
+    create: useMutation({ mutationFn: (b: { week_start: string; title: string }) => api.post<T.FlexTask>("/api/calendar/flex-tasks", b), onSuccess: inv }),
+    update: useMutation({ mutationFn: ({ id, ...b }: { id: string; title?: string; done?: boolean; position?: number; week_start?: string }) => api.patch<T.FlexTask>(`/api/calendar/flex-tasks/${id}`, b), onSuccess: inv }),
+    remove: useMutation({ mutationFn: (id: string) => api.del<{ ok: boolean }>(`/api/calendar/flex-tasks/${id}`), onSuccess: inv }),
+    /** Carry unfinished tasks forward into `week` (the target week's start date). */
+    roll: useMutation({ mutationFn: (b: { week: string }) => api.post<{ ok: boolean; rolled: number }>(`/api/calendar/flex-tasks/roll`, b), onSuccess: inv }),
+  };
+}
+
+// --- Time tracking ---
+export function useTimeEntries(from: string, to: string, enabled = true) {
+  return useQuery({
+    queryKey: [...keys.timeEntries, from, to],
+    queryFn: () => api.get<T.TimeEntry[]>(`/api/calendar/time${qs({ from, to })}`),
+    enabled: enabled && !!from && !!to,
+    staleTime: 30_000,
+  });
+}
+export function useTimeMutations() {
+  const qc = useQueryClient();
+  const inv = () => invalidateCalendar(qc);
+  return {
+    start: useMutation({ mutationFn: (b: { title: string; event_id?: string | null; started_at?: number }) => api.post<T.TimeEntry>("/api/calendar/time", b), onSuccess: inv }),
+    stop: useMutation({ mutationFn: ({ id, ended_at }: { id: string; ended_at?: number }) => api.post<T.TimeEntry>(`/api/calendar/time/${id}/stop`, { ended_at }), onSuccess: inv }),
+    update: useMutation({ mutationFn: ({ id, ...b }: { id: string; title?: string; event_id?: string | null; started_at?: number; ended_at?: number | null }) => api.patch<T.TimeEntry>(`/api/calendar/time/${id}`, b), onSuccess: inv }),
+    remove: useMutation({ mutationFn: (id: string) => api.del<{ ok: boolean }>(`/api/calendar/time/${id}`), onSuccess: inv }),
   };
 }

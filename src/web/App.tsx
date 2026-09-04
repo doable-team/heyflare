@@ -33,6 +33,9 @@ import Labels from "./pages/Labels";
 import LabelThreads from "./pages/LabelThreads";
 import SettingsPage from "./pages/Settings";
 import Assistant from "./pages/Assistant";
+import CalendarPage from "./pages/Calendar";
+import Journal from "./pages/Journal";
+import Habits from "./pages/Habits";
 import { MobileAssistantList, MobileAssistantChat } from "./mobile/MobileAssistant";
 import SearchPage from "./pages/Search";
 import NotFound from "./pages/NotFound";
@@ -43,6 +46,8 @@ import MobilePowerThrough from "./mobile/MobilePowerThrough";
 import MobileScreener from "./mobile/MobileScreener";
 import MobileThread from "./mobile/MobileThread";
 import MobileMore from "./mobile/MobileMore";
+import MobileCalendar from "./mobile/MobileCalendar";
+import MobileDay from "./mobile/MobileDay";
 import { MobileBucketScreen, MobileLabelThreads, MobileSearch, BUCKETS } from "./mobile/MobileListScreen";
 import { MobilePageWrap } from "./mobile/MobilePageWrap";
 import MobileSettings, { MobileSettingsAccountDetail, MobileSettingsAccounts, MobileSettingsDomainDetail, MobileSettingsDomains, MobileSettingsPreferences, MobileSettingsProfile, MobileSettingsSecurity, MobileSettingsAi } from "./mobile/MobileSettings";
@@ -88,6 +93,10 @@ function DesktopRoutes() {
         <Route path="/collections" element={<Collections />} />
         <Route path="/collections/:id" element={<CollectionDetail />} />
         <Route path="/files" element={<FilesPage />} />
+        <Route path="/calendar" element={<CalendarPage />} />
+        <Route path="/journal" element={<Journal />} />
+        <Route path="/journal/:date" element={<Journal />} />
+        <Route path="/habits" element={<Habits />} />
         <Route path="/assistant" element={<Assistant />} />
         <Route path="/assistant/:id" element={<Assistant />} />
         <Route path="/settings" element={<SettingsPage />} />
@@ -113,6 +122,11 @@ function MobileRoutes() {
         <Route path="/paper-trail" element={<MobileBucketScreen bucket="paper_trail" cfg={BUCKETS.paper_trail} />} />
         <Route path="/screener" element={<MobileScreener />} />
         <Route path="/more" element={<MobileMore />} />
+        <Route path="/calendar" element={<MobileCalendar />} />
+        <Route path="/calendar/:date" element={<MobileDay />} />
+        <Route path="/journal" element={wrap("", <Journal />)} />
+        <Route path="/journal/:date" element={wrap("", <Journal />)} />
+        <Route path="/habits" element={wrap("", <Habits />)} />
         <Route path="/screened-out" element={wrap("", <ScreenedOut />)} />
         <Route path="/reply-later" element={<MobileBucketScreen key="rl" bucket="reply_later" back cfg={BUCKETS.reply_later} />} />
         <Route path="/set-aside" element={<MobileBucketScreen key="sa" bucket="set_aside" back cfg={BUCKETS.set_aside} />} />

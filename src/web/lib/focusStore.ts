@@ -36,6 +36,22 @@ export function useFocusRegion(): FocusRegion {
   return region;
 }
 
+/**
+ * A page can take the arrow keys for itself — the calendar walks days with ← →, which would
+ * otherwise step out to the sidebar. The sidebar keeps them once focus is actually in it, so
+ * Escape is still the way back.
+ */
+let claimed = 0;
+export const arrows = {
+  claim() {
+    claimed++;
+    return () => {
+      claimed = Math.max(0, claimed - 1);
+    };
+  },
+  claimed: () => claimed > 0,
+};
+
 /** True while a menu, dialog, popover or listbox is open — arrow keys belong to it, not to us. */
 export function overlayOpen(): boolean {
   // The assistant panel is a dialog for screen readers but not a modal: arrows still work around it.

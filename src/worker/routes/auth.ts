@@ -4,6 +4,7 @@ import type { UserRow, AccountRow } from "../db";
 import { uid, now, toUser } from "../db";
 import { hashPassword, verifyPassword, createSession, destroySession, getSessionUser } from "../auth";
 import { googleAuthUrl, googleConfigured, exchangeCode, fetchUserInfo } from "../google";
+import { ensureDefaultCalendars } from "../calendar/sources";
 import { verifyTotp, matchRecoveryCode } from "../totp";
 
 const auth = new Hono<AppEnv>();
@@ -132,6 +133,8 @@ function redirectUriFor(c: any): string {
  * knows to finish with a plain confirmation page instead of redirecting into the app's webview.
  */
 export const HANDOFF_PREFIX = "hx_";
+/** States that additionally ask for the Google Calendar scope. Combines with HANDOFF_PREFIX. */
+export const CAL_PREFIX = "cal_";
 
 auth.get("/google/start", async (c) => {
   const user = await getSessionUser(c);
@@ -139,12 +142,13 @@ auth.get("/google/start", async (c) => {
   if (!googleConfigured(c.env)) {
     return c.json({ error: "google_not_configured", message: "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET secrets." }, 500);
   }
-  const state = uid();
+  const wantsCalendar = c.req.query("calendar") === "1";
+  const state = (wantsCalendar ? CAL_PREFIX : "") + uid();
   await c.env.DB.prepare(`INSERT INTO oauth_states (state, user_id, created_at) VALUES (?, ?, ?)`).bind(state, user.id, now()).run();
   // Prune old states opportunistically.
   c.executionCtx.waitUntil(c.env.DB.prepare(`DELETE FROM oauth_states WHERE created_at < ?`).bind(now() - 3600_000).run());
   const hint = c.req.query("login_hint") ?? undefined;
-  return c.redirect(googleAuthUrl(c.env, state, redirectUriFor(c), hint));
+  return c.redirect(googleAuthUrl(c.env, state, redirectUriFor(c), hint, wantsCalendar));
 });
 
 /** Standalone page shown in the browser tab that finished a handoff (the app is a separate window). */
@@ -178,7 +182,7 @@ auth.get("/google/handoff", async (c) => {
   const st = await c.env.DB.prepare(`SELECT state FROM oauth_states WHERE state = ? AND created_at > ?`).bind(state, now() - 3600_000).first<{ state: string }>();
   if (!st) return c.json({ error: "invalid_state" }, 400);
   const hint = c.req.query("login_hint") ?? undefined;
-  return c.redirect(googleAuthUrl(c.env, state, redirectUriFor(c), hint));
+  return c.redirect(googleAuthUrl(c.env, state, redirectUriFor(c), hint, state.includes(CAL_PREFIX)));
 });
 
 auth.get("/google/callback", async (c) => {
@@ -211,18 +215,18 @@ auth.get("/google/callback", async (c) => {
       accountId = existing.id;
       await db
         .prepare(
-          `UPDATE accounts SET access_token = ?, refresh_token = COALESCE(?, refresh_token), token_expires_at = ?, sync_status = 'idle', sync_error = NULL, display_name = CASE WHEN display_name = '' THEN ? ELSE display_name END, avatar_url = CASE WHEN ? <> '' THEN ? ELSE avatar_url END, photos_synced_at = NULL WHERE id = ?`
+          `UPDATE accounts SET access_token = ?, refresh_token = COALESCE(?, refresh_token), token_expires_at = ?, scopes = ?, sync_status = 'idle', sync_error = NULL, display_name = CASE WHEN display_name = '' THEN ? ELSE display_name END, avatar_url = CASE WHEN ? <> '' THEN ? ELSE avatar_url END, photos_synced_at = NULL WHERE id = ?`
         )
-        .bind(tok.access_token, tok.refresh_token ?? null, expiresAt, info.name, info.picture, info.picture, existing.id)
+        .bind(tok.access_token, tok.refresh_token ?? null, expiresAt, tok.scope ?? '', info.name, info.picture, info.picture, existing.id)
         .run();
     } else {
       accountId = uid();
       await db
         .prepare(
-          `INSERT INTO accounts (id, user_id, provider, email, display_name, access_token, refresh_token, token_expires_at, history_id, initial_sync_done, initial_sync_page_token, initial_sync_count, sync_status, sync_error, last_synced_at, signature, cover_art, avatar_url, created_at)
-           VALUES (?, ?, 'gmail', ?, ?, ?, ?, ?, NULL, 0, NULL, 0, 'idle', NULL, NULL, '', '', ?, ?)`
+          `INSERT INTO accounts (id, user_id, provider, email, display_name, access_token, refresh_token, token_expires_at, scopes, history_id, initial_sync_done, initial_sync_page_token, initial_sync_count, sync_status, sync_error, last_synced_at, signature, cover_art, avatar_url, created_at)
+           VALUES (?, ?, 'gmail', ?, ?, ?, ?, ?, ?, NULL, 0, NULL, 0, 'idle', NULL, NULL, '', '', ?, ?)`
         )
-        .bind(accountId, user.id, info.email, info.name, tok.access_token, tok.refresh_token ?? null, expiresAt, info.picture, now())
+        .bind(accountId, user.id, info.email, info.name, tok.access_token, tok.refresh_token ?? null, expiresAt, tok.scope ?? '', info.picture, now())
         .run();
     }
     // Kick off the first sync chunk in the background.
@@ -230,6 +234,7 @@ auth.get("/google/callback", async (c) => {
     if (account) {
       const { syncAccount } = await import("../sync");
       c.executionCtx.waitUntil(syncAccount(c.env, account));
+      c.executionCtx.waitUntil(ensureDefaultCalendars(c.env, user.id, account).catch(() => {}));
     }
     if (handoff) {
       return c.html(handoffPage("Connected", `${info.email} is now syncing. You can close this tab and go back to heyflare.`, true), 200);

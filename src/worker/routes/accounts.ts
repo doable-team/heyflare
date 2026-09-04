@@ -5,7 +5,7 @@ import { toAccount } from "../db";
 import { syncAccount } from "../sync";
 import { syncContactPhotos } from "../people";
 import { deleteAccountData } from "./domains";
-import { appOrigin, HANDOFF_PREFIX } from "./auth";
+import { appOrigin, HANDOFF_PREFIX, CAL_PREFIX } from "./auth";
 import { googleConfigured } from "../google";
 import { uid, now } from "../db";
 
@@ -108,8 +108,8 @@ accounts.get("/:id/logs", async (c) => {
 accounts.post("/connect-link", async (c) => {
   const user = c.get("user");
   if (!googleConfigured(c.env)) return c.json({ error: "google_not_configured", message: "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET secrets." }, 500);
-  const body = await c.req.json<{ login_hint?: string }>().catch(() => ({}) as { login_hint?: string });
-  const state = `${HANDOFF_PREFIX}${uid()}`;
+  const body = await c.req.json<{ login_hint?: string; calendar?: boolean }>().catch(() => ({}) as { login_hint?: string; calendar?: boolean });
+  const state = `${HANDOFF_PREFIX}${body.calendar ? CAL_PREFIX : ""}${uid()}`;
   await c.env.DB.prepare(`INSERT INTO oauth_states (state, user_id, created_at) VALUES (?, ?, ?)`).bind(state, user.id, now()).run();
   c.executionCtx.waitUntil(c.env.DB.prepare(`DELETE FROM oauth_states WHERE created_at < ?`).bind(now() - 3600_000).run());
   const hint = (body.login_hint ?? "").trim();

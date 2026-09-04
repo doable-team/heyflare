@@ -155,3 +155,18 @@ Without `CF_API_TOKEN`, domain setup is "manual": the API returns the exact step
 - `POST /api/power-through/seen` `{ thread_ids: string[] }` -> `{ ok, count }` — marks those threads seen + read
   (max 200, ownership-checked) and clears Gmail's UNREAD label per account, best-effort. Used by "Mark all as seen";
   nothing is marked seen just by scrolling the page.
+
+## Calendar
+Mounted at `/api/calendar` behind `requireUser` and, unlike mail, **not** account-scoped — the calendar belongs to the
+owner, not to a mailbox, so `X-Account-Id` is ignored. The full route table, data model and sync behaviour live in
+[`docs/CALENDAR.md`](docs/CALENDAR.md). In brief:
+- `GET /api/calendar/events?from=&to=` -> `CalendarRange` — expanded occurrences plus habits, day labels and cover art,
+  the week's flexible tasks and time entries. Recurring masters from local and subscribed calendars are expanded per
+  request window; Google is asked for pre-expanded instances (`singleEvents=true`).
+- Events: `POST`, `PATCH /:id?scope=this|following|all`, `DELETE /:id?scope=…`, `/:id/rsvp`, `/:id/done`,
+  `/events/from-thread` (returns a prefill, creates nothing), `GET /events/:id.ics`.
+- Sources: `GET/POST /sources`, `/sources/subscribe` (ICS or webcal, read-only, SSRF-guarded), `/sources/import`,
+  `PATCH/DELETE /sources/:id`, `/sources/:id/sync`, `/sources/sync`, and `/google/connect-link` for the Calendar scope.
+- Also `habits`, `days/:date`, `journal/:date`, `flex-tasks`, `time`, and `settings`.
+- `accounts.scopes` records which OAuth scopes a refresh token carries; a Gmail account without
+  `https://www.googleapis.com/auth/calendar` appears in `connectable` and needs one extra consent.

@@ -1,7 +1,7 @@
 import { startGoogleConnect } from "../lib/connect";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowUpCircle, Bookmark, CalendarClock, Clock, Eye, FileText, Files, FolderOpen, Inbox, Keyboard, Mail, Moon, PenSquare, Plus, Rss, Scissors, Send, Settings, Shield, ShieldOff, Sun, Tag, Trash2, Users, Sparkles } from "lucide-react";
+import { ArrowUpCircle, Bookmark, CalendarClock, CalendarDays, Clock, Eye, FileText, Files, FolderOpen, Inbox, Keyboard, Mail, Moon, NotebookPen, PenSquare, Plus, Repeat, Rss, Scissors, Send, Settings, Shield, ShieldOff, Sparkles, Sun, Tag, Trash2, Users } from "lucide-react";
 import { useSearch } from "../api";
 import { fmtTime } from "../lib/format";
 import { Avatar } from "./Avatar";
@@ -27,6 +27,9 @@ const DESTINATIONS: { to: string; label: string; icon: ReactNode; kbd?: string; 
   { to: "/everything", label: "Everything", icon: <Mail /> },
   { to: "/screened-out", label: "Screened out", icon: <ShieldOff /> },
   { to: "/trash", label: "Trash", icon: <Trash2 /> },
+  { to: "/calendar", label: "Calendar", icon: <CalendarDays />, kbd: "0", keywords: "events schedule meetings agenda" },
+  { to: "/journal", label: "Journal", icon: <NotebookPen />, keywords: "diary write day" },
+  { to: "/habits", label: "Habits", icon: <Repeat />, keywords: "streak daily routine" },
   { to: "/settings", label: "Settings", icon: <Settings /> },
 ];
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { AlertTriangle, Check, ChevronDown, Copy, FileText, Globe, Inbox, KeyRound, Mail, Monitor, Moon, Plus, RefreshCw, Rss, ShieldCheck, SlidersHorizontal, Sun, Trash2, Unplug, User, Sparkles } from "lucide-react";
+import { AlertTriangle, CalendarDays, Check, ChevronDown, Copy, FileText, Globe, Inbox, KeyRound, Mail, Monitor, Moon, Plus, RefreshCw, Rss, ShieldCheck, SlidersHorizontal, Sun, Trash2, Unplug, User, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import type { Account, Domain, UserSettings } from "@shared/types";
 import { cn } from "@/lib/utils";
@@ -27,14 +27,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { AiSection } from "../components/AiSettingsSection";
+import { CalendarSettingsSection } from "../components/CalendarSettingsSection";
 import { useCardScroll } from "../lib/cardKeys";
 
-type Tab = "profile" | "preferences" | "accounts" | "domains" | "ai" | "security";
+type Tab = "profile" | "preferences" | "accounts" | "domains" | "calendar" | "ai" | "security";
 const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
   { key: "profile", label: "Profile", icon: <User /> },
   { key: "preferences", label: "Preferences", icon: <SlidersHorizontal /> },
   { key: "accounts", label: "Accounts", icon: <Mail /> },
   { key: "domains", label: "Domains", icon: <Globe /> },
+  { key: "calendar", label: "Calendar", icon: <CalendarDays /> },
   { key: "ai", label: "AI", icon: <Sparkles /> },
   { key: "security", label: "Security", icon: <KeyRound /> },
 ];
@@ -962,6 +964,7 @@ export default function SettingsPage() {
         <TabsContent value="preferences"><PreferencesSection /></TabsContent>
         <TabsContent value="accounts"><AccountsSection onNewMailbox={() => setTab("domains")} /></TabsContent>
         <TabsContent value="domains"><DomainsSection /></TabsContent>
+        <TabsContent value="calendar"><CalendarSettingsSection /></TabsContent>
         <TabsContent value="ai"><AiSection /></TabsContent>
         <TabsContent value="security"><SecuritySection /></TabsContent>
       </Tabs>

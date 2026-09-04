@@ -18,6 +18,8 @@ import bundleRoutes from "./routes/bundles";
 import aiRoutes from "./routes/ai";
 import { runLearning } from "./ai/memory";
 import domainRoutes from "./routes/domains";
+import calendarRoutes from "./routes/calendar";
+import { runCalendarSync } from "./calendar/sync";
 import { handleInboundEmail } from "./inbound";
 import { ensureMigrations } from "./migrations";
 import { VERSION, COMMIT, BUILT_AT } from "@shared/version";
@@ -46,6 +48,7 @@ api.route("/me", meRoutes);
 api.route("/accounts", accountRoutes);
 api.route("/domains", domainRoutes);
 api.route("/ai", aiRoutes);
+api.route("/calendar", calendarRoutes);
 
 
 const scoped = new Hono<AppEnv>();
@@ -86,6 +89,11 @@ async function runCron(env: Env) {
     await runLearning(env);
   } catch (e) {
     console.error("ai learning failed", e);
+  }
+  try {
+    await runCalendarSync(env);
+  } catch (e) {
+    console.error("calendar sync failed", e);
   }
   const accounts = await db
     .prepare(

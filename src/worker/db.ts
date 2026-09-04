@@ -49,6 +49,8 @@ export interface AccountRow {
   avatar_url: string;
   photos_synced_at: number | null;
   contacts_changed_at?: number | null;
+  /** OAuth scopes this account's refresh token carries (space separated). */
+  scopes?: string;
   created_at: number;
 }
 
