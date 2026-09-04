@@ -355,7 +355,7 @@ export default function MobileThread() {
         <AlertDialogContent size="sm">
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this thread forever?</AlertDialogTitle>
-            <AlertDialogDescription>It'll be removed here and trashed in {account?.provider === "domain" ? "your mailbox" : account?.provider === "outlook" ? "Outlook" : "Gmail"}. There's no undo.</AlertDialogDescription>
+            <AlertDialogDescription>It'll be removed here and trashed in {account?.provider === "domain" || account?.provider === "imap" ? "your mailbox" : account?.provider === "outlook" ? "Outlook" : "Gmail"}. There's no undo.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

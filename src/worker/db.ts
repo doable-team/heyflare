@@ -30,7 +30,7 @@ export interface UserRow {
 export interface AccountRow {
   id: string;
   user_id: string;
-  provider: "gmail" | "domain" | "outlook";
+  provider: "gmail" | "domain" | "outlook" | "imap";
   domain_id: string | null;
   email: string;
   display_name: string;
@@ -251,7 +251,7 @@ export function toAccount(r: AccountRow): Account {
     id: r.id,
     email: r.email,
     display_name: r.display_name,
-    provider: r.provider === "domain" ? "domain" : r.provider === "outlook" ? "outlook" : "gmail",
+    provider: r.provider === "domain" || r.provider === "outlook" || r.provider === "imap" ? r.provider : "gmail",
     domain_id: r.domain_id ?? null,
     initial_sync_done: !!r.initial_sync_done,
     initial_sync_count: r.initial_sync_count,

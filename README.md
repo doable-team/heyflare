@@ -49,6 +49,8 @@ lives in a resizable side panel and can see the thread you're reading.
 - **Gmail** via OAuth (incremental history sync every minute plus sync-on-focus; sending through Gmail).
 - **Outlook** via Microsoft OAuth — Outlook.com, Hotmail, Live and Microsoft 365 work accounts, over Microsoft Graph
   (delta sync every minute plus sync-on-focus; sending through Graph, so it lands in Outlook's Sent Items too).
+- **Any IMAP/SMTP mailbox** — Zoho, Fastmail, Migadu, cPanel webmail or your own server, with an app password.
+  Polled every minute over IMAP; sending goes through the provider's own SMTP, so they sign DKIM for you.
 - **Custom domain mailboxes** — inbound through Cloudflare Email Routing, outbound through Cloudflare Email Sending or Resend.
 - Contacts with Google profile photos, BIMI brand logos, address-book autocomplete, clips, collections, labels, files,
   notes, merge and rename threads, spy-pixel blocking, keyboard shortcuts, command palette, dark mode, two-factor auth.
@@ -192,6 +194,7 @@ new database migrations apply themselves on the first request after a deploy. Fu
 ## How mail flows
 - Connecting Gmail imports **nothing**. It records Gmail's history cursor and only mail that arrives afterwards syncs.
 - Connecting Outlook imports **nothing** either — it records a Graph delta cursor and watches from there.
+- Adding an IMAP mailbox imports **nothing** either — it records the folder's UIDVALIDITY and highest UID, and watches from there.
 - Every first-time sender waits in the **Screener**. Decisions are per person and apply across all your accounts.
 - Gmail and Outlook are polled every minute (Cloudflare cron) and whenever the app is opened or regains focus (throttled). Custom-domain
   mail is pushed in instantly by Email Routing.
@@ -226,6 +229,20 @@ npm run dev:worker                # worker on :8787 (API, cron, email handler)
 npm run dev                       # vite on :5173 (proxies /api and /auth)
 ```
 Inbound mail can be simulated against the local worker: `POST http://localhost:8787/cdn-cgi/handler/email?from=a@b.co&to=you@yourdomain` with a raw RFC 822 body.
+
+## Other mailboxes (Zoho, Fastmail, webmail…)
+
+Settings → Accounts → **Add mailbox**. Any server that speaks IMAP and SMTP works: pick a provider
+preset or type the host names yourself, then give it an app-specific password. heyflare checks both
+servers before saving, so a typo never leaves a half-connected account behind.
+
+- **IMAP** on 993 with implicit TLS.
+- **SMTP** on 465 (implicit TLS) or 587 (STARTTLS). **Port 25 cannot work** — Cloudflare blocks
+  outbound connections to it, with no way around it.
+- Passwords are encrypted at rest with AES-GCM, keyed off `SESSION_SECRET`, and are never returned
+  by the API — Settings shows only a masked hint.
+- Turn IMAP access on with your provider first (Zoho in particular requires it), and use an
+  app-specific password if you have two-factor auth enabled.
 
 ## Tests
 

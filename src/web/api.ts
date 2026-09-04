@@ -503,6 +503,37 @@ export async function createDomain(body: { name: string; confirm?: boolean }): P
   if (!res.ok) throw new ApiError(res.status, DOMAIN_ERRORS[data?.error] ?? String(data?.error ?? res.statusText).replace(/_/g, " "));
   return data as T.Domain;
 }
+export interface ImapDraft {
+  email: string;
+  display_name?: string;
+  imap_host: string;
+  imap_port: number;
+  imap_security: "tls" | "starttls";
+  smtp_host: string;
+  smtp_port: number;
+  smtp_security: "tls" | "starttls";
+  username?: string;
+  password: string;
+  folder?: string;
+}
+
+export function useImapMutations() {
+  const qc = useQueryClient();
+  const inv = () => {
+    qc.invalidateQueries({ queryKey: ["domains"] });
+    qc.invalidateQueries({ queryKey: keys.me });
+  };
+  return {
+    create: useMutation({
+      mutationFn: (b: ImapDraft) => api.post<{ ok: boolean; account: T.Account }>("/api/accounts/imap", b),
+      onSuccess: inv,
+    }),
+    test: useMutation({
+      mutationFn: (id: string) => api.post<{ ok: boolean; error?: string }>(`/api/accounts/${id}/imap/test`),
+    }),
+  };
+}
+
 export function useDomains(enabled = true) {
   return useQuery({ queryKey: ["domains"], queryFn: () => api.get<T.Domain[]>("/api/domains"), enabled, staleTime: 15_000 });
 }

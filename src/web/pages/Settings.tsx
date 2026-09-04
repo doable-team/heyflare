@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { AlertTriangle, CalendarDays, Check, ChevronDown, Copy, FileText, Globe, Inbox, KeyRound, Mail, Monitor, Moon, Plus, RefreshCw, Rss, ShieldCheck, SlidersHorizontal, Sun, Trash2, Unplug, User, Sparkles } from "lucide-react";
+import { AlertTriangle, CalendarDays, Check, ChevronDown, Copy, FileText, Globe, Inbox, KeyRound, Mail, Monitor, Moon, Plus, RefreshCw, Rss, ShieldCheck, SlidersHorizontal, Sun, Trash2, Unplug, User, Sparkles, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import type { Account, Domain, UserSettings } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useAccount } from "../context/AccountContext";
-import { DomainMxError, domainErrorMessage, useAccountMutations, useDomainMutations, useDomains, useMeMutations, useTwoFactor, useTwoFactorMutations } from "../api";
+import { DomainMxError, domainErrorMessage, useAccountMutations, useDomainMutations, useDomains, useMeMutations, useTwoFactor, useTwoFactorMutations, useImapMutations } from "../api";
 import QRCode from "qrcode";
 import { Avatar, AccountGlyph } from "../components/Avatar";
 import { PageHeader } from "../components/EmptyState";
@@ -157,6 +157,7 @@ function FormShell({ open, onClose, title, description, footer, variant = "dialo
 
 export function statusOf(a: Account): { label: string; spin?: boolean } {
   if (a.provider === "domain") return { label: "Mailbox · receives via Cloudflare" };
+  if (a.provider === "imap" && a.sync_status === "idle") return { label: "Mailbox · IMAP" };
   if (a.sync_status === "disconnected") return { label: "Disconnected" };
   if (a.sync_status === "error") return { label: "Sync error" };
   if (!a.initial_sync_done) return { label: "Connecting", spin: true };
@@ -670,12 +671,151 @@ export function PreferencesSection({ compact }: { compact?: boolean }) {
   );
 }
 
+/**
+ * Common providers, so nobody has to look up host names. "Other" leaves the fields blank for a
+ * cPanel-style webmail host, which is usually mail.<your-domain>.
+ */
+const IMAP_PRESETS: { id: string; label: string; imap_host: string; smtp_host: string; note?: string }[] = [
+  { id: "zoho", label: "Zoho Mail", imap_host: "imap.zoho.com", smtp_host: "smtp.zoho.com", note: "Enable IMAP in Zoho settings, and use an app password if two-factor is on." },
+  { id: "fastmail", label: "Fastmail", imap_host: "imap.fastmail.com", smtp_host: "smtp.fastmail.com", note: "Create an app password in Fastmail under Settings → Privacy & Security." },
+  { id: "migadu", label: "Migadu", imap_host: "imap.migadu.com", smtp_host: "smtp.migadu.com" },
+  { id: "other", label: "Other / webmail", imap_host: "", smtp_host: "", note: "For cPanel-style hosting this is usually mail.yourdomain.com on 993 and 465." },
+];
+
+export function AddImapDialog({ open, onOpenChange, variant = "dialog" }: { open: boolean; onOpenChange: (o: boolean) => void; variant?: "dialog" | "drawer" }) {
+  const { create } = useImapMutations();
+  const [preset, setPreset] = useState("zoho");
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [imapHost, setImapHost] = useState("imap.zoho.com");
+  const [smtpHost, setSmtpHost] = useState("smtp.zoho.com");
+  const [imapPort, setImapPort] = useState(993);
+  const [smtpPort, setSmtpPort] = useState(465);
+  const [smtpSecurity, setSmtpSecurity] = useState<"tls" | "starttls">("tls");
+  const [advanced, setAdvanced] = useState(false);
+
+  const pickPreset = (id: string) => {
+    setPreset(id);
+    const pr = IMAP_PRESETS.find((x) => x.id === id)!;
+    setImapHost(pr.imap_host);
+    setSmtpHost(pr.smtp_host);
+    setImapPort(993);
+    setSmtpPort(465);
+    setSmtpSecurity("tls");
+  };
+
+  const close = () => {
+    onOpenChange(false);
+    setEmail(""); setName(""); setPassword(""); setAdvanced(false);
+  };
+
+  const submit = () =>
+    create.mutate(
+      {
+        email: email.trim().toLowerCase(),
+        display_name: name.trim(),
+        imap_host: imapHost.trim(),
+        imap_port: imapPort,
+        imap_security: "tls",
+        smtp_host: smtpHost.trim(),
+        smtp_port: smtpPort,
+        smtp_security: smtpSecurity,
+        password,
+      },
+      {
+        onSuccess: (r: { account: { email: string } }) => { toast(`${r.account.email} is connected`); close(); },
+        onError: (e: unknown) => toast.error("Couldn't connect", { description: (e as Error).message, duration: 12000 }),
+      }
+    );
+
+  const mobile = variant === "drawer";
+  const note = IMAP_PRESETS.find((x) => x.id === preset)?.note;
+  const ready = email.trim() && password && imapHost.trim() && smtpHost.trim();
+
+  return (
+    <FormShell
+      open={open}
+      onClose={close}
+      variant={variant}
+      title="Add a mailbox"
+      description="Connect any mailbox that speaks IMAP and SMTP — Zoho, Fastmail, Migadu or your own webmail."
+      footer={
+        <>
+          <Button type="button" variant="ghost" size={mobile ? "lg" : "default"} onClick={close}>Cancel</Button>
+          <Button type="button" size={mobile ? "lg" : "default"} disabled={!ready || create.isPending} onClick={submit}>
+            {create.isPending ? <Loader2 className="animate-spin" /> : null} Connect
+          </Button>
+        </>
+      }
+    >
+      <form onSubmit={(e) => { e.preventDefault(); if (ready) submit(); }}>
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor="imap-preset">Provider</FieldLabel>
+            <select id="imap-preset" value={preset} onChange={(e) => pickPreset(e.target.value)} className={cn("rounded-md bg-input px-2.5 outline-none focus:bg-background focus:ring-1 focus:ring-ring", mobile ? "h-11 text-[16px]" : "h-8 text-sm")}>
+              {IMAP_PRESETS.map((pr) => <option key={pr.id} value={pr.id}>{pr.label}</option>)}
+            </select>
+            {note ? <FieldDescription>{note}</FieldDescription> : null}
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="imap-email">Email address</FieldLabel>
+            <Input id="imap-email" type="email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" className={cn(mobile && "h-11 text-[16px]")} required />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="imap-name">Display name</FieldLabel>
+            <Input id="imap-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Sanjay" className={cn(mobile && "h-11 text-[16px]")} />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="imap-pass">Password</FieldLabel>
+            <Input id="imap-pass" type="password" autoComplete="off" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="App password" className={cn(mobile && "h-11 text-[16px]")} required />
+            <FieldDescription>Stored encrypted on your server and never shown again. Use an app-specific password where your provider offers one.</FieldDescription>
+          </Field>
+
+          <Field orientation="horizontal">
+            <Switch id="imap-adv" checked={advanced} onCheckedChange={setAdvanced} />
+            <div>
+              <FieldLabel htmlFor="imap-adv">Server settings</FieldLabel>
+              <FieldDescription>Only needed for a host that is not in the list above.</FieldDescription>
+            </div>
+          </Field>
+
+          {advanced ? (
+            <>
+              <Field>
+                <FieldLabel htmlFor="imap-host">IMAP server</FieldLabel>
+                <div className="flex gap-2">
+                  <Input id="imap-host" value={imapHost} onChange={(e) => setImapHost(e.target.value)} placeholder="imap.example.com" className={cn("flex-1", mobile && "h-11 text-[16px]")} />
+                  <Input aria-label="IMAP port" type="number" value={imapPort} onChange={(e) => setImapPort(Number(e.target.value))} className={cn("w-24", mobile && "h-11 text-[16px]")} />
+                </div>
+                <FieldDescription>993 with implicit TLS.</FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="smtp-host">SMTP server</FieldLabel>
+                <div className="flex gap-2">
+                  <Input id="smtp-host" value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} placeholder="smtp.example.com" className={cn("flex-1", mobile && "h-11 text-[16px]")} />
+                  <Input aria-label="SMTP port" type="number" value={smtpPort} onChange={(e) => { const v = Number(e.target.value); setSmtpPort(v); setSmtpSecurity(v === 587 ? "starttls" : "tls"); }} className={cn("w-24", mobile && "h-11 text-[16px]")} />
+                </div>
+                <FieldDescription>
+                  465 for implicit TLS, or 587 for STARTTLS. Port 25 is blocked by Cloudflare and cannot be used.
+                </FieldDescription>
+              </Field>
+            </>
+          ) : null}
+        </FieldGroup>
+      </form>
+    </FormShell>
+  );
+}
+
 export function AccountsSection({ onNewMailbox }: { onNewMailbox?: () => void }) {
   const { accounts } = useAccount();
+  const [addImap, setAddImap] = useState(false);
   const remote = accounts.filter((a) => a.provider !== "domain");
   const boxes = accounts.filter((a) => a.provider === "domain");
   return (
     <>
+      <AddImapDialog open={addImap} onOpenChange={setAddImap} />
       <Section
         title="Connected accounts"
         description="What's connected, and how it signs off."
@@ -683,6 +823,7 @@ export function AccountsSection({ onNewMailbox }: { onNewMailbox?: () => void })
           <div className="flex items-center gap-1">
             <Button size="sm" variant="ghost" className="text-muted-foreground" asChild><a href="/auth/google/start"><Plus /> Connect Gmail</a></Button>
             <Button size="sm" variant="ghost" className="text-muted-foreground" asChild><a href="/auth/microsoft/start"><Plus /> Connect Outlook</a></Button>
+            <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => setAddImap(true)}><Plus /> Add mailbox</Button>
           </div>
         }
       >

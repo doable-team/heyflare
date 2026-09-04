@@ -28,6 +28,7 @@ export default defineWorkersConfig({
           compatibilityDate: "2025-09-01",
           compatibilityFlags: ["nodejs_compat"],
           d1Databases: { DB: "test-db" },
+          bindings: { APP_NAME: "heyflare", SESSION_SECRET: "test-session-secret" },
         },
       },
     },

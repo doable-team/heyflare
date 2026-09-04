@@ -8,6 +8,9 @@ import { deleteAccountData } from "./domains";
 import { appOrigin, HANDOFF_PREFIX, CAL_PREFIX } from "./auth";
 import { googleConfigured, hasMailScope } from "../google";
 import { hasMsMailScope } from "../microsoft";
+import { configFor, verifyBoth, encryptPassword, passwordHint, loadImapRow } from "../imapbox";
+import type { ImapSecurity } from "../imap";
+import type { SmtpSecurity } from "../smtp";
 import { uid, now } from "../db";
 
 const accounts = new Hono<AppEnv>();
@@ -55,7 +58,7 @@ accounts.post("/:id/sync", async (c) => {
   if (!acc) return c.json({ error: "not_found" }, 404);
   if (acc.provider === "domain") return c.json({ ok: true, added: 0, status: "ok", account: toAccount(acc) });
   // Connected for calendar only: there is no mail to fetch, and that is not a failure.
-  const scoped = acc.provider === "outlook" ? hasMsMailScope(acc.scopes) : hasMailScope(acc.scopes);
+  const scoped = acc.provider === "imap" ? true : acc.provider === "outlook" ? hasMsMailScope(acc.scopes) : hasMailScope(acc.scopes);
   if (!scoped) return c.json({ ok: true, added: 0, status: "ok", account: toAccount(acc) });
   const r = await syncAccount(c.env, acc);
   const fresh = await ownAccount(c, acc.id);
@@ -74,7 +77,11 @@ accounts.post("/:id/reset", async (c) => {
     .bind(acc.id)
     .run();
   let syncError: string | null = null;
-  const canResync = acc.provider === "gmail" ? hasMailScope(acc.scopes) : acc.provider === "outlook" && hasMsMailScope(acc.scopes);
+  if (acc.provider === "imap") {
+    await c.env.DB.prepare(`UPDATE imap_accounts SET uid_validity = 0, last_uid = 0 WHERE account_id = ?`).bind(acc.id).run();
+  }
+  const canResync =
+    acc.provider === "gmail" ? hasMailScope(acc.scopes) : acc.provider === "outlook" ? hasMsMailScope(acc.scopes) : acc.provider === "imap";
   if (canResync) {
     const fresh = await ownAccount(c, acc.id);
     const r = await syncAccount(c.env, fresh!);
@@ -121,6 +128,132 @@ accounts.post("/connect-link", async (c) => {
   const hint = (body.login_hint ?? "").trim();
   const url = `${appOrigin(c)}/auth/google/handoff?state=${encodeURIComponent(state)}${hint ? `&login_hint=${encodeURIComponent(hint)}` : ""}`;
   return c.json({ url });
+});
+
+// ---------- Third-party IMAP/SMTP mailboxes ----------
+
+const EMAIL_RE = /^[^@\s]+@[^@\s.]+\.[^@\s]+$/;
+
+interface ImapBody {
+  email?: string;
+  display_name?: string;
+  imap_host?: string;
+  imap_port?: number;
+  imap_security?: string;
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_security?: string;
+  username?: string;
+  password?: string | null;
+  folder?: string;
+}
+
+function sec(v: unknown, fallback: "tls" | "starttls"): ImapSecurity & SmtpSecurity {
+  return v === "starttls" || v === "tls" ? v : fallback;
+}
+
+/** Shape a request body into a config, without touching the database. */
+function readBody(b: ImapBody) {
+  const email = String(b.email ?? "").trim().toLowerCase();
+  const username = String(b.username ?? "").trim() || email;
+  return {
+    email,
+    username,
+    display_name: String(b.display_name ?? "").trim().slice(0, 100),
+    imap_host: String(b.imap_host ?? "").trim(),
+    imap_port: Number(b.imap_port ?? 993),
+    imap_security: sec(b.imap_security, "tls"),
+    smtp_host: String(b.smtp_host ?? "").trim(),
+    smtp_port: Number(b.smtp_port ?? 465),
+    smtp_security: sec(b.smtp_security, "tls"),
+    folder: String(b.folder ?? "INBOX").trim() || "INBOX",
+  };
+}
+
+/**
+ * Add a mailbox on someone else's IMAP/SMTP server. The credentials are verified against both
+ * servers *before* anything is written, so a typo never leaves a broken account behind.
+ */
+accounts.post("/imap", async (c) => {
+  const user = c.get("user");
+  const b = await c.req.json<ImapBody>().catch(() => ({}) as ImapBody);
+  const cfg = readBody(b);
+  const password = String(b.password ?? "");
+  if (!EMAIL_RE.test(cfg.email)) return c.json({ error: "invalid_email" }, 400);
+  if (!cfg.imap_host || !cfg.smtp_host) return c.json({ error: "missing_host" }, 400);
+  if (!password) return c.json({ error: "missing_password" }, 400);
+  if (cfg.smtp_port === 25) return c.json({ error: "smtp_port_25_blocked", message: "Cloudflare blocks port 25. Use 465 or 587." }, 400);
+
+  const dup = await c.env.DB.prepare(`SELECT id FROM accounts WHERE user_id = ? AND email = ?`).bind(user.id, cfg.email).first();
+  if (dup) return c.json({ error: "account_exists" }, 409);
+
+  const creds = {
+    imap: { host: cfg.imap_host, port: cfg.imap_port, security: cfg.imap_security, username: cfg.username, password },
+    smtp: { host: cfg.smtp_host, port: cfg.smtp_port, security: cfg.smtp_security, username: cfg.username, password },
+  };
+  try {
+    await verifyBoth(creds);
+  } catch (e) {
+    return c.json({ error: "connection_failed", message: (e as Error).message?.slice(0, 300) }, 400);
+  }
+
+  let enc: string;
+  try {
+    enc = await encryptPassword(c.env, password);
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 500);
+  }
+
+  const id = uid();
+  const t = now();
+  await c.env.DB.prepare(
+    `INSERT INTO accounts (id, user_id, provider, email, display_name, access_token, refresh_token, token_expires_at, scopes,
+       history_id, delta_link, initial_sync_done, initial_sync_page_token, initial_sync_count, sync_status, sync_error,
+       last_synced_at, signature, cover_art, avatar_url, created_at)
+     VALUES (?, ?, 'imap', ?, ?, NULL, NULL, NULL, '', NULL, NULL, 0, NULL, 0, 'idle', NULL, NULL, '', '', '', ?)`
+  )
+    .bind(id, user.id, cfg.email, cfg.display_name, t)
+    .run();
+  await c.env.DB.prepare(
+    `INSERT INTO imap_accounts (account_id, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security,
+       username, password_enc, password_hint, folder, uid_validity, last_uid, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)`
+  )
+    .bind(id, cfg.imap_host, cfg.imap_port, cfg.imap_security, cfg.smtp_host, cfg.smtp_port, cfg.smtp_security,
+          cfg.username, enc, passwordHint(password), cfg.folder, t)
+    .run();
+
+  // The first sync only records where the folder stands; nothing historical is imported.
+  const fresh = await ownAccount(c, id);
+  if (fresh) {
+    const { syncAccount } = await import("../sync");
+    c.executionCtx.waitUntil(syncAccount(c.env, fresh));
+  }
+  return c.json({ ok: true, account: toAccount(fresh!) });
+});
+
+/** The stored settings for a mailbox, with the password reduced to a hint. */
+accounts.get("/:id/imap", async (c) => {
+  const acc = await ownAccount(c, c.req.param("id"));
+  if (!acc || acc.provider !== "imap") return c.json({ error: "not_found" }, 404);
+  const row = await loadImapRow(c.env, acc.id);
+  if (!row) return c.json({ error: "not_found" }, 404);
+  const { password_enc, ...safe } = row;
+  return c.json(safe);
+});
+
+/** Re-check the stored credentials against both servers. */
+accounts.post("/:id/imap/test", async (c) => {
+  const acc = await ownAccount(c, c.req.param("id"));
+  if (!acc || acc.provider !== "imap") return c.json({ error: "not_found" }, 404);
+  const cfg = await configFor(c.env, acc.id);
+  if (!cfg) return c.json({ error: "not_configured" }, 400);
+  try {
+    await verifyBoth(cfg);
+    return c.json({ ok: true });
+  } catch (e) {
+    return c.json({ ok: false, error: (e as Error).message?.slice(0, 300) }, 400);
+  }
 });
 
 export default accounts;

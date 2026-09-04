@@ -25,7 +25,7 @@ export interface Account {
   id: string;
   email: string;
   display_name: string;
-  provider: "gmail" | "domain" | "outlook";
+  provider: "gmail" | "domain" | "outlook" | "imap";
   domain_id: string | null;
   initial_sync_done: boolean;
   initial_sync_count: number;

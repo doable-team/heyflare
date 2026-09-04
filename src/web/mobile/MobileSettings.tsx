@@ -15,7 +15,7 @@ import { useAccount } from "../context/AccountContext";
 import { Avatar, AccountGlyph } from "../components/Avatar";
 import { fmtRelative } from "../lib/format";
 import { startGoogleConnect, startMicrosoftConnect } from "../lib/connect";
-import { AddDomainDialog, CopyButton, Danger, DomainBadges, NewMailboxDialog, PreferencesSection, ProfileSection, SecuritySection, statusOf } from "../pages/Settings";
+import { AddDomainDialog, AddImapDialog, CopyButton, Danger, DomainBadges, NewMailboxDialog, PreferencesSection, ProfileSection, SecuritySection, statusOf } from "../pages/Settings";
 import { Screen } from "./Screen";
 import { ActionSheet } from "./ActionSheet";
 
@@ -173,14 +173,17 @@ function AccountRow({ a }: { a: Account }) {
 
 export function MobileSettingsAccounts() {
   const { accounts } = useAccount();
+  const [addImap, setAddImap] = useState(false);
   const remote = accounts.filter((a) => a.provider !== "domain");
   const boxes = accounts.filter((a) => a.provider === "domain");
   return (
     <Sub title="Accounts">
+      <AddImapDialog open={addImap} onOpenChange={setAddImap} variant="drawer" />
       <Group title="Connected accounts" footer={remote.length === 0 ? "Nothing connected yet." : undefined}>
         {remote.map((a) => <AccountRow key={a.id} a={a} />)}
         <Row icon={<Plus />} label="Connect Gmail" onClick={() => startGoogleConnect()} chevron={false} />
         <Row icon={<Plus />} label="Connect Outlook" onClick={() => startMicrosoftConnect()} chevron={false} />
+        <Row icon={<Plus />} label="Add mailbox (IMAP)" onClick={() => setAddImap(true)} chevron={false} />
       </Group>
       <Group title="Domain mailboxes" footer={boxes.length === 0 ? "No mailboxes yet. Add a domain first." : undefined}>
         {boxes.map((a) => <AccountRow key={a.id} a={a} />)}

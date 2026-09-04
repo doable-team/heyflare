@@ -20,6 +20,10 @@ Account-scoped routes take the account via `X-Account-Id` header (web stores the
 - `PATCH /api/accounts/:id` {signature?, cover_art?, display_name?} -> Account
 - `DELETE /api/accounts/:id` (disconnect + delete data)
 - `POST /api/accounts/:id/sync` -> triggers a sync now -> {ok, added}
+- `POST /api/accounts/imap` {email, display_name?, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, username?, password, folder?} -> {ok, account}.
+  Verifies both servers before writing; 400 `connection_failed` with the protocol error, 409 `account_exists`, 400 `smtp_port_25_blocked`.
+- `GET  /api/accounts/:id/imap` -> stored settings, password reduced to `password_hint`.
+- `POST /api/accounts/:id/imap/test` -> {ok} or 400 {ok:false, error}.
 
 ## Mail (account-scoped)
 - `GET /api/counts` -> Counts
@@ -133,7 +137,7 @@ Without `CF_API_TOKEN`, domain setup is "manual": the API returns the exact step
   `catch_all` makes this mailbox receive mail for any unknown address on the domain.
 - `PATCH /api/domains/:id` { catch_all_account_id?: string|null }
 - Mailboxes are deleted via `DELETE /api/accounts/:id` (existing).
-- `Account` gains `provider: 'gmail'|'domain'|'outlook'` and `domain_id: string|null`.
+- `Account` gains `provider: 'gmail'|'domain'|'outlook'|'imap'` and `domain_id: string|null`.
 - Inbound (`email()` handler): parse with postal-mime; look up RCPT TO in accounts (provider domain); else domain catch-all;
   else `setReject("550 5.1.1 No such mailbox")`. Ingest as a message (same screener/bucket logic; attachments stored in a new
   `attachment_blobs` table when total ≤ 900KB per attachment, else metadata only with `stored=0`), dedupe on Message-ID.

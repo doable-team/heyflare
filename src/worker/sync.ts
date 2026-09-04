@@ -698,11 +698,15 @@ const HEARTBEAT_MS = 10 * 60_000;
 export async function syncAccount(env: Env, account: AccountRow): Promise<{ added: number; status: string }> {
   const db = env.DB;
   if (account.sync_status === "disconnected") return { added: 0, status: "disconnected" };
-  if (!account.refresh_token) return { added: 0, status: "disconnected" };
+  // IMAP mailboxes hold a stored password in `imap_accounts`, not an OAuth refresh token, so the
+  // token check below would wrongly disconnect every one of them.
+  if (account.provider !== "imap" && !account.refresh_token) return { added: 0, status: "disconnected" };
   // An account connected for calendar only has no mail scope: every Gmail call would 403. Leave it
   // alone rather than writing a sync error every minute. (An empty `scopes` predates the column and
   // does have mail — see hasMailScope.)
-  if (account.provider === "outlook") {
+  if (account.provider === "imap") {
+    /* nothing to scope-check: an IMAP mailbox either has working credentials or it does not */
+  } else if (account.provider === "outlook") {
     if (!hasMsMailScope(account.scopes)) return { added: 0, status: "no_mail_scope" };
   } else if (!hasMailScope(account.scopes)) {
     return { added: 0, status: "no_mail_scope" };
@@ -715,7 +719,10 @@ export async function syncAccount(env: Env, account: AccountRow): Promise<{ adde
   if (slow) await db.prepare(`UPDATE accounts SET sync_status = 'syncing' WHERE id = ?`).bind(account.id).run();
   let added = 0;
   try {
-    if (account.provider === "outlook") {
+    if (account.provider === "imap") {
+      const { syncImapAccount } = await import("./imapbox");
+      added += (await syncImapAccount(env, account)).added;
+    } else if (account.provider === "outlook") {
       const { syncOutlookAccount } = await import("./outlook");
       added += (await syncOutlookAccount(env, account)).added;
     } else if (!account.initial_sync_done) {

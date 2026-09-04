@@ -2,7 +2,7 @@ import type { Env } from "./env";
 import type { AccountRow, MessageRow, ThreadRow } from "./db";
 import { now, safeJson } from "./db";
 import { gmailJson, gmailPost } from "./google";
-import { buildRawMime, buildMimeBase64, type GmailMessage, type OutgoingAttachment } from "./mime";
+import { buildRawMime, buildMimeBase64, buildRfc822, type GmailMessage, type OutgoingAttachment } from "./mime";
 import { graphFetch, MicrosoftError } from "./microsoft";
 import { htmlToText } from "./sanitize";
 import { ingestMessages, ingestParsed } from "./sync";
@@ -50,6 +50,7 @@ export async function sendMail(env: Env, account: AccountRow, p: SendParams): Pr
   const ctx: DomainSendCtx = { thread, replyTo, subject, inReplyTo, references, from };
   if (account.provider === "domain") return sendFromDomainMailbox(env, account, p, ctx);
   if (account.provider === "outlook") return sendFromOutlook(env, account, p, ctx);
+  if (account.provider === "imap") return sendFromImapMailbox(env, account, p, ctx);
   const raw = buildRawMime({
     from,
     to: p.to,
@@ -289,6 +290,41 @@ async function sendFromOutlook(env: Env, account: AccountRow, p: SendParams, ctx
     const body = await res.text();
     throw new MicrosoftError(res.status, body, `outlook_send_failed: ${body.slice(0, 300)}`);
   }
+  return recordSentMessage(env, account, p, ctx, messageId, text);
+}
+
+// ---------- Third-party mailboxes: the provider's own SMTP server ----------
+
+/**
+ * Sending through the mailbox's own SMTP server means the provider signs DKIM for us, so
+ * deliverability is theirs rather than something this app has to solve.
+ *
+ * Unlike the API transports, SMTP takes recipients from the *envelope*: Bcc must be a RCPT TO and
+ * must not appear in the headers, or every recipient sees it.
+ */
+async function sendFromImapMailbox(env: Env, account: AccountRow, p: SendParams, ctx: DomainSendCtx): Promise<{ thread_id: string; message_id: string }> {
+  const { sendViaImapAccount } = await import("./imapbox");
+  const domain = account.email.split("@")[1] || "localhost";
+  const messageId = `<${uid()}@${domain}>`;
+  const text = htmlToText(p.body_html);
+  const raw = buildRfc822(
+    {
+      from: ctx.from,
+      to: p.to,
+      cc: p.cc ?? [],
+      bcc: p.bcc ?? [],
+      subject: ctx.subject,
+      html: p.body_html,
+      text,
+      inReplyTo: ctx.inReplyTo,
+      references: ctx.references,
+      attachments: p.attachments ?? [],
+      messageId,
+    },
+    { includeBcc: false }
+  );
+  const recipients = [...p.to, ...(p.cc ?? []), ...(p.bcc ?? [])].map((a) => a.email).filter(Boolean);
+  await sendViaImapAccount(env, account, { from: account.email, recipients, raw });
   return recordSentMessage(env, account, p, ctx, messageId, text);
 }
 

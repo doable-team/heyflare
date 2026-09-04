@@ -129,6 +129,22 @@ async function runCron(env: Env) {
       console.error("outlook sync failed", acc.email, e);
     }
   }
+
+  // IMAP mailboxes get their own pass too: they authenticate with a stored password, so the
+  // `refresh_token IS NOT NULL` predicate the OAuth providers rely on would exclude every one.
+  const imap = await db
+    .prepare(
+      `SELECT * FROM accounts WHERE provider = 'imap' AND sync_status <> 'disconnected' ORDER BY COALESCE(last_synced_at, 0) ASC LIMIT 8`
+    )
+    .all<AccountRow>();
+  for (const acc of imap.results) {
+    if (acc.sync_status === "syncing" && acc.last_synced_at && Date.now() - acc.last_synced_at < 10 * 60_000) continue;
+    try {
+      await syncAccount(env, acc);
+    } catch (e) {
+      console.error("imap sync failed", acc.email, e);
+    }
+  }
 }
 
 export default {
