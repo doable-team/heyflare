@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { CalendarPlus, CalendarX2, Link2, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
-import type { Calendar, CalendarSettings, CalendarSource, CalendarView, GoogleCalendarAccount } from "@shared/types";
+import type { Calendar, CalendarSettings, CalendarView, GoogleCalendarAccount } from "@shared/types";
 import {
   useCalendarConnectLink,
   useCalendarDisconnect,
@@ -16,6 +16,7 @@ import { fmtRelative } from "../lib/format";
 import { isNative, openExternalUrl } from "../lib/native";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -35,9 +36,6 @@ const RAMP = [
   "#2f6f4e", "#2f5f8a", "#5b4b8a", "#8a4b7a",
   "#a33a3a", "#b06a2c", "#8a6a2f", "#3f7d7d",
 ];
-
-const SOURCE_ORDER: CalendarSource[] = ["local", "google", "ics"];
-const SOURCE_LABEL: Record<CalendarSource, string> = { local: "In heyflare", google: "Google Calendar", ics: "Subscribed links" };
 
 const VIEW_LABEL: Record<CalendarView, string> = { days: "Day", week: "Week", year: "Year" };
 const VIEWS: CalendarView[] = ["days", "week", "year"];
@@ -90,7 +88,11 @@ function ColourPicker({ value, onChange }: { value: string; onChange: (hex: stri
 
 /* ---------- one calendar ---------- */
 
-function CalendarLine({ c }: { c: Calendar }) {
+/**
+ * A row in the list under whichever account (or heading) owns it. The tick is visibility, not
+ * existence: unticking keeps the calendar and its events and only takes it out of the views.
+ */
+function CalendarRow({ c }: { c: Calendar }) {
   const { update, remove, sync } = useCalendarSourceMutations();
   const [name, setName] = useState(c.name);
   const [del, setDel] = useState(false);
@@ -103,30 +105,42 @@ function CalendarLine({ c }: { c: Calendar }) {
     update.mutate({ id: c.id, name: v }, { onError: (e) => { setName(c.name); fail(e); } });
   };
 
+  // The account's email now sits on the group header, so a Google row only has to say when it last
+  // came down. A feed says where it comes from; a local calendar, how much is on it.
+  const where =
+    c.source === "ics"
+      ? c.url ?? "Subscribed link"
+      : c.source === "local"
+        ? `Made here${typeof c.event_count === "number" ? ` · ${c.event_count} event${c.event_count === 1 ? "" : "s"}` : ""}`
+        : "";
+  const synced = c.source === "local" ? "" : c.last_synced_at ? `synced ${fmtRelative(c.last_synced_at)}` : "not synced yet";
+  const note = [where, synced].filter(Boolean).join(" · ");
+
   return (
-    <div className="flex flex-col gap-2 border-b border-border px-2 py-2.5 last:border-b-0 sm:flex-row sm:items-center sm:gap-3">
-      <div className="flex min-w-0 flex-1 items-center gap-2.5">
-        <ColourPicker value={c.color} onChange={(hex) => update.mutate({ id: c.id, color: hex }, { onError: fail })} />
-        <div className="min-w-0 flex-1">
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={rename}
-            onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { setName(c.name); e.currentTarget.blur(); } }}
-            aria-label={`Name of ${c.name}`}
-            className="h-7 border-transparent bg-transparent px-1.5 hover:bg-input focus-visible:bg-background"
-          />
-          <div className="mt-0.5 truncate px-1.5 text-xs text-muted-foreground tnum" title={c.source === "ics" ? c.url ?? undefined : undefined}>
-            {c.source === "google" && <span>{c.account_email ?? "Google account"}</span>}
-            {c.source === "ics" && <span>{c.url ?? "Subscribed link"}</span>}
-            {c.source === "local" && <span>Made here{typeof c.event_count === "number" ? ` · ${c.event_count} event${c.event_count === 1 ? "" : "s"}` : ""}</span>}
-            {c.source !== "local" && c.last_synced_at ? <span> · synced {fmtRelative(c.last_synced_at)}</span> : null}
-            {c.source !== "local" && !c.last_synced_at ? <span> · not synced yet</span> : null}
-          </div>
-          {c.sync_error && <div className="mt-0.5 px-1.5 text-xs">Last sync failed: {c.sync_error}</div>}
-        </div>
+    <li className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border py-2 last:border-b-0">
+      <Checkbox
+        checked={c.visible}
+        aria-label={`Show ${c.name} in the calendar`}
+        title="Shown in the calendar"
+        onCheckedChange={(v) => update.mutate({ id: c.id, visible: v === true }, { onError: fail })}
+      />
+      <ColourPicker value={c.color} onChange={(hex) => update.mutate({ id: c.id, color: hex }, { onError: fail })} />
+      <div className="flex min-w-0 flex-1 basis-44 flex-wrap items-center gap-x-2">
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={rename}
+          onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { setName(c.name); e.currentTarget.blur(); } }}
+          aria-label={`Name of ${c.name}`}
+          className="h-7 min-w-0 max-w-full flex-1 basis-32 border-transparent bg-transparent px-1.5 hover:bg-input focus-visible:bg-background"
+        />
+        {note && (
+          <span className="min-w-0 max-w-full truncate text-xs text-muted-foreground tnum" title={c.source === "ics" ? c.url ?? undefined : undefined}>
+            {note}
+          </span>
+        )}
       </div>
-      <div className="flex shrink-0 items-center gap-1 pl-6 sm:pl-0">
+      <div className="ml-auto flex shrink-0 items-center gap-1">
         {c.writable && (
           <label className="mr-1 flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground" title="New events go here">
             <input
@@ -139,7 +153,6 @@ function CalendarLine({ c }: { c: Calendar }) {
             Default
           </label>
         )}
-        <Switch checked={c.visible} aria-label={`Show ${c.name}`} onCheckedChange={(v) => update.mutate({ id: c.id, visible: v }, { onError: fail })} />
         {c.source !== "local" && (
           <Button
             size="sm"
@@ -155,6 +168,7 @@ function CalendarLine({ c }: { c: Calendar }) {
           <Trash2 />
         </Button>
       </div>
+      {c.sync_error && <div className="w-full pl-6 text-xs">Last sync failed: {c.sync_error}</div>}
       <Danger
         open={del}
         onOpenChange={setDel}
@@ -169,39 +183,41 @@ function CalendarLine({ c }: { c: Calendar }) {
         action="Remove calendar"
         onConfirm={() => remove.mutate(c.id, { onSuccess: () => toast(`${c.name} removed`), onError: (e) => toast.error((e as Error).message) })}
       />
+    </li>
+  );
+}
+
+/* ---------- one group of calendars ---------- */
+
+/** A heading with its calendars listed under it, indented so the ownership reads at a glance. */
+function CalendarGroup({ header, empty, list }: { header: React.ReactNode; empty: string; list: Calendar[] }) {
+  return (
+    <div className="mb-5 last:mb-0">
+      {header}
+      {list.length === 0 ? (
+        <div className="py-1.5 pl-8 pr-2 text-xs text-muted-foreground">{empty}</div>
+      ) : (
+        <ul className="pl-8 pr-2">{list.map((c) => <CalendarRow key={c.id} c={c} />)}</ul>
+      )}
     </div>
   );
 }
 
-/* ---------- connected calendars ---------- */
-
-function ConnectedCalendars({ calendars, loading, error }: { calendars: Calendar[]; loading: boolean; error: string | null }) {
-  const groups = SOURCE_ORDER.map((s) => ({ source: s, list: calendars.filter((c) => c.source === s) })).filter((g) => g.list.length > 0);
+/** A plain heading for the calendars no Google account owns. */
+function PlainHeader({ title, hint, actions }: { title: string; hint: string; actions?: React.ReactNode }) {
   return (
-    <Section title="Calendars" description="Everything the calendar draws from. Hide one to keep it out of the views without losing it.">
-      {loading && (
-        <div className="space-y-2 px-2">
-          <Skeleton className="h-8 w-full" />
-          <Skeleton className="h-8 w-2/3" />
-        </div>
-      )}
-      {error && <div className="px-2 text-[13px] text-muted-foreground">{error}</div>}
-      {!loading && !error && calendars.length === 0 && (
-        <div className="px-2 py-2 text-[13px] text-muted-foreground">No calendars yet. Connect Google Calendar or subscribe to a link below.</div>
-      )}
-      {groups.map((g) => (
-        <div key={g.source} className="mb-4 last:mb-0">
-          <div className="mb-1 px-2 text-[12px] font-medium text-muted-foreground">{SOURCE_LABEL[g.source]}</div>
-          <div>{g.list.map((c) => <CalendarLine key={c.id} c={c} />)}</div>
-        </div>
-      ))}
-    </Section>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-2 py-2">
+      <div className="min-w-0 flex-1 basis-48">
+        <div className="text-sm font-medium">{title}</div>
+        <div className="mt-0.5 text-xs text-muted-foreground">{hint}</div>
+      </div>
+      {actions && <div className="ml-auto flex shrink-0 items-center gap-1">{actions}</div>}
+    </div>
   );
 }
 
 /* ---------- Google accounts ---------- */
 
-/** What heyflare holds this account's token for, said plainly. */
 /**
  * Why an account has the calendar scope but no calendars. Google's most common answer by far is
  * that the Calendar API is switched off in the Cloud project, and it puts the exact enable link in
@@ -234,6 +250,7 @@ function CalendarErrorNote({ message }: { message: string }) {
   );
 }
 
+/** What heyflare holds this account's token for, said plainly. */
 function connectedFor(a: GoogleCalendarAccount): string {
   if (a.mail && a.calendar) return "Mail and calendar";
   if (a.calendar) return "Calendar only";
@@ -248,38 +265,42 @@ function calendarCount(n: number): string {
 /** The key `pending` holds while the calendar-only flow is opening; no account owns it. */
 const NEW_ACCOUNT = "__new__";
 
-function GoogleAccountLine({ a, pending, onConnect }: { a: GoogleCalendarAccount; pending: string | null; onConnect: (a: GoogleCalendarAccount) => void }) {
+/** One Google account: the address, what it's connected for, its actions — then its calendars. */
+function AccountGroup({ a, list, pending, onConnect }: { a: GoogleCalendarAccount; list: Calendar[]; pending: string | null; onConnect: (a: GoogleCalendarAccount) => void }) {
   const disconnect = useCalendarDisconnect();
   const [confirm, setConfirm] = useState(false);
   const busy = pending === a.id;
+  const count = list.length;
 
-  return (
-    <div className="flex flex-col gap-2 border-b border-border px-2 py-2.5 last:border-b-0 sm:flex-row sm:items-center sm:gap-3">
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm">{a.email}</div>
-        <div className="mt-0.5 text-xs text-muted-foreground">
-          {connectedFor(a)}
-          {a.calendar ? ` · ${calendarCount(a.calendar_count)} here` : " · no calendars here"}
+  const header = (
+    <div className="border-b border-border px-2 py-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <div className="min-w-0 flex-1 basis-48">
+          <div className="truncate text-sm font-medium">{a.email}</div>
+          <div className="mt-0.5 text-xs text-muted-foreground">
+            {connectedFor(a)}
+            {a.calendar ? ` · ${calendarCount(count)} here` : " · no calendars here"}
+          </div>
         </div>
-        {a.sync_error && <div className="mt-0.5 text-xs">Last sync failed: {a.sync_error}</div>}
-        {a.calendar_error && <CalendarErrorNote message={a.calendar_error} />}
-      </div>
-      <div className="flex shrink-0 items-center gap-1">
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => onConnect(a)}>
-          {a.calendar ? <RefreshCw /> : <CalendarPlus />}
-          {busy ? "Opening…" : a.calendar ? "Reconnect" : "Connect calendar"}
-        </Button>
-        {a.calendar && (
-          <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={disconnect.isPending} onClick={() => setConfirm(true)}>
-            <CalendarX2 /> Disconnect calendar
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => onConnect(a)}>
+            {a.calendar ? <RefreshCw /> : <CalendarPlus />}
+            {busy ? "Opening…" : a.calendar ? "Reconnect" : "Connect calendar"}
           </Button>
-        )}
+          {a.calendar && (
+            <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={disconnect.isPending} onClick={() => setConfirm(true)}>
+              <CalendarX2 /> Disconnect calendar
+            </Button>
+          )}
+        </div>
       </div>
+      {a.sync_error && <div className="mt-1 text-xs">Last sync failed: {a.sync_error}</div>}
+      {a.calendar_error && <CalendarErrorNote message={a.calendar_error} />}
       <Danger
         open={confirm}
         onOpenChange={setConfirm}
         title={`Disconnect ${a.email}'s calendar?`}
-        body={`This removes ${a.calendar_count ? calendarCount(a.calendar_count) : "this account's calendars"} and every event on them from heyflare. Nothing changes in Google, and its mail stays connected. You can connect the calendar again whenever you like.`}
+        body={`This removes ${count ? calendarCount(count) : "this account's calendars"} and every event on them from heyflare. Nothing changes in Google, and its mail stays connected. You can connect the calendar again whenever you like.`}
         action="Disconnect calendar"
         onConfirm={() =>
           disconnect.mutate(a.id, {
@@ -290,9 +311,17 @@ function GoogleAccountLine({ a, pending, onConnect }: { a: GoogleCalendarAccount
       />
     </div>
   );
+
+  // Without the scope there is nothing to list and the button above says so; with it, an empty
+  // account gets one quiet line rather than a gap. The reason, when Google gave one, is on the header.
+  if (!a.calendar && count === 0) return <div className="mb-5 last:mb-0">{header}</div>;
+  return <CalendarGroup header={header} empty="No calendars yet." list={list} />;
 }
 
-function GoogleAccounts({ accounts }: { accounts: GoogleCalendarAccount[] }) {
+/* ---------- calendars, grouped by who owns them ---------- */
+
+function Calendars({ calendars, accounts, loading, error }: { calendars: Calendar[]; accounts: GoogleCalendarAccount[]; loading: boolean; error: string | null }) {
+  const { create } = useCalendarSourceMutations();
   const link = useCalendarConnectLink();
   const [pending, setPending] = useState<string | null>(null);
 
@@ -314,27 +343,88 @@ function GoogleAccounts({ accounts }: { accounts: GoogleCalendarAccount[] }) {
     });
   };
 
+  const local = calendars.filter((c) => c.source === "local");
+  const ics = calendars.filter((c) => c.source === "ics");
+  // A Google calendar whose account is no longer in the list still has to appear somewhere.
+  const orphans = calendars.filter((c) => c.source === "google" && !accounts.some((a) => a.id === c.account_id));
+
   return (
-    <Section title="Google accounts" description="heyflare asks for calendar access separately from mail, so an account connected for mail alone never touches its calendar.">
-      {accounts.length === 0 ? (
-        <div className="px-2 py-2 text-[13px] text-muted-foreground">
-          No Google account is connected yet. Connect one for mail under{" "}
-          <Link to="/settings#accounts" className="underline underline-offset-2 hover:text-foreground">Accounts</Link>, or connect one just for calendar below.
+    <Section
+      title="Calendars"
+      description="Everything the calendar draws from, under whoever owns it. Untick one to keep it out of the views without deleting anything."
+    >
+      {loading && (
+        <div className="space-y-2 px-2">
+          <Skeleton className="h-8 w-full" />
+          <Skeleton className="h-8 w-2/3" />
         </div>
-      ) : (
-        <div>
+      )}
+      {error && <div className="px-2 text-[13px] text-muted-foreground">{error}</div>}
+
+      {!loading && !error && (
+        <>
+          {accounts.length === 0 && (
+            <div className="mb-5 px-2 py-2 text-[13px] text-muted-foreground">
+              No Google account is connected yet. Connect one for mail under{" "}
+              <Link to="/settings#accounts" className="underline underline-offset-2 hover:text-foreground">Accounts</Link>, or connect one just for calendar below.
+            </div>
+          )}
           {accounts.map((a) => (
-            <GoogleAccountLine
+            <AccountGroup
               key={a.id}
               a={a}
+              list={calendars.filter((c) => c.account_id === a.id)}
               pending={pending}
               // An account we hold no mail scope for stays that way: reconnecting it must not quietly
               // ask for mail the owner never granted.
               onConnect={(acc) => open(acc.id, { account_id: acc.id, calendar_only: !acc.mail })}
             />
           ))}
-        </div>
+
+          {orphans.length > 0 && (
+            <CalendarGroup
+              header={<PlainHeader title="Google Calendar" hint="Synced from an account that is no longer connected." />}
+              empty=""
+              list={orphans}
+            />
+          )}
+
+          <CalendarGroup
+            header={
+              <PlainHeader
+                title="In heyflare"
+                hint="Made here and fully editable. Nothing leaves this server."
+                actions={
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={create.isPending}
+                    onClick={() =>
+                      create.mutate(
+                        { name: "New calendar", color: "#111111" },
+                        { onSuccess: () => toast("Calendar added — rename it in the list."), onError: (e) => toast.error((e as Error).message) },
+                      )
+                    }
+                  >
+                    <Plus /> New calendar
+                  </Button>
+                }
+              />
+            }
+            empty="None yet."
+            list={local}
+          />
+
+          {ics.length > 0 && (
+            <CalendarGroup
+              header={<PlainHeader title="Subscribed links" hint="Read-only feeds that refresh about once an hour." />}
+              empty=""
+              list={ics}
+            />
+          )}
+        </>
       )}
+
       <div className="mt-4 px-2">
         <Button size="sm" variant="outline" disabled={pending === NEW_ACCOUNT} onClick={() => open(NEW_ACCOUNT, { calendar_only: true })}>
           <CalendarPlus /> {pending === NEW_ACCOUNT ? "Opening…" : "Connect a Google account for calendar only"}
@@ -608,8 +698,12 @@ export function CalendarSettingsSection({ compact }: { compact?: boolean }) {
   const calendars = q.data?.calendars ?? [];
   return (
     <>
-      <ConnectedCalendars calendars={calendars} loading={q.isLoading} error={q.error ? (q.error as Error).message : null} />
-      <GoogleAccounts accounts={q.data?.google_accounts ?? []} />
+      <Calendars
+        calendars={calendars}
+        accounts={q.data?.google_accounts ?? []}
+        loading={q.isLoading}
+        error={q.error ? (q.error as Error).message : null}
+      />
       <SubscribeBlock calendars={calendars} />
       <CalendarPreferences compact={compact} />
     </>
