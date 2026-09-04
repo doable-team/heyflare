@@ -64,7 +64,7 @@ const ROW_STRIDE_PX = ROW_PX + ROW_GAP_PX;
 const ALLDAY_MAX = 3;
 
 export function WeekView() {
-  const { settings, cursor, from, to, extend, range } = useCalendar();
+  const { settings, cursor, from, to, extend, range, revealAt, reportVisibleMonth } = useCalendar();
 
   // Every week the loaded window touches, oldest first. The window only ever grows, so this list
   // only ever gains rows — at the head or the tail — which is exactly what the anchor below assumes.
@@ -130,6 +130,17 @@ export function WeekView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cursorWeek]);
 
+  // "Today", and the toolbar's arrows, ask to be brought on screen even when the cursor did not
+  // change — you can scroll a long way without moving it.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    const row = rows.current.get(weekStartOf(revealAt.date, settings.week_start));
+    if (!el || !row || !landed.current) return;
+    const target = Math.max(0, row.offsetTop - (el.clientHeight - row.offsetHeight) / 2);
+    el.scrollTo({ top: target, behavior: Math.abs(target - el.scrollTop) > el.clientHeight * 1.5 ? "auto" : "smooth" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealAt.nonce]);
+
   // Within a row of either end, load another four weeks. The guards are keyed on the window itself,
   // so a burst of scroll events can't fire the same extension twice before React catches up.
   const asked = useRef({ start: "", end: "" });
@@ -144,7 +155,15 @@ export function WeekView() {
       asked.current.end = to;
       extend("end", 28);
     }
-  }, [from, to, extend]);
+    // Tell the toolbar which month is actually on screen. The row nearest the top of the viewport
+    // wins, and its middle day names the month, so a week straddling a boundary reads sensibly.
+    let best: { week: string; d: number } | null = null;
+    for (const [week, row] of rows.current) {
+      const d = Math.abs(row.offsetTop - el.scrollTop);
+      if (!best || d < best.d) best = { week, d };
+    }
+    if (best) reportVisibleMonth(addDays(best.week, 3).slice(0, 7));
+  }, [from, to, extend, reportVisibleMonth]);
 
   return (
     <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
@@ -218,7 +237,9 @@ function WeekRow({
           {turns.map((t) => (
             <span
               key={t.i}
-              className="pointer-events-none absolute z-40 whitespace-nowrap text-[15px] uppercase tracking-[0.06em] text-foreground/30"
+              // Behind the events, not over them: it is a watermark telling you where the month
+              // turns, and it must never sit on top of something you are trying to read.
+              className="pointer-events-none absolute z-0 max-h-[190px] overflow-hidden whitespace-nowrap text-[12px] uppercase tracking-[0.08em] text-foreground/20"
               style={{
                 left: `${(t.i / 7) * 100}%`,
                 top: HABITS_PX + HEADER_PX + 8,

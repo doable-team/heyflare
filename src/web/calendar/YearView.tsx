@@ -1,222 +1,314 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import type { CalEvent, CalendarDay } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useCalendar } from "./CalendarContext";
+import { eventColors } from "./colors";
 import { DayPhotoBackdrop, hasPhoto } from "./DayPhoto";
-import { addDays, isPast, isToday, isWeekend, monthLabel, msAt, weekdayLabel } from "../lib/caldate";
+import { addDays, dateKey, daysBetween, isPast, isToday, keyToDate } from "../lib/caldate";
 
 /**
- * The whole year, one row per day.
+ * The year — HEY's, rebuilt from the real thing.
  *
- * HEY's rule applies here: only all-day and multi-day items are drawn. A year of timed meetings is
- * noise, and it is better to show everything a day holds than to hide it behind "+2 more" — so the
- * things that are genuinely about the *date* (birthdays, trips, holidays, countdowns) get the year,
- * and the meetings stay in the days view where their time means something.
+ * It is **not** twelve little month grids. It is one continuous ribbon of every day in the year,
+ * wrapped into rows of exactly **four weeks**, and the wrapping is weekday-aligned: the column a
+ * day lands in is `dayOfWeek + 7 * weekWithinRow`, so column 0, 7, 14 and 21 are all Sundays and
+ * every column in the grid holds the same weekday for its position. That is what makes the
+ * weekend stripes run straight down the page, and it is why you can read the shape of a year at a
+ * glance — the eye follows a column, not a box.
  *
- * The month columns follow the container, not a breakpoint: `auto-fill` with a 15rem minimum, so
- * the same component reads as one column in a split pane and six across a wide window.
+ * The ribbon starts on the Sunday on or before January 1 and runs past December 31, with the
+ * cells outside the year left blank. Months are not sections; a month announces itself on the day
+ * it starts, with a small badge and a hairline tick dropping through the row. That tick is how you
+ * read where a month changes.
+ *
+ * Only **all-day and multi-day** events are drawn, which is HEY's rule for the year and a
+ * deliberate one: a year of timed meetings is unreadable, and what genuinely belongs to a *date* —
+ * a birthday, a trip, a holiday — is what you want a year to show you. Each is a horizontal pill
+ * spanning the columns it covers, cut into one segment per row when it crosses a wrap.
  */
 
-/** How long a just-picked date stays lit before it fades back. */
-const FLASH_MS = 550;
+/** Four weeks to a row. The whole idiom hangs off this number. */
+const COLS = 28;
+/** Enough for the date line plus a couple of pills or a glimpse of a photo. */
+const ROW_PX = 70;
+/** Where the pill overlay starts — clear of the date line. */
+const DATE_PX = 19;
+const PILL_PX = 14;
+const PILL_GAP = 2;
+/** As many lanes as the row height actually has room for. */
+const MAX_LANES = Math.max(1, Math.floor((ROW_PX - DATE_PX - 2) / (PILL_PX + PILL_GAP)));
+
+const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+const WEEKDAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+
+/** One drawn pill: an all-day event clipped to a single row of the ribbon. */
+interface Segment {
+  e: CalEvent;
+  /** Inclusive column indices within the row, 0-27. */
+  start: number;
+  end: number;
+  lane: number;
+}
 
 export function YearView() {
-  const { cursor, setCursor, setView, eventsOn, openEvent, createEvent, range } = useCalendar();
-  // Day photos show through here too, read-only — the year is where you notice you had a life.
-  const dayByKey = useMemo(() => new Map((range?.days ?? []).map((d) => [d.date, d])), [range?.days]);
+  const { cursor, setCursor, setView, openEvent, range } = useCalendar();
+
   const year = cursor.slice(0, 4);
+  const jan1 = `${year}-01-01`;
+  const dec31 = `${year}-12-31`;
 
-  const months = useMemo(
-    () => Array.from({ length: 12 }, (_, m) => `${year}-${String(m + 1).padStart(2, "0")}-01`),
-    [year],
-  );
+  // The ribbon's own window: back to the Sunday on or before Jan 1, forward to fill the last row.
+  // It spills outside the loaded range at both ends; those cells simply render empty.
+  const { gridStart, rowCount, totalDays } = useMemo(() => {
+    const start = addDays(jan1, -keyToDate(jan1).getDay());
+    const days = daysBetween(start, dec31) + 1;
+    const rows = Math.ceil(days / COLS);
+    return { gridStart: start, rowCount: rows, totalDays: rows * COLS };
+  }, [jan1, dec31]);
 
-  // A picked date lights up and fades, so the eye keeps its place when the view changes under it.
-  const [flash, setFlash] = useState<string | null>(null);
-  const timer = useRef<number>(0);
-  useEffect(() => () => window.clearTimeout(timer.current), []);
-  const lightUp = (date: string) => {
-    setFlash(date);
-    window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => setFlash(null), FLASH_MS);
-  };
+  // Day photos show through here too, read-only — the year is where you notice you had a life.
+  const dayByKey = useMemo(() => new Map((range?.days ?? []).map((d) => [d.date, d] as const)), [range?.days]);
+
+  /**
+   * Every all-day event, cut into per-row segments and packed into lanes.
+   *
+   * Taken from the raw range rather than `eventsOn`, because a pill needs the event's whole span —
+   * per-day membership would only tell us a day is covered, not where the trip begins and ends.
+   */
+  const segmentsByRow = useMemo(() => {
+    const rows: Segment[][] = Array.from({ length: rowCount }, () => []);
+    const raw: { row: number; start: number; end: number; e: CalEvent }[] = [];
+
+    for (const e of range?.events ?? []) {
+      if (!e.all_day) continue;
+      const from = e.start_date ?? dateKey(e.starts_at);
+      const to = e.end_date ?? from;
+      let a = daysBetween(gridStart, from);
+      let b = daysBetween(gridStart, to);
+      if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+      if (b < a) b = a;
+      // Clamp to the ribbon before splitting, so an open-ended import can't fan out forever.
+      a = Math.max(a, 0);
+      b = Math.min(b, totalDays - 1);
+      if (b < a) continue;
+
+      for (let i = a; i <= b; ) {
+        const row = Math.floor(i / COLS);
+        const rowStart = row * COLS;
+        const last = Math.min(b, rowStart + COLS - 1);
+        raw.push({ row, start: i - rowStart, end: last - rowStart, e });
+        i = last + 1;
+      }
+    }
+
+    // Longest first inside a start column, so a trip claims the top lane and the one-day things
+    // fill in underneath it — the same greedy packing `layoutColumns` does for a busy hour.
+    raw.sort((x, y) => x.start - y.start || y.end - x.end || x.e.id.localeCompare(y.e.id));
+    const laneEnds = Array.from({ length: rowCount }, () => [] as number[]);
+    for (const s of raw) {
+      const ends = laneEnds[s.row];
+      let lane = ends.findIndex((end) => end < s.start);
+      if (lane === -1) {
+        lane = ends.length;
+        ends.push(s.end);
+      } else {
+        ends[lane] = s.end;
+      }
+      if (lane >= MAX_LANES) continue;
+      rows[s.row].push({ e: s.e, start: s.start, end: s.end, lane });
+    }
+    return rows;
+  }, [range?.events, gridStart, rowCount, totalDays]);
 
   const pick = (date: string) => {
-    lightUp(date);
     setCursor(date);
     setView("days");
   };
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border bg-background p-2">
-      <div className="grid gap-x-4 gap-y-5" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(15rem, 1fr))" }}>
-        {months.map((m) => (
-          <Month
-            key={m}
-            month={m}
-            cursor={cursor}
-            flash={flash}
-            eventsOn={eventsOn}
-            dayByKey={dayByKey}
-            onPick={pick}
-            onOpenEvent={openEvent}
-            onCreate={(date) => {
-              lightUp(date);
-              createEvent({ starts_at: msAt(date, 0), ends_at: msAt(addDays(date, 1), 0), all_day: true, start_date: date, end_date: date });
+    <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden rounded-md border border-border bg-background">
+      {Array.from({ length: rowCount }, (_, r) => (
+        <Row
+          key={r}
+          rowStart={addDays(gridStart, r * COLS)}
+          jan1={jan1}
+          dec31={dec31}
+          cursor={cursor}
+          dayByKey={dayByKey}
+          segments={segmentsByRow[r]}
+          onPick={pick}
+          onOpenEvent={openEvent}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Four weeks. Twenty-eight cells of equal fractional width — no horizontal scrollbar, ever; at a
+ * narrow window the cells simply get small, which the date type is already sized for.
+ */
+function Row({
+  rowStart,
+  jan1,
+  dec31,
+  cursor,
+  dayByKey,
+  segments,
+  onPick,
+  onOpenEvent,
+}: {
+  rowStart: string;
+  jan1: string;
+  dec31: string;
+  cursor: string;
+  dayByKey: Map<string, CalendarDay>;
+  segments: Segment[];
+  onPick: (date: string) => void;
+  onOpenEvent: (e: CalEvent) => void;
+}) {
+  const days = useMemo(() => Array.from({ length: COLS }, (_, i) => addDays(rowStart, i)), [rowStart]);
+
+  return (
+    <div className="relative grid grid-cols-[repeat(28,minmax(0,1fr))]" style={{ height: ROW_PX }}>
+      {days.map((d, c) => (
+        <Cell
+          key={d}
+          date={d}
+          col={c}
+          inYear={d >= jan1 && d <= dec31}
+          selected={d === cursor}
+          day={dayByKey.get(d)}
+          onPick={onPick}
+        />
+      ))}
+
+      {/* The pills float over the cells rather than living inside one of them: a week-long trip is
+          a single bar, and a bar cannot be a child of seven buttons. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20" style={{ top: DATE_PX }}>
+        {segments.map((s) => (
+          <div
+            key={`${s.e.id}:${s.start}`}
+            className="absolute px-[1px]"
+            style={{
+              left: `${(s.start / COLS) * 100}%`,
+              width: `${((s.end - s.start + 1) / COLS) * 100}%`,
+              top: s.lane * (PILL_PX + PILL_GAP),
             }}
-          />
+          >
+            <Pill e={s.e} onClick={() => onOpenEvent(s.e)} />
+          </div>
         ))}
       </div>
     </div>
   );
 }
 
-function Month({
-  month,
-  cursor,
-  flash,
-  eventsOn,
-  dayByKey,
-  onPick,
-  onOpenEvent,
-  onCreate,
-}: {
-  month: string;
-  cursor: string;
-  flash: string | null;
-  eventsOn: (date: string) => { allDay: CalEvent[]; timed: CalEvent[] };
-  dayByKey: Map<string, CalendarDay>;
-  onPick: (date: string) => void;
-  onOpenEvent: (e: CalEvent) => void;
-  onCreate: (date: string) => void;
-}) {
-  const days = useMemo(() => {
-    const out: string[] = [];
-    for (let d = month; d.slice(0, 7) === month.slice(0, 7); d = addDays(d, 1)) out.push(d);
-    return out;
-  }, [month]);
-
-  return (
-    <section className="min-w-0">
-      <h2 className="sticky top-0 z-10 mb-0.5 border-b border-border bg-background pb-1 text-[11px] font-medium">
-        {monthLabel(month).replace(/\s\d{4}$/, "")}
-      </h2>
-      <div className="flex flex-col">
-        {days.map((d) => (
-          <Row
-            key={d}
-            date={d}
-            allDay={eventsOn(d).allDay}
-            day={dayByKey.get(d)}
-            selected={d === cursor}
-            lit={d === flash}
-            onPick={onPick}
-            onOpenEvent={onOpenEvent}
-            onCreate={onCreate}
-          />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function Row({
+/**
+ * One day. The date line reads `SUN 12`, with the month's three letters badged in front of it on
+ * the day a month turns, and a hairline dropping down the cell's left edge on the same day.
+ */
+function Cell({
   date,
-  allDay,
-  day,
+  col,
+  inYear,
   selected,
-  lit,
+  day,
   onPick,
-  onOpenEvent,
-  onCreate,
 }: {
   date: string;
-  allDay: CalEvent[];
-  day: CalendarDay | undefined;
+  col: number;
+  inYear: boolean;
   selected: boolean;
-  lit: boolean;
+  day: CalendarDay | undefined;
   onPick: (date: string) => void;
-  onOpenEvent: (e: CalEvent) => void;
-  onCreate: (date: string) => void;
 }) {
+  // Column 0 is a Sunday by construction, so the weekend is the same pair of columns in every week.
+  const dow = col % 7;
+  const weekend = dow === 0 || dow === 6;
+
+  if (!inYear) {
+    // Before January and after December: the stripe carries on, the day does not.
+    return <div className={cn(weekend && "bg-muted/25")} />;
+  }
+
   const today = isToday(date);
-  const n = Number(date.slice(8));
   const photo = hasPhoto(day);
+  const first = date.slice(8) === "01";
+  const month = Number(date.slice(5, 7)) - 1;
 
   return (
-    <div
+    <button
+      type="button"
+      onClick={() => onPick(date)}
+      title={date}
       className={cn(
-        // The highlight goes on instantly and fades out over the transition — no library needed.
-        "relative flex h-[19px] items-center gap-1 overflow-hidden rounded-[3px] transition-colors duration-500",
-        isWeekend(date) && "bg-muted/40",
-        selected && "bg-muted/70",
-        lit && "bg-foreground/15 duration-0",
+        "relative min-w-0 text-left align-top",
+        weekend && "bg-muted/25",
+        selected && "ring-1 ring-inset ring-foreground/25",
       )}
     >
-      <DayPhotoBackdrop day={day} className="z-0" />
-      <button
-        type="button"
-        onClick={() => onPick(date)}
-        title={date}
-        className="relative z-10 flex h-full shrink-0 items-center gap-1 pl-1 pr-0.5"
+      <span className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+        <DayPhotoBackdrop day={day} />
+      </span>
+
+      {/* Where a month begins: a tick down the cell's left edge, through the whole row. */}
+      {first && (
+        <>
+          <span className="pointer-events-none absolute inset-y-0 left-0 z-10 w-px bg-foreground/30" />
+          {/* On the boundary, not inside the cell — in flow it squeezed the weekday out. */}
+          <span className="pointer-events-none absolute -left-[9px] top-[2px] z-20 rounded-[3px] bg-background px-[3px] py-[2px] text-[8px] font-semibold uppercase leading-none tracking-[0.06em] text-muted-foreground ring-1 ring-border">
+            {MONTHS[month]}
+          </span>
+        </>
+      )}
+
+      <span
+        className={cn(
+          "relative z-10 flex items-center gap-[3px] whitespace-nowrap pl-[3px] pr-[2px] pt-[3px] leading-none",
+          photo && "text-white [text-shadow:0_0_3px_rgba(0,0,0,0.9),0_1px_2px_rgba(0,0,0,0.8)]",
+          !photo && !today && isPast(date) && "opacity-70",
+        )}
       >
         <span
           className={cn(
-            "w-[15px] text-[9.5px] uppercase tracking-wide",
-            photo ? "text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.5)]" : today ? "text-foreground" : "text-tertiary",
+            "inline-flex shrink-0 items-baseline gap-[3px] leading-none",
+            today && "rounded-full bg-foreground px-[4px] py-[2px] text-background",
           )}
         >
-          {weekdayLabel(date).slice(0, 2)}
-        </span>
-        <span
-          className={cn(
-            "flex size-[16px] items-center justify-center rounded-full text-[11px] tnum leading-none",
-            today
-              ? "bg-foreground font-semibold text-background"
-              : photo
-                ? "font-semibold text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.5)]"
-                : isPast(date)
-                  ? "text-muted-foreground"
-                  : n === 1
-                    ? "font-medium"
-                    : "",
-          )}
-        >
-          {n}
-        </span>
-      </button>
-
-      {allDay.map((e) => (
-        <button
-          key={e.id}
-          type="button"
-          onClick={() => onOpenEvent(e)}
-          title={e.title || "(no title)"}
-          className={cn(
-            "relative z-10 min-w-0 shrink border-l-2 pl-1 text-left text-[11px] leading-none hover:bg-muted",
-            photo && "bg-background/85 pr-1 rounded-[2px]",
-            e.rsvp === "declined" && "opacity-45 line-through",
-          )}
-          style={{ borderLeftColor: accent(e) }}
-        >
-          <span className="block truncate">
-            {e.emoji ? `${e.emoji} ` : ""}
-            {e.title || "(no title)"}
+          <span
+            className={cn(
+              "text-[8px] uppercase leading-none tracking-[0.08em]",
+              !today && !photo && "text-tertiary",
+            )}
+          >
+            {WEEKDAYS[dow]}
           </span>
-        </button>
-      ))}
-
-      <button
-        type="button"
-        onClick={() => onCreate(date)}
-        aria-label={`New all-day event on ${date}`}
-        className="h-full min-w-[1rem] flex-1"
-      />
-    </div>
+          <span className="text-[11px] font-semibold leading-none tnum">{Number(date.slice(8))}</span>
+        </span>
+      </span>
+    </button>
   );
 }
 
-/** A calendar's colour is data, not chrome: a hairline, never a wash. */
-function accent(e: CalEvent): string {
-  return e.calendar_color && /^#[0-9a-fA-F]{6}$/.test(e.calendar_color) ? e.calendar_color : "currentColor";
+/** A date-shaped thing, drawn the way an all-day event is drawn everywhere else: a solid stadium. */
+function Pill({ e, onClick }: { e: CalEvent; onClick: () => void }) {
+  const { background, color } = eventColors(e.calendar_color);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={e.title || "(no title)"}
+      style={{ background, color, height: PILL_PX }}
+      className={cn(
+        "pointer-events-auto flex w-full items-center gap-1 overflow-hidden rounded-full px-[5px] text-left",
+        "text-[9.5px] font-medium leading-none transition-opacity hover:opacity-85",
+        e.done && "line-through",
+        e.rsvp === "declined" && "opacity-45 line-through",
+      )}
+    >
+      {e.emoji && <span className="shrink-0">{e.emoji}</span>}
+      <span className="truncate">{e.title || "(no title)"}</span>
+    </button>
+  );
 }

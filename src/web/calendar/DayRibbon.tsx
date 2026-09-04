@@ -59,7 +59,7 @@ const HOURS_H = 17;
 const TRACK_TOP = CAPTION_H + HOURS_H;
 
 export function DayRibbon({ full = false }: { full?: boolean }) {
-  const { cursor, setCursor, settings, eventsOn, range, openEvent, createEvent, nightOpen, setNightOpen } = useCalendar();
+  const { cursor, setCursor, settings, eventsOn, range, openEvent, createEvent, nightOpen, setNightOpen, revealAt, reportVisibleMonth } = useCalendar();
   const { allDay } = eventsOn(cursor);
   const habitMut = useHabitMutations();
   const dayMut = useCalendarDayMutation();
@@ -130,7 +130,17 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
     if (!el) return;
     const anchor = isToday(cursor) ? Date.now() : msAt(cursor, 9 * 60);
     el.scrollLeft = Math.max(0, ribbon.pos(anchor) - el.clientWidth / 3);
-  }, [ribbon, cursor]);
+    // `revealAt.nonce` is in the deps so "Today" re-anchors even when the cursor already held it
+    // and you had simply scrolled the ribbon away.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ribbon, cursor, revealAt.nonce]);
+
+  // Tell the toolbar which month the ribbon is actually showing — a third in, where the eye is.
+  const onRibbonScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    reportVisibleMonth(dateKey(ribbon.at(el.scrollLeft + el.clientWidth / 3)).slice(0, 7));
+  };
 
   const trackRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
@@ -235,7 +245,7 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
       <div className="relative min-h-0 flex-1">
         <DayPhotoBackdrop day={day} />
 
-        <div ref={scrollRef} className="absolute inset-0 overflow-x-auto overflow-y-hidden">
+        <div ref={scrollRef} onScroll={onRibbonScroll} className="absolute inset-0 overflow-x-auto overflow-y-hidden">
           <div className="relative h-full" style={{ width: Math.max(ribbon.length, 1) }}>
             {/* Which day you are scrolled into. */}
             {dayMarks.map((m) => (

@@ -7,8 +7,7 @@ import { DayRibbon } from "../calendar/DayRibbon";
 import { YearView } from "../calendar/YearView";
 import { EventSheet } from "../calendar/EventSheet";
 import { useKeys } from "../lib/keys";
-import { arrows, focus, overlayOpen } from "../lib/focusStore";
-import { scrollPageBy } from "../lib/cardKeys";
+import { focus, overlayOpen } from "../lib/focusStore";
 import { addDays, msAt } from "../lib/caldate";
 
 export default function CalendarPage() {
@@ -20,7 +19,7 @@ export default function CalendarPage() {
 }
 
 function CalendarInner() {
-  const { view, setView, cursor, setCursor, today, settings, createEvent, editor } = useCalendar();
+  const { view, setView, cursor, setCursor, today, settings, createEvent, editor, reveal } = useCalendar();
   const nav = useNavigate();
   const loc = useLocation();
 
@@ -34,16 +33,13 @@ function CalendarInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loc.state]);
 
-  // The calendar walks days with ← →, so it takes the arrow keys off the sidebar while it's open.
-  useEffect(() => arrows.claim(), []);
-
+  // ↑ ↓ walk the calendar; ← → keep their meaning everywhere else in the app — out to the sidebar
+  // and over to the assistant — so the calendar deliberately does not claim them.
   const ok = () => !overlayOpen() && !editor;
   useKeys({
-    ArrowLeft: () => ok() && setCursor(step(view, cursor, -1, settings.week_start)),
-    ArrowRight: () => ok() && setCursor(step(view, cursor, 1, settings.week_start)),
-    ArrowUp: () => ok() && scrollPageBy(-0.25),
-    ArrowDown: () => ok() && scrollPageBy(0.25),
-    t: () => ok() && setCursor(today),
+    ArrowUp: () => ok() && setCursor(step(view, cursor, -1, settings.week_start)),
+    ArrowDown: () => ok() && setCursor(step(view, cursor, 1, settings.week_start)),
+    t: () => ok() && reveal(today),
     d: () => ok() && setView("days"),
     w: () => ok() && setView("week"),
     y: () => ok() && setView("year"),

@@ -32,7 +32,10 @@ no agenda list.
   Fried's "spine of a book in a library". Because night compresses to a fixed 80px, the track runs
   straight through midnight with no day boundary. Free time is drawn here at full scale and stamped
   with its length — your day starts full and you carve events out of it.
-- **Year** — every day of the year; only all-day and multi-day items are drawn.
+- **Year** — the whole year as one weekday-aligned ribbon: 28 columns, four weeks to a row, so the
+  weekend stripes line up down the page. A month is marked where it begins, by a badge on the
+  boundary and a tick down the column. Only all-day and multi-day items are drawn, as pills
+  spanning the days they cover — a year of timed meetings is unreadable.
 
 Mobile is deliberately conventional: a month grid with the day's agenda under it, and a vertical
 day timeline. HEY's own phone app is vertical too — the horizontal ribbon does not survive a thumb.
@@ -143,5 +146,10 @@ Mobile has its own screens under `src/web/mobile/`.
 ## Keyboard
 
 `0` toggles mail and calendar. Inside the calendar: `←`/`→` walk the days, `↑`/`↓` scroll the
-timeline, `t` today, `d` day, `w` week, `y` year, `n` new event, `j` journal, `b` habits, `Esc` back to the
-sidebar.
+timeline, `↑`/`↓` step through the calendar; `←`/`→` keep their meaning everywhere else in the app — out to
+the sidebar and over to the assistant — so the calendar does not take them. `t` today, `d` day,
+`w` week, `y` year, `n` new event, `j` journal, `b` habits, `Esc` back to the sidebar.
+
+"Today" is a *reveal*, not a cursor move: you can scroll a long way without touching the cursor, so
+it has to work when the cursor is already sitting on today. Views watch `revealAt` for that, and
+report the month they are actually showing back to the toolbar, so the title follows the scroll.

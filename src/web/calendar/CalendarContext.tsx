@@ -29,6 +29,16 @@ interface CalendarCtx {
   scale: TimeScale;
   nightOpen: boolean;
   setNightOpen: (b: boolean) => void;
+  /**
+   * Ask the current view to bring a date on screen. Distinct from `setCursor` because "Today" has
+   * to work when the cursor is *already* on today and you have simply scrolled away from it —
+   * setting the cursor to the value it already holds changes nothing.
+   */
+  reveal: (date: string) => void;
+  revealAt: { date: string; nonce: number };
+  /** The month a view is actually showing, so the toolbar title follows the scroll, not the cursor. */
+  visibleMonth: string;
+  reportVisibleMonth: (month: string) => void;
   editor: EditorTarget | null;
   openEvent: (e: CalEvent) => void;
   createEvent: (prefill: Partial<CalEvent> & { starts_at: number; ends_at: number; all_day?: boolean }) => void;
@@ -84,6 +94,8 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   const [view, setViewState] = useState<CalendarView>(urlView && VIEWS.includes(urlView) ? urlView : "week");
   const [nightOpen, setNightOpen] = useState(false);
   const [editor, setEditor] = useState<EditorTarget | null>(null);
+  const [revealAt, setRevealAt] = useState<{ date: string; nonce: number }>(() => ({ date: cursor, nonce: 0 }));
+  const [visibleMonth, setVisibleMonth] = useState<string>(() => cursor.slice(0, 7));
 
   // The default view is a preference, not a redirect: it only applies before the user picks one.
   const [viewTouched, setViewTouched] = useState(!!urlView);
@@ -105,6 +117,7 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   const setCursor = useCallback(
     (d: string) => {
       setCursorState(d);
+      setVisibleMonth(d.slice(0, 7));
       setWin(([a, b]) => {
         if (daysBetween(a, d) < 7) return [addDays(d, -21), b];
         if (daysBetween(d, b) < 7) return [a, addDays(d, 45)];
@@ -119,6 +132,14 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     },
     [setParams],
   );
+  const reveal = useCallback(
+    (d: string) => {
+      setCursor(d);
+      setRevealAt({ date: d, nonce: Date.now() });
+    },
+    [setCursor],
+  );
+
   const setView = useCallback(
     (v: CalendarView) => {
       setViewState(v);
@@ -184,6 +205,10 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     scale,
     nightOpen,
     setNightOpen,
+    reveal,
+    revealAt,
+    visibleMonth,
+    reportVisibleMonth: setVisibleMonth,
     editor,
     openEvent: (e) => setEditor({ mode: "edit", event: e }),
     createEvent: (prefill) => setEditor({ mode: "create", prefill }),

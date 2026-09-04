@@ -20,7 +20,7 @@ const GROUPS: { title: string; keys: [string, string][] }[] = [
   },
   {
     title: "Calendar",
-    keys: [["0", "Mail ⇄ Calendar"], ["← / →", "Previous / next day"], ["↑ / ↓", "Scroll the day"], ["t", "Today"], ["d / w / m / y / a", "Days, week, month, year, agenda"], ["n", "New event"], ["j", "Journal"], ["b", "Habits"]],
+    keys: [["0", "Mail ⇄ Calendar"], ["↑ / ↓", "Previous / next"], ["←", "Jump to the sidebar"], ["→", "Open the Assistant"], ["t", "Today"], ["d / w / y", "Day, week, year"], ["n", "New event"], ["j", "Journal"], ["b", "Habits"]],
   },
   {
     title: "Everywhere",

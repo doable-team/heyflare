@@ -23,24 +23,28 @@ export function step(view: CalendarView, date: string, delta: number, weekStart:
 }
 
 export function CalendarToolbar() {
-  const { view, setView, cursor, setCursor, today, settings, calendars, createEvent, loading } = useCalendar();
+  const { view, setView, cursor, setCursor, today, settings, calendars, createEvent, loading, reveal, visibleMonth } = useCalendar();
   const { update, syncAll } = useCalendarSourceMutations();
   const nav = useNavigate();
-  const title = view === "year" ? cursor.slice(0, 4) : monthLabel(cursor);
+  // The title follows what you are actually looking at: scrolling the week stack past a month
+  // boundary should rename the header, even though the cursor has not moved.
+  const title = view === "year" ? cursor.slice(0, 4) : monthLabel(`${visibleMonth}-01`);
   const syncing = calendars.some((c) => c.sync_status === "syncing");
   const broken = calendars.filter((c) => c.sync_status === "error");
 
   return (
     <div className="flex flex-wrap items-center gap-1.5 pb-2">
       <div className="flex items-center">
-        <Button variant="ghost" size="icon-sm" onClick={() => setCursor(step(view, cursor, -1, settings.week_start))} aria-label="Previous">
+        <Button variant="ghost" size="icon-sm" onClick={() => reveal(step(view, cursor, -1, settings.week_start))} aria-label="Previous">
           <ChevronLeft />
         </Button>
-        <Button variant="ghost" size="icon-sm" onClick={() => setCursor(step(view, cursor, 1, settings.week_start))} aria-label="Next">
+        <Button variant="ghost" size="icon-sm" onClick={() => reveal(step(view, cursor, 1, settings.week_start))} aria-label="Next">
           <ChevronRight />
         </Button>
       </div>
-      <Button variant="ghost" size="sm" className={cn("h-7 px-2 text-sm", cursor === today && "text-muted-foreground")} onClick={() => setCursor(today)}>
+      {/* `reveal`, not `setCursor`: you can scroll away without moving the cursor, and Today has to
+          bring you back even when the cursor is already sitting on it. */}
+      <Button variant="ghost" size="sm" className="h-7 px-2 text-sm" onClick={() => reveal(today)}>
         Today
       </Button>
       <h1 className="ml-1 text-sm font-medium tnum">{title}</h1>
