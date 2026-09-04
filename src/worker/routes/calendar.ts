@@ -487,6 +487,11 @@ calendar.patch("/sources/:id", async (c) => {
   if (isDefault) stmts.unshift(db.prepare(`UPDATE calendars SET is_default = 0 WHERE user_id = ? AND id != ?`).bind(userId, cal.id));
   await db.batch(stmts);
   const fresh = await ownedCalendar(db, userId, cal.id);
+  // A hidden calendar syncs slowly, so one being turned back on may be hours stale. Catch it up now
+  // rather than making the owner wait for a tick that is deliberately infrequent.
+  if (visible && !cal.visible && fresh && fresh.source !== "local") {
+    c.executionCtx.waitUntil(syncCalendarNow(c.env, fresh).catch(() => {}));
+  }
   return c.json(toCalendar(fresh!));
 });
 

@@ -11,6 +11,14 @@ import { ensureDefaultCalendars, syncCalendarNow } from "./sources";
 
 /** How stale a subscribed feed has to be before it is worth re-downloading. */
 const ICS_INTERVAL_MS = 3600_000;
+
+/**
+ * A calendar the owner has unchecked is not on screen, so nothing is waiting on it being current.
+ * It still syncs — unchecking is not unsubscribing, and re-checking one should not face a cold
+ * start — but at a pace that matches how much anyone is looking at it. Turning one back on syncs
+ * it immediately, so this interval is never what the user waits for.
+ */
+const HIDDEN_INTERVAL_MS = 6 * 3600_000;
 /**
  * One busy account must not starve the others, or eat the invocation's CPU on its own.
  *
@@ -85,17 +93,22 @@ export async function runCalendarSync(env: Env): Promise<void> {
   }
   let due: CalendarRow[] = [];
   try {
+    const t = now();
     const r = await db
       .prepare(
         `SELECT c.* FROM calendars c
          LEFT JOIN accounts a ON a.id = c.account_id
          WHERE c.source <> 'local'
            AND (c.account_id IS NULL OR (a.id IS NOT NULL AND a.sync_status <> 'disconnected'))
-           AND (c.source = 'google' OR COALESCE(c.last_synced_at, 0) <= ?)
+           AND (CASE
+                  WHEN c.visible = 0 THEN COALESCE(c.last_synced_at, 0) <= ?
+                  WHEN c.source = 'google' THEN 1
+                  ELSE COALESCE(c.last_synced_at, 0) <= ?
+                END)
          ORDER BY COALESCE(c.last_synced_at, 0) ASC
          LIMIT ?`
       )
-      .bind(now() - ICS_INTERVAL_MS, MAX_PER_RUN)
+      .bind(t - HIDDEN_INTERVAL_MS, t - ICS_INTERVAL_MS, MAX_PER_RUN)
       .all<CalendarRow>();
     due = r.results;
   } catch (e) {
