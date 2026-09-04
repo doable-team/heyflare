@@ -4,6 +4,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the build to (leave blank to just keep the artifact)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -12,8 +17,8 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - uses: dtolnay/rust-toolchain@stable
@@ -22,46 +27,98 @@ jobs:
       - name: Install app deps
         working-directory: apps/mac
         run: npm ci || npm install
+
+      # Tauri decides whether to codesign by asking whether the variable *exists*, not whether it
+      # holds anything. Passing `${{ secrets.APPLE_CERTIFICATE }}` for a secret that was never
+      # configured therefore does not mean "skip signing" — it means "sign with an empty
+      # certificate", and the build dies in `security import` after four minutes of compiling.
+      # So the secrets come in under names Tauri does not recognise, and only the ones that
+      # actually carry a value are re-exported below.
       - name: Build universal DMG
         working-directory: apps/mac
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npx tauri build --target universal-apple-darwin
-      - name: Collect artifacts
-        id: collect
+          IN_TAURI_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          IN_TAURI_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          IN_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          IN_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          IN_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IN_APPLE_ID: ${{ secrets.APPLE_ID }}
+          IN_APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          IN_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          set -e
+          set -euo pipefail
+          if [ -n "$IN_APPLE_CERTIFICATE" ] && [ -n "$IN_APPLE_SIGNING_IDENTITY" ]; then
+            echo "Apple certificate present — signing and notarizing."
+            export APPLE_SIGNING_IDENTITY="$IN_APPLE_SIGNING_IDENTITY"
+            export APPLE_CERTIFICATE="$IN_APPLE_CERTIFICATE"
+            export APPLE_CERTIFICATE_PASSWORD="$IN_APPLE_CERTIFICATE_PASSWORD"
+            # Notarization is optional even when signing: `[ ... ] && ...` would abort the
+            # step under `set -e` the moment one of these is unset, so guard them properly.
+            if [ -n "$IN_APPLE_ID" ]; then export APPLE_ID="$IN_APPLE_ID"; fi
+            if [ -n "$IN_APPLE_PASSWORD" ]; then export APPLE_PASSWORD="$IN_APPLE_PASSWORD"; fi
+            if [ -n "$IN_APPLE_TEAM_ID" ]; then export APPLE_TEAM_ID="$IN_APPLE_TEAM_ID"; fi
+          else
+            echo "No Apple certificate configured — building an ad-hoc signed app."
+          fi
+          # Without the updater key Tauri cannot produce the .sig the in-app updater needs, and
+          # `createUpdaterArtifacts` would fail the build rather than skip it.
+          if [ -n "$IN_TAURI_KEY" ]; then
+            export TAURI_SIGNING_PRIVATE_KEY="$IN_TAURI_KEY"
+            export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${IN_TAURI_KEY_PASSWORD:-}"
+          fi
+          ARGS=(--target universal-apple-darwin)
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set — no updater artifacts, so in-app updates will not see this release."
+            ARGS+=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
+          fi
+          npx tauri build "${ARGS[@]}"
+
+      - name: Collect artifacts
+        run: |
+          set -euo pipefail
           B=apps/mac/src-tauri/target/universal-apple-darwin/release/bundle
-          ls -R "$B" | head -50
+          ls -R "$B"
           DMG=$(ls "$B"/dmg/*.dmg | head -1)
           cp "$DMG" heyflare-mac-universal.dmg
           TAR=$(ls "$B"/macos/*.app.tar.gz 2>/dev/null | head -1 || true)
-          if [ -n "$TAR" ]; then
+          if [ -n "$TAR" ] && [ -f "$TAR.sig" ]; then
             cp "$TAR" heyflare-mac-universal.app.tar.gz
-            SIG=$(cat "$TAR.sig" 2>/dev/null || echo "")
+            SIG=$(cat "$TAR.sig")
             VER=$(node -p "require('./apps/mac/src-tauri/tauri.conf.json').version")
-            URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/heyflare-mac-universal.app.tar.gz"
-            printf '{"version":"%s","notes":"heyflare for Mac %s","pub_date":"%s","platforms":{"darwin-universal":{"signature":"%s","url":"%s"},"darwin-aarch64":{"signature":"%s","url":"%s"},"darwin-x86_64":{"signature":"%s","url":"%s"}}}\n' \
-              "$VER" "$VER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SIG" "$URL" "$SIG" "$URL" "$SIG" "$URL" > latest.json
+            TAG="${{ inputs.tag || github.ref_name }}"
+            URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/heyflare-mac-universal.app.tar.gz"
+            node -e '
+              const [ver, sig, url] = process.argv.slice(1);
+              const one = { signature: sig, url };
+              require("fs").writeFileSync("latest.json", JSON.stringify({
+                version: ver,
+                notes: `heyflare for Mac ${ver}`,
+                pub_date: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+                platforms: { "darwin-universal": one, "darwin-aarch64": one, "darwin-x86_64": one },
+              }, null, 2));
+            ' "$VER" "$SIG" "$URL"
+            cat latest.json
           fi
+
+      # A release build that cannot reach its release is a failed build, not a quiet success — the
+      # 0.2.0 and 0.3.0 releases both shipped with no Mac app at all because this step swallowed it.
       - name: Upload to release
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || inputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          gh release upload "${GITHUB_REF_NAME}" heyflare-mac-universal.dmg --clobber
-          [ -f heyflare-mac-universal.app.tar.gz ] && gh release upload "${GITHUB_REF_NAME}" heyflare-mac-universal.app.tar.gz latest.json --clobber || true
+          set -euo pipefail
+          gh release upload "$TAG" heyflare-mac-universal.dmg --clobber
+          if [ -f heyflare-mac-universal.app.tar.gz ]; then
+            gh release upload "$TAG" heyflare-mac-universal.app.tar.gz latest.json --clobber
+          fi
+
       - uses: actions/upload-artifact@v4
-        if: github.event_name != 'release'
         with:
           name: heyflare-mac
           path: |
             heyflare-mac-universal.dmg
+            heyflare-mac-universal.app.tar.gz
             latest.json
+          if-no-files-found: error
