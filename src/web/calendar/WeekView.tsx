@@ -112,10 +112,34 @@ export function WeekView() {
     else rows.current.delete(week);
   }, []);
 
+  // Land on the cursor's week, and follow it whenever it leaves the screen.
+  const cursorWeek = weekStartOf(cursor, settings.week_start);
+  const landed = useRef(false);
+
+  /** Put a week in the middle of the viewport, now, without animating. */
+  const landOn = useCallback((week: string) => {
+    const el = scroller.current;
+    const row = rows.current.get(week);
+    if (!el || !row) return false;
+    el.scrollTop = Math.max(0, row.offsetTop - (el.clientHeight - row.offsetHeight) / 2);
+    return true;
+  }, []);
+
   /**
-   * Growing at the head prepends rows above the viewport, which would yank everything you were
-   * looking at downwards. Measure the scroll height either side of the change and put the
-   * difference straight back into `scrollTop`, in the same frame, before paint.
+   * Keeping the scroll still while the list changes underneath it. Two different things can happen
+   * to the head, and they need opposite responses:
+   *
+   *  · **Grown.** Scrolling to the top prepends rows above the viewport, which would yank what you
+   *    were reading downwards. The old head row is still mounted, so measure the scroll height
+   *    either side of the change and put the difference straight back into `scrollTop`, in the same
+   *    frame, before paint.
+   *
+   *  · **Replaced.** Coming back from the year or the day rebuilds the window from scratch around
+   *    the cursor, and the rows the scroll position referred to are simply gone. A height delta is
+   *    meaningless across that — it is hugely negative, and clamping it lands you on whatever week
+   *    now happens to be first. Re-land on the cursor's week instead.
+   *
+   * The old head row still being mounted is exactly what tells the two apart.
    */
   const lastHeight = useRef(0);
   const lastHead = useRef(weeks[0]);
@@ -123,15 +147,13 @@ export function WeekView() {
     const el = scroller.current;
     if (!el) return;
     if (lastHead.current !== weeks[0]) {
-      el.scrollTop += el.scrollHeight - lastHeight.current;
+      if (rows.current.has(lastHead.current)) el.scrollTop += el.scrollHeight - lastHeight.current;
+      else landOn(cursorWeek);
       lastHead.current = weeks[0];
     }
     lastHeight.current = el.scrollHeight;
   });
 
-  // Land on the cursor's week, and follow it whenever it leaves the screen.
-  const cursorWeek = weekStartOf(cursor, settings.week_start);
-  const landed = useRef(false);
   useLayoutEffect(() => {
     const el = scroller.current;
     const row = rows.current.get(cursorWeek);
