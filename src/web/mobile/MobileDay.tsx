@@ -207,7 +207,9 @@ function DayTimeline({ date, onHold }: { date: string; onHold: () => void }) {
   const down = useRef<{ x: number; y: number } | null>(null);
   const today = isToday(date);
   const [nowMin, setNowMin] = useState(() => minutesOfDay(Date.now()));
-  const layout = layoutColumns(timed);
+  // MIN_EVENT_PX is the shortest a block is drawn; at this scale's daytime rate that is how much
+  // time it visually claims, and the columns have to reserve the same.
+  const layout = layoutColumns(timed, (MIN_EVENT_PX / scale.pxPerHour) * 3_600_000);
 
   useEffect(() => {
     if (!today) return;

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { CalEvent, CalendarDay, Habit } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useCalendar } from "./CalendarContext";
-import { AllDayPill, EventBlock } from "./EventBlock";
+import { AllDayPill, EventBlock, FLOOR_PX } from "./EventBlock";
 import { WeekTasks } from "./WeekTasks";
 import { eventColors } from "./colors";
 import { DayPhotoBackdrop, DayPhotoButton, hasPhoto } from "./DayPhoto";
@@ -586,7 +586,10 @@ function Track({ date, first, day, drag }: { date: string; first: boolean; day: 
     return date >= from && date <= to ? [...kept, previewed(preview)] : kept;
   }, [allDay, preview, date]);
 
-  const layout = useMemo(() => layoutColumns(rest), [rest]);
+  // The floor the blocks are actually drawn at, in milliseconds: a 15-minute meeting occupies
+  // FLOOR_PX of column whatever its duration, and two events only look separate if the layout
+  // reserves the same room the renderer takes.
+  const layout = useMemo(() => layoutColumns(rest, FLOOR_PX / PX_PER_MS), [rest]);
 
   const box = useRef<HTMLDivElement>(null);
   const [sketch, setSketch] = useState<{ from: number; to: number } | null>(null);

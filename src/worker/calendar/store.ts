@@ -117,7 +117,9 @@ export function toEvent(
     end_date: occurrence ? (r.all_day ? addDays(occurrence.date, span) : null) : r.end_date,
     timezone: r.timezone,
     rrule: r.rrule ?? null,
-    recurring: !!r.rrule || !!r.master_id,
+    recurring: !!r.rrule || !!r.master_id || !!seriesMasterId(r.remote_id),
+    // A Google-expanded series: repeating, but with no RRULE here to narrow a save down with.
+    series: !r.rrule && !r.master_id && !!seriesMasterId(r.remote_id),
     status: r.status,
     busy: !!r.busy,
     countdown: !!r.countdown,
@@ -674,6 +676,28 @@ function assertWritable(cal: CalendarRow): void {
  * Mirror a local write to Google. Best-effort by design: the D1 row is already committed, so a
  * remote failure is logged and swallowed rather than allowed to lose the user's edit.
  */
+/**
+ * Google is asked for `singleEvents=true`, so a repeating event arrives already expanded: one row
+ * per occurrence, each with its own remote id and no RRULE of its own. Nothing in the schema then
+ * says those rows belong together — which is why "delete all" used to remove exactly one Wednesday
+ * and leave the other eighty-six behind.
+ *
+ * Two things tie a series back together. Every instance carries the same `iCalUID`
+ * (`{masterId}@google.com`), and an instance's own id is `{masterId}_{YYYYMMDD}T{HHMMSS}Z`. The
+ * second is what identifies a row as an instance at all; the first is what gathers its siblings.
+ */
+const GOOGLE_INSTANCE_ID = /_\d{8}T\d{6}Z$/;
+
+/** The id of the repeating event this row is an occurrence of, or null if it is a one-off. */
+export function seriesMasterId(remoteId: string | null | undefined): string | null {
+  if (!remoteId || !GOOGLE_INSTANCE_ID.test(remoteId)) return null;
+  const cut = remoteId.lastIndexOf("_");
+  return cut > 0 ? remoteId.slice(0, cut) : null;
+}
+
+/** Deleting more instances than this one at a time is a mistake, not an intention. */
+const SERIES_DELETE_CAP = 400;
+
 async function mirrorGoogle<T>(env: Env, cal: CalendarRow, what: string, fn: (account: AccountRow) => Promise<T>): Promise<T | null> {
   if (cal.source !== "google") return null;
   try {
@@ -961,6 +985,40 @@ export async function deleteEvent(env: Env, userId: string, id: string, scope: "
     const next: EventRow = { ...row, rrule: withUntil(row.rrule, occurrenceStart(row, occ, tz) - 1), updated_at: now() };
     await db.prepare(`UPDATE events SET rrule = ?, updated_at = ? WHERE id = ?`).bind(next.rrule, next.updated_at, row.id).run();
     await mirrorGoogle(env, cal, "update", (account) => updateRemoteEvent(env, cal, account, next));
+    return;
+  }
+
+  // A Google-expanded series has no RRULE to narrow, so the reach of the delete is expressed as a
+  // set of sibling rows instead: all of them, or every one from this occurrence onward.
+  const master = seriesMasterId(row.remote_id);
+  if (!row.rrule && master && scope !== "this") {
+    const from = scope === "following" ? row.starts_at : 0;
+    // iCalUID is the reliable link; the id prefix is the fallback for a row that arrived without one.
+    const doomed = row.ical_uid
+      ? await db
+          .prepare(`SELECT id, remote_id FROM events WHERE user_id = ? AND calendar_id = ? AND ical_uid = ? AND starts_at >= ? LIMIT ?`)
+          .bind(userId, row.calendar_id, row.ical_uid, from, SERIES_DELETE_CAP)
+          .all<{ id: string; remote_id: string | null }>()
+      : await db
+          .prepare(`SELECT id, remote_id FROM events WHERE user_id = ? AND calendar_id = ? AND remote_id LIKE ? AND starts_at >= ? LIMIT ?`)
+          .bind(userId, row.calendar_id, `${master}\_%`, from, SERIES_DELETE_CAP)
+          .all<{ id: string; remote_id: string | null }>();
+    const ids = (doomed.results ?? []).map((r) => r.id);
+    for (const part of chunk(ids, 90)) {
+      const ic = inClause(part);
+      await db.batch([
+        db.prepare(`DELETE FROM event_completions WHERE event_id IN ${ic.sql}`).bind(...ic.params),
+        db.prepare(`DELETE FROM events WHERE user_id = ? AND id IN ${ic.sql}`).bind(userId, ...ic.params),
+      ]);
+    }
+    await mirrorGoogle(env, cal, "delete", async (account) => {
+      // Dropping the master removes the whole series in one call. "Following" has no such shortcut,
+      // so each occurrence from here on is cancelled in turn — the same thing done by hand.
+      if (scope === "all") return deleteRemoteEvent(env, cal, account, master);
+      for (const r of doomed.results ?? []) {
+        if (r.remote_id) await deleteRemoteEvent(env, cal, account, r.remote_id);
+      }
+    });
     return;
   }
 

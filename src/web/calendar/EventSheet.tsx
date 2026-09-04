@@ -545,9 +545,13 @@ function EventForm({ target }: { target: EditorTarget }) {
   };
 
   // Recurring writes always ask which occurrences they mean, and the answer rides as `scope`.
+  // Not for a Google-expanded series though: those rows carry no RRULE, so there is nothing to
+  // narrow a save to and every scope would mean the same thing. Editing one edits that occurrence,
+  // which is what Google itself does with an instance. Deleting still asks — a delete can reach the
+  // siblings by id even without a rule tying them together.
   const requestSave = () => {
     if (readOnly || busy) return;
-    if (ev?.recurring) setAsk("save-scope");
+    if (ev?.recurring && !ev.series) setAsk("save-scope");
     else void doSave();
   };
   const requestDelete = () => {

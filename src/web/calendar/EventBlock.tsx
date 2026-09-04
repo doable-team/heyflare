@@ -92,8 +92,11 @@ export const AllDayChip = AllDayPill;
 const ONE_LINE_PX = 34;
 /** Under this there is no room for the icon row along the bottom. */
 const ICONS_PX = 64;
-/** However short the meeting, it still has to be clickable. */
-const FLOOR_PX = 22;
+/**
+ * However short the meeting, it still has to be clickable. Exported because a block drawn taller
+ * than its duration overlaps whatever comes next, so the column layout has to know this number too.
+ */
+export const FLOOR_PX = 22;
 
 /**
  * One timed event, absolutely positioned inside a day column, sized by its own duration.

@@ -375,6 +375,12 @@ export interface CalEvent {
   timezone: string;
   rrule: string | null;
   recurring: boolean;
+  /**
+   * A repeating event Google already expanded into one row per occurrence. It repeats, but there is
+   * no RRULE here to narrow an edit down with — so a delete can reach the whole series while a save
+   * only ever means this one occurrence.
+   */
+  series?: boolean;
   status: "confirmed" | "tentative" | "cancelled";
   busy: boolean;
   countdown: boolean;

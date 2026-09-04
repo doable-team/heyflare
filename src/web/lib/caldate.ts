@@ -260,19 +260,25 @@ export interface ColumnSlot {
  *     This is the classic interval-partitioning greedy, and it uses the minimum possible
  *     number of columns for the cluster.
  *
- * Ends are clamped up to `MIN_SLOT` for overlap purposes only, so a zero-length event does
+ * Ends are clamped up to `minMs` for overlap purposes only, so a zero-length event does
  * not silently vanish underneath its neighbour.
+ *
+ * `minMs` is how long the shortest drawable event *looks*, which is not how long it is: a view
+ * that floors a block at some pixel height is drawing a 15-minute meeting as though it ran for an
+ * hour, and two events that do not overlap in time then overlap on screen. Pass the floor the view
+ * actually renders with — converted to milliseconds — and the columns will match what is drawn.
  *
  * @returns one `{ column, columns }` per input event, in the *input* order.
  */
-export function layoutColumns<T extends { starts_at: number; ends_at: number }>(events: T[]): ColumnSlot[] {
+export function layoutColumns<T extends { starts_at: number; ends_at: number }>(events: T[], minMs = MIN_SLOT): ColumnSlot[] {
   const out: ColumnSlot[] = events.map(() => ({ column: 0, columns: 1 }));
   if (events.length === 0) return out;
 
+  const floor = Math.max(minMs, 0);
   // Index-carrying view so results can be written back in input order.
   const items = events.map((e, i) => {
     const start = e.starts_at;
-    const end = Math.max(e.ends_at, start + MIN_SLOT);
+    const end = Math.max(e.ends_at, start + floor);
     return { i, start, end };
   });
 

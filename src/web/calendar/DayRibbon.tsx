@@ -135,7 +135,9 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
   useEffect(() => () => unswallow.current(), []);
 
   const timed = useMemo(() => (preview ? all.map((e) => (e.id === preview.id ? previewed(preview) : e)) : all), [all, preview]);
-  const layout = useMemo(() => layoutColumns(timed), [timed]);
+  // Same story on the x axis: MIN_BAR_PX of ribbon is the shortest a bar is ever drawn, which at
+  // the daytime rate is worth rather more than the meeting it stands for.
+  const layout = useMemo(() => layoutColumns(timed, (MIN_BAR_PX / PX_PER_HOUR) * 3_600_000), [timed]);
   const gaps = useMemo(() => freeGaps(timed, winFrom, winTo), [timed, winFrom, winTo]);
 
   // A caption per day boundary. `ribbon.midnights` only reports the midnights that land on a run
