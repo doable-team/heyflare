@@ -4,7 +4,7 @@ import { BookOpen, Plus } from "lucide-react";
 import type { CalEvent } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useCalendar } from "./CalendarContext";
-import { eventColors, normalizeHex } from "./colors";
+import { eventColors } from "./colors";
 import { InkCircle } from "./InkCircle";
 import { freeGaps, heyRange, heyTime, makeRibbon, spanLabel, type Ribbon, type RibbonRun } from "./scale";
 import { useCalendarDayMutation, useHabitMutations } from "../api";
@@ -448,7 +448,7 @@ function Spine({
       className="absolute z-20"
       style={{ left, width, top: `calc(${slot.column * share}% + 2px)`, height: `calc(${share}% - 4px)` }}
     >
-      {e.circled && <InkCircle color={normalizeHex(e.calendar_color) ?? "currentColor"} />}
+      {e.circled && <InkCircle />}
       <button
         type="button"
         onClick={onClick}

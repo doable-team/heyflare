@@ -6,6 +6,9 @@ import { cn } from "@/lib/utils";
  * neatly inside them. That overshoot is the whole effect — a tidy border would just look like a
  * selected row.
  *
+ * Ink, not the calendar's colour: the same dark pen mark on every block, so a circle means the same
+ * thing wherever it is. `currentColor` off the foreground token, so it flips with the theme.
+ *
  * The viewBox is stretched to the block with `preserveAspectRatio="none"`, so the ring follows a
  * tall box or a wide one; `vectorEffect` keeps the stroke an even weight despite that stretch.
  */
@@ -16,7 +19,7 @@ const LOOP =
 /** How far the ring oversteps the block on every side. */
 const OVERSHOOT = 7;
 
-export function InkCircle({ color, className }: { color: string; className?: string }) {
+export function InkCircle({ className }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 100 100"
@@ -30,9 +33,9 @@ export function InkCircle({ color, className }: { color: string; className?: str
         width: `calc(100% + ${OVERSHOOT * 2}px)`,
         height: `calc(100% + ${OVERSHOOT * 2}px)`,
       }}
-      className={cn("pointer-events-none absolute z-30 overflow-visible", className)}
+      className={cn("pointer-events-none absolute z-30 overflow-visible text-foreground/75", className)}
     >
-      <path d={LOOP} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" opacity={0.9} />
+      <path d={LOOP} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
     </svg>
   );
 }

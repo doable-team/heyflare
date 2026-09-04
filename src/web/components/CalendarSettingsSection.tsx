@@ -32,9 +32,9 @@ const HEX = /^#[0-9a-fA-F]{6}$/;
  * first row, so anyone who wants the calendar to stay monochrome still can.
  */
 const RAMP = [
-  "#111111", "#4b4b4b", "#7a7a7a", "#a8a8a8",
-  "#2f6f4e", "#2f5f8a", "#5b4b8a", "#8a4b7a",
-  "#a33a3a", "#b06a2c", "#8a6a2f", "#3f7d7d",
+  "#111111", "#3d3d3d", "#5c5c5c", "#8a8a8a",
+  "#3d6c56", "#3d5a6c", "#3d3e6c", "#613d6c",
+  "#6c3d47", "#6c4b3d", "#6c633d", "#3d686c",
 ];
 
 const VIEW_LABEL: Record<CalendarView, string> = { days: "Day", week: "Week", year: "Year" };

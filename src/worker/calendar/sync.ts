@@ -5,6 +5,7 @@ import type { Env } from "../env";
 import type { AccountRow } from "../db";
 import { now } from "../db";
 import { hasCalendarScope } from "../google";
+import { muteHex } from "@shared/color";
 import type { CalendarRow } from "./types";
 import { ensureDefaultCalendars, syncCalendarNow } from "./sources";
 
@@ -44,6 +45,23 @@ async function discoverMissing(env: Env): Promise<void> {
   }
 }
 
+/**
+ * Pull any synced calendar colour into the muted band. Google's palette is built for pale chips
+ * with dark text; heyflare fills the whole block and puts light text on it. `muteHex` is
+ * idempotent, so a colour already in the band is left untouched and this converges and stops —
+ * including for colours picked from the app's own palette, which are already muted.
+ */
+async function quietColours(env: Env): Promise<void> {
+  const r = await env.DB.prepare(`SELECT id, color FROM calendars WHERE source <> 'local' LIMIT 200`).all<{ id: string; color: string }>();
+  const stmts = [];
+  for (const row of r.results) {
+    const muted = muteHex(row.color);
+    if (!muted || muted === row.color.toLowerCase()) continue;
+    stmts.push(env.DB.prepare(`UPDATE calendars SET color = ?, updated_at = ? WHERE id = ?`).bind(muted, now(), row.id));
+  }
+  if (stmts.length) await env.DB.batch(stmts);
+}
+
 /** Cron entry point: refresh every calendar that is due. Never throws. */
 export async function runCalendarSync(env: Env): Promise<void> {
   const db = env.DB;
@@ -51,6 +69,11 @@ export async function runCalendarSync(env: Env): Promise<void> {
     await discoverMissing(env);
   } catch (e) {
     console.error("calendar discovery pass failed", e);
+  }
+  try {
+    await quietColours(env);
+  } catch (e) {
+    console.error("calendar colour pass failed", e);
   }
   let due: CalendarRow[] = [];
   try {

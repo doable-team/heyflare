@@ -6,8 +6,8 @@
  * a monochrome UI those pastels shout. Muting pins every imported colour into one band: enough hue
  * to tell calendars apart, dark enough to carry white text, quiet enough to sit in a grey app.
  */
-const SAT = 0.34;
-const LIGHT = 0.4;
+const SAT = 0.28;
+const LIGHT = 0.33;
 
 export function normalizeHex(hex: string | null | undefined): string | null {
   if (!hex) return null;
