@@ -2,8 +2,8 @@ import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { CalendarProvider, useCalendar } from "../calendar/CalendarContext";
 import { CalendarToolbar, step } from "../calendar/CalendarToolbar";
-import { WeekScroll } from "../calendar/WeekScroll";
-import { DayPane } from "../calendar/DayPane";
+import { WeekView } from "../calendar/WeekView";
+import { DayRibbon } from "../calendar/DayRibbon";
 import { MonthView } from "../calendar/MonthView";
 import { YearView } from "../calendar/YearView";
 import { AgendaView } from "../calendar/AgendaView";
@@ -69,13 +69,9 @@ function CalendarInner() {
       ) : view === "agenda" ? (
         <AgendaView />
       ) : view === "days" ? (
-        <div className="flex min-h-0 flex-1"><DayPane full /></div>
+        <div className="flex min-h-0 flex-1"><DayRibbon full /></div>
       ) : (
-        // The week scroll is the home view; the day it has selected sits beside it where there's room.
-        <div className="flex min-h-0 flex-1 gap-2.5">
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col"><WeekScroll /></div>
-          <div className="hidden w-[380px] shrink-0 xl:block"><DayPane /></div>
-        </div>
+        <div className="flex min-h-0 flex-1"><WeekView /></div>
       )}
       <EventSheet />
     </div>

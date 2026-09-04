@@ -136,30 +136,41 @@ Notion visual language: same grayscale tokens, Geist, 6px radius, but layouts de
 - Touch targets ≥ 44px; no hover-only affordances; `overscroll-behavior` and `touch-action` set so swipes don't fight scrolling;
   `100dvh` heights; `env(safe-area-inset-*)` padding; no horizontal overflow at 360px.
 
-## 9. Calendar — weeks, then a day
+## 9. Calendar — spatial time
 
-37signals' framing for HEY Calendar is "week after week, not month after month — people think in
-days and weeks, not months", and the layout follows from it. The home view is a **continuously
-scrolling stack of week rows**, not a month grid and not an hour grid. Each row is seven day cells;
-each cell is a **list of one-line chips** in time order. Duration is deliberately not drawn: at a
-week's scale what you need is what's on, not how long it runs, and sizing by duration is what makes
-every other calendar look like a spreadsheet. Month names print inline where a month turns; a day's
-label sits above the row; a day's cover photo sits inline among its chips.
+Jason Fried on HEY Calendar: *"both the day and week view are essentially spatial views. Empty
+space means something, the size of events means something."* Everything below follows from that,
+and from measurements taken off 37signals' own screenshots.
 
-Beside it sits the **day pane**, the one place time is drawn to scale. Its timeline is *fitted*:
-built from the hours that day's events occupy and stretched to fill the pane, with everything
-outside collapsed into a "Nighttime" band you click to open. Hour marks sit quietly down the right
-edge rather than ruling the pane. Overlapping events sit side by side (`layoutColumns` in
-`src/web/lib/caldate.ts`), never stacked. `scale.ts` owns the piecewise minute-to-pixel mapping and
-nothing should compute a y offset any other way.
+**Time is drawn strictly to scale, with one exception.** Events are proportional — a three-hour
+workshop is three times a one-hour meeting — and the gaps between them are drawn at exactly the
+same rate and stamped with their length (`2hrs`, `45min`). You do not add events to a blank day;
+you carve them out of free time. The exception is night: 22:00–06:00 compresses to a fixed 80px,
+about 4.3×, which is what lets the day view scroll straight through midnight with no day boundary.
+`scale.ts` owns this piecewise mapping as a **ribbon**, and nothing computes an offset any other way.
 
-**Colour is the one exception to monochrome.** A chip is filled with its calendar's colour and its
-text flips to black or white for contrast (`chipColors`). Colour here is the user's data, not
-chrome, and a week of forty chips is unreadable without it. Calendars still default to the
-grayscale ramp, so an untouched install stays black and white.
+**The week view is exactly seven columns.** Never more, never fewer, and it does not scroll to
+other weeks. It carries **no hour gutter and no horizontal rules** — HEY's column interiors hold
+nothing but events and free-time bands. The only rail text is the month name set rotated 90°.
+All-day events are stadium pills pinned to the **bottom** of the column, the opposite of Google and
+Apple. Habit badges straddle the top rail. Today's date is reversed out of a solid blob.
 
-**Density.** Chips 16px tall at 10.5px; day cells at least 78px; the day pane's date header at
-14px semibold with the day's name spelled out. Today's date number sits in a filled dark pill; past
-days dim; weekends take a slightly different ground.
+**The day view is horizontal.** Time runs left to right at ~43px/hour; each event is a full-height
+bar whose *width* is its duration, with the title **rotated 90°, reading bottom-to-top** — Fried's
+"spine of a book in a library". It is a never-ending timeline: you scroll sideways through days.
 
-Mobile gets its own month-plus-agenda screen and a full-screen day, not a shrunken week scroll.
+**Type stays small.** HEY's day header is ~10.5px letterspaced caps plus a ~15px bold numeral —
+barely larger than its event text. Resist making it editorial; the drama comes from colour and
+proportion, not from type size.
+
+**Colour is the exception to monochrome.** Events are solid saturated fills with the text flipped
+to near-white or near-black for contrast (`colors.ts`). Colour is the user's data, not chrome, and
+a week of forty grey events is unreadable. Everything that is not an event stays monochrome, and a
+calendar defaults to the grayscale ramp so an untouched install is still black and white. Two
+reserved semantics: red marks **now**, and near-black-with-stars marks **night**.
+
+A tentative or "maybe" event signals itself by *removing* colour: white ground, grey diagonal
+hatching, dashed edge.
+
+Mobile is deliberately conventional — a month grid plus agenda, and a vertical day timeline. HEY's
+own phone app is vertical too; the horizontal ribbon is a desktop idea and does not survive a thumb.

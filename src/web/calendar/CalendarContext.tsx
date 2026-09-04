@@ -65,10 +65,13 @@ function windowFor(view: CalendarView, date: string, weekStart: number): [string
     case "agenda":
       return [addDays(date, -1), addDays(date, 120)];
     case "week":
-      // The week scroll runs continuously, so it wants a deep window in both directions.
-      return [addDays(weekStartOf(date, weekStart), -35), addDays(weekStartOf(date, weekStart), 70)];
+      // Exactly the seven days on screen, plus a day either side so an event that starts late on
+      // Sunday night still lands.
+      return [addDays(weekStartOf(date, weekStart), -1), addDays(weekStartOf(date, weekStart), 7)];
     default:
-      return [addDays(date, -7), addDays(date, 21)];
+      // The day view is a continuous ribbon that scrolls through midnight, so it needs its
+      // neighbours loaded on both sides.
+      return [addDays(date, -3), addDays(date, 4)];
   }
 }
 
