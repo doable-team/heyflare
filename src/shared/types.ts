@@ -484,6 +484,8 @@ export interface GoogleCalendarAccount {
   /** How many of its calendars heyflare holds. */
   calendar_count: number;
   sync_error: string | null;
+  /** Why the calendar list failed, when the scope is granted but Google refused the call. */
+  calendar_error: string | null;
 }
 
 export interface CalendarSourcesResponse {

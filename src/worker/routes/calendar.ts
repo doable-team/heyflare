@@ -322,6 +322,7 @@ async function sourcesPayload(c: Context<AppEnv>, userId: string) {
         mail: hasMailScope(a.scopes),
         calendar_count: perAccount.get(a.id) ?? 0,
         sync_error: a.sync_error ?? null,
+        calendar_error: a.calendar_error ?? null,
       })),
   };
 }

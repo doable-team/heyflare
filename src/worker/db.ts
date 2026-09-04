@@ -51,6 +51,8 @@ export interface AccountRow {
   contacts_changed_at?: number | null;
   /** OAuth scopes this account's refresh token carries (space separated). */
   scopes?: string;
+  /** Why this account has no calendars, when it has the scope but the list call fails. */
+  calendar_error?: string | null;
   created_at: number;
 }
 

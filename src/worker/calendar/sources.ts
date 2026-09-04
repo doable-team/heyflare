@@ -180,9 +180,14 @@ export async function ensureDefaultCalendars(env: Env, userId: string, account?:
   if (account && hasCalendarScope(account.scopes)) {
     try {
       await mirrorGoogleCalendars(env, userId, account);
+      await db.prepare(`UPDATE accounts SET calendar_error = NULL WHERE id = ?`).bind(account.id).run();
     } catch (e) {
       // A failed calendar list must not break connecting the account; the cron will try again.
-      await logSync(db, account.id, "warn", `Calendar list failed: ${(e as Error).message ?? String(e)}`);
+      // It is recorded on the account as well as the log, because with no calendar rows there is
+      // nowhere else for the UI to read it from — and "no calendars" with no reason is a dead end.
+      const message = ((e as Error).message ?? String(e)).slice(0, 500);
+      await logSync(db, account.id, "warn", `Calendar list failed: ${message}`);
+      await db.prepare(`UPDATE accounts SET calendar_error = ? WHERE id = ?`).bind(message, account.id).run();
     }
   }
 

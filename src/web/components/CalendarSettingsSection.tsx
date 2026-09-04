@@ -202,6 +202,38 @@ function ConnectedCalendars({ calendars, loading, error }: { calendars: Calendar
 /* ---------- Google accounts ---------- */
 
 /** What heyflare holds this account's token for, said plainly. */
+/**
+ * Why an account has the calendar scope but no calendars. Google's most common answer by far is
+ * that the Calendar API is switched off in the Cloud project, and it puts the exact enable link in
+ * the message — so pull that out and make it a link rather than leaving a wall of JSON.
+ */
+function CalendarErrorNote({ message }: { message: string }) {
+  const disabled = /has not been used in project|is disabled/i.test(message);
+  const link = message.match(/https:\/\/console\.(?:developers|cloud)\.google\.com\/[^\s"\\)]+/)?.[0];
+  return (
+    <div className="mt-1 rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs">
+      {disabled ? (
+        <>
+          <div className="font-medium">Google hasn't enabled the Calendar API for this project.</div>
+          <div className="mt-0.5 text-muted-foreground">
+            Turn it on once in the Google Cloud console and heyflare will pick the calendars up on its next pass — nothing to reconnect.
+          </div>
+          {link && (
+            <a href={link} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block underline underline-offset-2">
+              Enable the Google Calendar API
+            </a>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="font-medium">Couldn't read this account's calendars.</div>
+          <div className="mt-0.5 break-words text-muted-foreground">{message.slice(0, 300)}</div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function connectedFor(a: GoogleCalendarAccount): string {
   if (a.mail && a.calendar) return "Mail and calendar";
   if (a.calendar) return "Calendar only";
@@ -230,6 +262,7 @@ function GoogleAccountLine({ a, pending, onConnect }: { a: GoogleCalendarAccount
           {a.calendar ? ` · ${calendarCount(a.calendar_count)} here` : " · no calendars here"}
         </div>
         {a.sync_error && <div className="mt-0.5 text-xs">Last sync failed: {a.sync_error}</div>}
+        {a.calendar_error && <CalendarErrorNote message={a.calendar_error} />}
       </div>
       <div className="flex shrink-0 items-center gap-1">
         <Button size="sm" variant="outline" disabled={busy} onClick={() => onConnect(a)}>
