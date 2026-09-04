@@ -30,7 +30,7 @@ import { addDays, dateKey, daysBetween, isPast, isToday, keyToDate } from "../li
 /** Four weeks to a row. The whole idiom hangs off this number. */
 const COLS = 28;
 /** Enough for the date line plus a couple of pills or a glimpse of a photo. */
-const ROW_PX = 70;
+const ROW_PX = 84;
 /** Where the pill overlay starts — clear of the date line. */
 const DATE_PX = 19;
 const PILL_PX = 14;
@@ -265,7 +265,7 @@ function Cell({
 
       <span
         className={cn(
-          "relative z-10 flex items-center gap-[3px] whitespace-nowrap pl-[3px] pr-[2px] pt-[3px] leading-none",
+          "relative z-10 flex items-center gap-[3px] overflow-hidden whitespace-nowrap pl-[4px] pr-[7px] pt-[4px] leading-none",
           photo && "text-white [text-shadow:0_0_3px_rgba(0,0,0,0.9),0_1px_2px_rgba(0,0,0,0.8)]",
           !photo && !today && isPast(date) && "opacity-70",
         )}
@@ -278,13 +278,13 @@ function Cell({
         >
           <span
             className={cn(
-              "text-[8px] uppercase leading-none tracking-[0.08em]",
+              "shrink-0 text-[8px] uppercase leading-none tracking-[0.04em]",
               !today && !photo && "text-tertiary",
             )}
           >
             {WEEKDAYS[dow]}
           </span>
-          <span className="text-[11px] font-semibold leading-none tnum">{Number(date.slice(8))}</span>
+          <span className="shrink-0 text-[11px] font-semibold leading-none tnum">{Number(date.slice(8))}</span>
         </span>
       </span>
     </button>

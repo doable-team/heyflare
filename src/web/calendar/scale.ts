@@ -207,21 +207,29 @@ export function makeRibbon(opts: {
   const nightStart = opts.nightStart ?? 22;
   const nightEnd = opts.nightEnd ?? 6;
   const nightPx = opts.collapseNight === false ? 0 : (opts.nightPx ?? NIGHT_PX);
-  const collapse = opts.collapseNight !== false && nightStart > nightEnd;
+  const collapse = opts.collapseNight !== false && nightStart !== nightEnd;
   const perMs = pxPerHour / 3_600_000;
 
+  // Night usually wraps midnight (22:00 → 06:00), but it need not: someone can set it to
+  // 00:00 → 08:00, which does not wrap at all. Handle both, or the band silently disappears.
+  const wraps = nightStart > nightEnd;
   const isNight = (ms: number): boolean => {
     if (!collapse) return false;
     const h = new Date(ms).getHours();
-    return h >= nightStart || h < nightEnd;
+    return wraps ? h >= nightStart || h < nightEnd : h >= nightStart && h < nightEnd;
   };
   /** The next instant at which night-ness flips, after `ms`. */
   const nextEdge = (ms: number): number => {
-    const h = new Date(ms).getHours();
     if (!collapse) return to;
-    if (h >= nightStart) return nightEdge(ms + 86_400_000, nightEnd); // runs into tomorrow morning
+    const h = new Date(ms).getHours();
+    if (wraps) {
+      if (h >= nightStart) return nightEdge(ms + 86_400_000, nightEnd); // runs into tomorrow morning
+      if (h < nightEnd) return nightEdge(ms, nightEnd);
+      return nightEdge(ms, nightStart);
+    }
+    if (h < nightStart) return nightEdge(ms, nightStart);
     if (h < nightEnd) return nightEdge(ms, nightEnd);
-    return nightEdge(ms, nightStart);
+    return nightEdge(ms + 86_400_000, nightStart); // tomorrow's night
   };
 
   const runs: RibbonRun[] = [];

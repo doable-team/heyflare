@@ -24,7 +24,17 @@ import { Switch } from "@/components/ui/switch";
 
 /** The server accepts any six-digit hex; the ramp is what the app offers on its own. */
 const HEX = /^#[0-9a-fA-F]{6}$/;
-const RAMP = ["#111111", "#3d3d3d", "#5c5c5c", "#7a7a7a", "#9b9b9b", "#bcbcbc", "#d6d6d6", "#efefef"];
+/**
+ * A calendar's colour is the one place colour enters this UI, and it is the thing that makes a busy
+ * week readable, so the palette is real rather than a grey ramp. The hues are the muted-saturated
+ * kind HEY uses — they carry white text at full contrast without shouting. The greys stay on the
+ * first row, so anyone who wants the calendar to stay monochrome still can.
+ */
+const RAMP = [
+  "#111111", "#4b4b4b", "#7a7a7a", "#a8a8a8",
+  "#2f6f4e", "#2f5f8a", "#5b4b8a", "#8a4b7a",
+  "#a33a3a", "#b06a2c", "#8a6a2f", "#3f7d7d",
+];
 
 const SOURCE_ORDER: CalendarSource[] = ["local", "google", "ics"];
 const SOURCE_LABEL: Record<CalendarSource, string> = { local: "In heyflare", google: "Google Calendar", ics: "Subscribed links" };
@@ -42,10 +52,10 @@ function ColourPicker({ value, onChange }: { value: string; onChange: (hex: stri
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <button type="button" aria-label="Colour" title="Colour" className="size-4 shrink-0 rounded-full border border-border" style={{ background: value }} />
+        <button type="button" aria-label="Colour" title="Colour" className="size-4 shrink-0 rounded-full border border-border ring-offset-1 transition-shadow hover:ring-2 hover:ring-ring" style={{ background: value }} />
       </PopoverTrigger>
       <PopoverContent align="start" className="w-60 p-2.5">
-        <div className="grid grid-cols-8 gap-1.5">
+        <div className="grid grid-cols-4 gap-2">
           {RAMP.map((c) => (
             <button
               key={c}
@@ -53,7 +63,7 @@ function ColourPicker({ value, onChange }: { value: string; onChange: (hex: stri
               aria-label={c}
               title={c}
               onClick={() => onChange(c)}
-              className={cn("size-5 rounded-full border border-border", value.toLowerCase() === c && "ring-2 ring-ring")}
+              className={cn("size-6 rounded-full border border-border transition-transform hover:scale-110", value.toLowerCase() === c && "ring-2 ring-ring ring-offset-1")}
               style={{ background: c }}
             />
           ))}

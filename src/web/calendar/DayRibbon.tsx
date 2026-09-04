@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link } from "react-router-dom";
-import { BookOpen, ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { BookOpen, Plus } from "lucide-react";
 import type { CalEvent } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useCalendar } from "./CalendarContext";
@@ -163,12 +163,6 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
     <div className={cn("flex min-h-0 flex-col overflow-hidden rounded-md border border-border bg-background", full ? "flex-1" : "h-full")}>
       <header className="shrink-0 border-b border-border px-3 py-2">
         <div className="flex items-center gap-1">
-          <button type="button" onClick={() => setCursor(addDays(cursor, -1))} className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Previous day">
-            <ChevronLeft size={16} />
-          </button>
-          <button type="button" onClick={() => setCursor(addDays(cursor, 1))} className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Next day">
-            <ChevronRight size={16} />
-          </button>
           <div className="min-w-0 flex-1 text-center">
             <div className="truncate text-[14px] font-semibold">{longDayLabel(cursor)}</div>
             {relativeDay(cursor) && <div className="text-[11px] text-muted-foreground">{relativeDay(cursor)}</div>}
@@ -473,7 +467,7 @@ function NightBlock({ run, ribbon, onClick }: { run: RibbonRun; ribbon: Ribbon; 
       type="button"
       onClick={onClick}
       title="Nighttime — click to open the quiet hours"
-      className="absolute inset-y-0 z-10 overflow-hidden bg-[#1c1c24]"
+      className="absolute inset-y-0 z-10 overflow-hidden bg-[#1c1c24] dark:bg-[#2c2c3b]"
       style={{ left: run.pos, width: run.size, ...tornEdges }}
     >
       {dots.map((s, i) => (
