@@ -166,6 +166,17 @@ your mailbox, so rotating one does not sign anybody out.
 
 Credentials are never written to the repository. `.dev.vars` is git-ignored.
 
+### You do not need any of this to install
+
+The setup wizard asks whether to add a Google OAuth client and defaults to **no**; the one-click
+deploy accepts empty values; and `/setup` only needs an email and a password. A fresh install runs
+perfectly well with no OAuth configured at all — you simply will not see **Connect Gmail** or
+**Connect Outlook** until the matching credentials exist, and Settings tells you which are missing.
+**Add mailbox** (IMAP/SMTP) works from the start, since it needs no OAuth app.
+
+Add the credentials whenever you are ready, from Settings or with `wrangler secret put`. Nothing has
+to be decided at install time.
+
 ---
 
 ## Troubleshooting

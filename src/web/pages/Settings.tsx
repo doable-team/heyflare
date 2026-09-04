@@ -909,7 +909,7 @@ export function ConnectorCredentialsSection({ compact }: { compact?: boolean }) 
 }
 
 export function AccountsSection({ onNewMailbox }: { onNewMailbox?: () => void }) {
-  const { accounts } = useAccount();
+  const { accounts, googleConfigured, microsoftConfigured } = useAccount();
   const [addImap, setAddImap] = useState(false);
   const remote = accounts.filter((a) => a.provider !== "domain");
   const boxes = accounts.filter((a) => a.provider === "domain");
@@ -921,12 +921,23 @@ export function AccountsSection({ onNewMailbox }: { onNewMailbox?: () => void })
         description="What's connected, and how it signs off."
         actions={
           <div className="flex items-center gap-1">
-            <Button size="sm" variant="ghost" className="text-muted-foreground" asChild><a href="/auth/google/start"><Plus /> Connect Gmail</a></Button>
-            <Button size="sm" variant="ghost" className="text-muted-foreground" asChild><a href="/auth/microsoft/start"><Plus /> Connect Outlook</a></Button>
+            {googleConfigured ? (
+              <Button size="sm" variant="ghost" className="text-muted-foreground" asChild><a href="/auth/google/start"><Plus /> Connect Gmail</a></Button>
+            ) : null}
+            {microsoftConfigured ? (
+              <Button size="sm" variant="ghost" className="text-muted-foreground" asChild><a href="/auth/microsoft/start"><Plus /> Connect Outlook</a></Button>
+            ) : null}
             <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => setAddImap(true)}><Plus /> Add mailbox</Button>
           </div>
         }
       >
+        {!googleConfigured || !microsoftConfigured ? (
+          <div className="mx-2 mb-3 rounded-md bg-muted/60 px-3 py-2 text-[13px] text-muted-foreground">
+            {!googleConfigured && !microsoftConfigured ? "Gmail and Outlook need" : !googleConfigured ? "Gmail needs" : "Outlook needs"} an OAuth
+            client before {!googleConfigured && !microsoftConfigured ? "they" : "it"} can be connected — add the credentials under{" "}
+            <strong>Provider credentials</strong> below. IMAP mailboxes need no setup.
+          </div>
+        ) : null}
         {remote.length === 0 ? (
           <div className="px-2 py-2 text-[13px] text-muted-foreground">Nothing connected yet.</div>
         ) : (

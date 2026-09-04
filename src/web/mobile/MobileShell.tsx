@@ -23,7 +23,7 @@ export function MobileShell() {
 
 /** Account scope picker as a bottom sheet (tap the Imbox title). */
 export function ScopeSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
-  const { accounts, scope, setScope, glyphFor } = useAccount();
+  const { accounts, scope, setScope, glyphFor, googleConfigured, microsoftConfigured } = useAccount();
   const nav = useNavigate();
   return (
     <ActionSheet
@@ -33,8 +33,8 @@ export function ScopeSheet({ open, onOpenChange }: { open: boolean; onOpenChange
       actions={[
         { icon: <Layers />, label: "All accounts", hint: accounts.length > 1 ? accounts.length : undefined, checked: scope === ALL, onSelect: () => { setScope(ALL); nav("/"); } },
         ...accounts.map((a) => ({ icon: <span className="text-[13px] w-5 text-center">{glyphFor(a.id)}</span>, label: a.email, checked: scope === a.id, onSelect: () => { setScope(a.id); nav("/"); } })),
-        { icon: <Plus />, label: "Connect Gmail", onSelect: () => startGoogleConnect() },
-        { icon: <Plus />, label: "Connect Outlook", onSelect: () => startMicrosoftConnect() },
+...(googleConfigured ? [{ icon: <Plus />, label: "Connect Gmail", onSelect: () => startGoogleConnect() }] : []),
+        ...(microsoftConfigured ? [{ icon: <Plus />, label: "Connect Outlook", onSelect: () => startMicrosoftConnect() }] : []),
         { icon: <Settings />, label: "Manage accounts", onSelect: () => nav("/settings#accounts") },
       ]}
     />

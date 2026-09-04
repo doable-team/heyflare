@@ -172,7 +172,7 @@ function AccountRow({ a }: { a: Account }) {
 }
 
 export function MobileSettingsAccounts() {
-  const { accounts } = useAccount();
+  const { accounts, googleConfigured, microsoftConfigured } = useAccount();
   const [addImap, setAddImap] = useState(false);
   const remote = accounts.filter((a) => a.provider !== "domain");
   const boxes = accounts.filter((a) => a.provider === "domain");
@@ -181,8 +181,8 @@ export function MobileSettingsAccounts() {
       <AddImapDialog open={addImap} onOpenChange={setAddImap} variant="drawer" />
       <Group title="Connected accounts" footer={remote.length === 0 ? "Nothing connected yet." : undefined}>
         {remote.map((a) => <AccountRow key={a.id} a={a} />)}
-        <Row icon={<Plus />} label="Connect Gmail" onClick={() => startGoogleConnect()} chevron={false} />
-        <Row icon={<Plus />} label="Connect Outlook" onClick={() => startMicrosoftConnect()} chevron={false} />
+{googleConfigured ? <Row icon={<Plus />} label="Connect Gmail" onClick={() => startGoogleConnect()} chevron={false} /> : null}
+        {microsoftConfigured ? <Row icon={<Plus />} label="Connect Outlook" onClick={() => startMicrosoftConnect()} chevron={false} /> : null}
         <Row icon={<Plus />} label="Add mailbox (IMAP)" onClick={() => setAddImap(true)} chevron={false} />
       </Group>
       <Group title="Domain mailboxes" footer={boxes.length === 0 ? "No mailboxes yet. Add a domain first." : undefined}>

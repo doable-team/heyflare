@@ -221,7 +221,7 @@ function TopBar() {
 
 /* ---------------- sidebar ---------------- */
 function AppSidebar() {
-  const { user, accounts, account, scope, setScope, glyphFor } = useAccount();
+  const { user, accounts, account, scope, setScope, glyphFor, googleConfigured, microsoftConfigured } = useAccount();
   const counts = useCounts(accounts.length > 0);
   const update = useUpdateCheck();
   const { openCompose } = useCompose();
@@ -437,14 +437,18 @@ function AppSidebar() {
             </DropdownMenuRadioGroup>
             {accounts.length === 0 && <div className="px-2 py-1.5 text-xs text-muted-foreground">Nothing connected yet.</div>}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => startGoogleConnect()}>
-              <Plus />
-              Connect Gmail
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => startMicrosoftConnect()}>
-              <Plus />
-              Connect Outlook
-            </DropdownMenuItem>
+{googleConfigured ? (
+              <DropdownMenuItem onClick={() => startGoogleConnect()}>
+                <Plus />
+                Connect Gmail
+              </DropdownMenuItem>
+            ) : null}
+            {microsoftConfigured ? (
+              <DropdownMenuItem onClick={() => startMicrosoftConnect()}>
+                <Plus />
+                Connect Outlook
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem onClick={() => nav("/settings#accounts")}>
               <Settings />
               Manage accounts

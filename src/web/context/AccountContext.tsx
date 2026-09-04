@@ -21,6 +21,9 @@ interface Ctx {
   /** True when more than one account is connected (show glyphs). */
   multi: boolean;
   setupRequired: boolean;
+  /** False when no OAuth client is configured, so the UI can offer setup instead of a failing connect. */
+  googleConfigured: boolean;
+  microsoftConfigured: boolean;
   loading: boolean;
   error: Error | null;
   setScope: (scope: Scope) => void;
@@ -40,6 +43,8 @@ const AccountCtx = createContext<Ctx>({
   account: null,
   multi: false,
   setupRequired: false,
+  googleConfigured: false,
+  microsoftConfigured: false,
   loading: true,
   error: null,
   setScope: () => {},
@@ -146,6 +151,8 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     account,
     multi: accounts.length > 1,
     setupRequired: me.data?.setup_required ?? false,
+    googleConfigured: me.data?.google_configured ?? false,
+    microsoftConfigured: me.data?.microsoft_configured ?? false,
     loading: me.isLoading,
     error: (me.error as Error) ?? null,
     setScope,
