@@ -95,8 +95,15 @@ const ICONS_PX = 64;
 /**
  * However short the meeting, it still has to be clickable. Exported because a block drawn taller
  * than its duration overlaps whatever comes next, so the column layout has to know this number too.
+ *
+ * This is the *day* floor. A compressed view has to pass its own — see the `floor` prop — because
+ * 22px of a 460px week column is over an hour, and a floor that lies about the duration by that
+ * much drags the column layout along with it: a 1:30-1:45 lunch ends up shouldering a 2:15 meeting
+ * into a second column even though the two never touch.
  */
 export const FLOOR_PX = 22;
+/** Under this there is no room for type at all, and the block is just its bar of colour. */
+const BARE_PX = 13;
 
 /**
  * One timed event, absolutely positioned inside a day column, sized by its own duration.
@@ -118,6 +125,7 @@ export function EventBlock({
   onPhoto,
   onDragStart,
   dragging,
+  floor = FLOOR_PX,
 }: {
   e: CalEvent;
   top: number;
@@ -138,8 +146,14 @@ export function EventBlock({
   onDragStart?: (ev: React.PointerEvent, mode: DragMode) => void;
   /** Under the pointer, or dropped and waiting for the server: draw it lifted, with live times. */
   dragging?: boolean;
+  /**
+   * The shortest this view ever draws a block. Whatever you pass here you must also hand to
+   * `layoutColumns` as milliseconds, or the columns will not match what is on screen.
+   */
+  floor?: number;
 }) {
-  const h = Math.max(height, FLOOR_PX);
+  const h = Math.max(height, floor);
+  const bare = h < BARE_PX;
   const oneLine = h < ONE_LINE_PX;
   const roomy = h >= ICONS_PX;
   // 6px of padding and a 12px time line come off the top; each title line costs 14px. Clamping to
@@ -179,7 +193,7 @@ export function EventBlock({
           dragging && "cursor-grabbing opacity-100 shadow-lg ring-1 ring-foreground/40",
         )}
       >
-        {oneLine ? (
+        {bare ? null : oneLine ? (
           // One line: the time and the title share a baseline — "5:30PM- 6PM  Weekly Call…"
           <span className="flex min-w-0 items-baseline gap-1">
             {e.kind === "todo" && <DoneBox e={e} onToggleDone={onToggleDone} />}

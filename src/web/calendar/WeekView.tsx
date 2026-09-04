@@ -3,7 +3,7 @@ import { useToast } from "../components/Toast";
 import type { CalEvent, CalendarDay, Habit } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useCalendar } from "./CalendarContext";
-import { AllDayPill, EventBlock, FLOOR_PX } from "./EventBlock";
+import { AllDayPill, EventBlock } from "./EventBlock";
 import { WeekTasks } from "./WeekTasks";
 import { eventColors } from "./colors";
 import { DayPhotoBackdrop, DayPhotoButton, hasPhoto } from "./DayPhoto";
@@ -66,6 +66,12 @@ const HEADER_PX = 34;
  */
 const BODY_PX = 460;
 const PX_PER_MS = BODY_PX / DAY_MS;
+/**
+ * The shortest a block is drawn in a week column — 25 minutes at this scale. Anything under it
+ * loses its type and reads as a bar of colour, which is the honest way to draw a quarter-hour in
+ * a 460px day; the alternative is to draw it as an hour and lie about what the day looks like.
+ */
+const WEEK_FLOOR_PX = 8;
 /** The "sometime this week" strip along the floor of the row. */
 const TASKS_PX = 28;
 
@@ -600,10 +606,11 @@ function Track({ date, first, day, drag }: { date: string; first: boolean; day: 
     return date >= from && date <= to ? [...kept, previewed(preview)] : kept;
   }, [allDay, preview, date]);
 
-  // The floor the blocks are actually drawn at, in milliseconds: a 15-minute meeting occupies
-  // FLOOR_PX of column whatever its duration, and two events only look separate if the layout
-  // reserves the same room the renderer takes.
-  const layout = useMemo(() => layoutColumns(rest, FLOOR_PX / PX_PER_MS), [rest]);
+  // The floor the blocks are actually drawn at, in milliseconds. It has to be the *week's* floor,
+  // not the day's: at this scale FLOOR_PX would be 69 minutes of column, so a 1:30-1:45 lunch would
+  // reserve room down to 2:39 and shoulder a 2:15 meeting into a second column for an overlap that
+  // never happens. WEEK_FLOOR_PX keeps the lie down to 25 minutes.
+  const layout = useMemo(() => layoutColumns(rest, WEEK_FLOOR_PX / PX_PER_MS), [rest]);
 
   const box = useRef<HTMLDivElement>(null);
   const [sketch, setSketch] = useState<{ from: number; to: number } | null>(null);
@@ -670,6 +677,7 @@ function Track({ date, first, day, drag }: { date: string; first: boolean; day: 
             height={bottom - top}
             column={layout[i].column}
             columns={layout[i].columns}
+            floor={WEEK_FLOOR_PX}
             format={settings.time_format}
             onClick={() => openEvent(e)}
             onToggleDone={() => setDone.mutate({ id: e.id, done: !e.done, date })}
@@ -686,6 +694,7 @@ function Track({ date, first, day, drag }: { date: string; first: boolean; day: 
           height={posOf(Math.min(ghost.ends_at, dayStart + DAY_MS)) - posOf(Math.max(ghost.starts_at, dayStart))}
           column={0}
           columns={1}
+          floor={WEEK_FLOOR_PX}
           format={settings.time_format}
           dragging
           onClick={() => openEvent(ghost)}
