@@ -473,9 +473,24 @@ export interface CalendarRange {
   time_entries: TimeEntry[];
 }
 
+/** One connected Google account, and what its refresh token actually carries. */
+export interface GoogleCalendarAccount {
+  id: string;
+  email: string;
+  /** Its token carries the Google Calendar scope. */
+  calendar: boolean;
+  /** Its token carries the Gmail scope — or predates the `scopes` column, which means it does. */
+  mail: boolean;
+  /** How many of its calendars heyflare holds. */
+  calendar_count: number;
+  sync_error: string | null;
+}
+
 export interface CalendarSourcesResponse {
   calendars: Calendar[];
   settings: CalendarSettings;
   /** Gmail accounts that have not yet granted the Calendar scope. */
   connectable: { id: string; email: string }[];
+  /** Every Google account, connected for mail, calendar or both. */
+  google_accounts: GoogleCalendarAccount[];
 }

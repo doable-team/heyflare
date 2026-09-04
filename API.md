@@ -166,7 +166,11 @@ owner, not to a mailbox, so `X-Account-Id` is ignored. The full route table, dat
 - Events: `POST`, `PATCH /:id?scope=this|following|all`, `DELETE /:id?scope=…`, `/:id/rsvp`, `/:id/done`,
   `/events/from-thread` (returns a prefill, creates nothing), `GET /events/:id.ics`.
 - Sources: `GET/POST /sources`, `/sources/subscribe` (ICS or webcal, read-only, SSRF-guarded), `/sources/import`,
-  `PATCH/DELETE /sources/:id`, `/sources/:id/sync`, `/sources/sync`, and `/google/connect-link` for the Calendar scope.
+  `PATCH/DELETE /sources/:id`, `/sources/:id/sync`, `/sources/sync`, `/google/connect-link` for the Calendar scope, and
+  `POST /google/:accountId/disconnect` to take one account's calendars and their events back out again.
 - Also `habits`, `days/:date`, `journal/:date`, `flex-tasks`, `time`, and `settings`.
-- `accounts.scopes` records which OAuth scopes a refresh token carries; a Gmail account without
-  `https://www.googleapis.com/auth/calendar` appears in `connectable` and needs one extra consent.
+- `accounts.scopes` records which OAuth scopes a refresh token carries. `GET /sources` reports every Google account in
+  `google_accounts` with `calendar`/`mail`/`calendar_count`/`sync_error`; one without
+  `https://www.googleapis.com/auth/calendar` also appears in `connectable` and needs one extra consent. An account can be
+  connected for calendar only (`connect-link` with `calendar_only`), in which case it carries no mail scope and the mail
+  cron skips it — an *empty* `scopes` predates the column and does mean mail.

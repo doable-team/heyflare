@@ -4,8 +4,8 @@ import type { AccountRow, MessageRow, ThreadRow } from "../db";
 import type { Address } from "@shared/types";
 import { uid, now, safeJson, ownedAccount, accountForThread } from "../db";
 import { htmlToText } from "../sanitize";
-import { googleConfigured, hasCalendarScope } from "../google";
-import { appOrigin, HANDOFF_PREFIX, CAL_PREFIX } from "./auth";
+import { googleConfigured, hasCalendarScope, hasMailScope, CALENDAR_SCOPE } from "../google";
+import { appOrigin, HANDOFF_PREFIX, statePrefixFor } from "./auth";
 import type { DayCoverRow, CalendarDayRow, CalendarRow, CalendarSettingsRow, FlexTaskRow, HabitRow, TimeEntryRow } from "../calendar/types";
 import {
   toCalendar,
@@ -300,16 +300,36 @@ function asCalendars(rows: CalendarRow[], accounts: AccountRow[], counts: Map<st
   return rows.map((r) => toCalendar(r, { account_email: r.account_id ? emails.get(r.account_id) ?? null : null, event_count: counts.get(r.id) ?? 0 }));
 }
 
-calendar.get("/sources", async (c) => {
-  const { userId, settings } = await ctx(c);
-  await ensureDefaultCalendars(c.env, userId).catch(() => {});
+/** The whole `/sources` body. Shared with the disconnect route so the client can just swap it in. */
+async function sourcesPayload(c: Context<AppEnv>, userId: string) {
+  const settings = await getSettings(c.env.DB, userId);
   const { rows, accounts, counts } = await calendarPayload(c, userId);
-  return c.json({
+  // How many calendars we hold for each Google account, so a row can say what disconnecting costs.
+  const perAccount = new Map<string, number>();
+  for (const r of rows) if (r.source === "google" && r.account_id) perAccount.set(r.account_id, (perAccount.get(r.account_id) ?? 0) + 1);
+  return {
     calendars: asCalendars(rows, accounts, counts),
     settings: toSettings(settings),
     // Gmail accounts whose refresh token predates (or declined) the Calendar scope.
     connectable: accounts.filter((a) => a.provider === "gmail" && !hasCalendarScope(a.scopes)).map((a) => ({ id: a.id, email: a.email })),
-  });
+    // Every Google account, and what its token actually carries: the settings list is built off this.
+    google_accounts: accounts
+      .filter((a) => a.provider === "gmail")
+      .map((a) => ({
+        id: a.id,
+        email: a.email,
+        calendar: hasCalendarScope(a.scopes),
+        mail: hasMailScope(a.scopes),
+        calendar_count: perAccount.get(a.id) ?? 0,
+        sync_error: a.sync_error ?? null,
+      })),
+  };
+}
+
+calendar.get("/sources", async (c) => {
+  const userId = c.get("user").id;
+  await ensureDefaultCalendars(c.env, userId).catch(() => {});
+  return c.json(await sourcesPayload(c, userId));
 });
 
 calendar.post("/sources", async (c) => {
@@ -464,22 +484,50 @@ calendar.post("/sources/:id/sync", async (c) => {
 /**
  * Same handoff as `POST /api/accounts/connect-link`, but the state also asks for the Calendar
  * scope. The app opens the URL in the system browser, which carries the user's Google session.
+ *
+ * `calendar_only` asks for Calendar and identity and nothing else, so the account it connects can
+ * never read mail. Anything else asks for mail and calendar together, which is what "Connect
+ * calendar" and "Reconnect" on an existing mail account want.
  */
 calendar.post("/google/connect-link", async (c) => {
   const user = c.get("user");
   if (!googleConfigured(c.env)) return c.json({ error: "google_not_configured", message: "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET secrets." }, 500);
-  const b = await body<{ account_id: string }>(c);
+  const b = await body<{ account_id: string; calendar_only: boolean }>(c);
   let hint = "";
   if (typeof b.account_id === "string" && b.account_id) {
     const acc = await ownedAccount(c.env.DB, user.id, b.account_id);
     if (!acc) return c.json({ error: "not_found" }, 404);
     hint = acc.email;
   }
-  const state = `${HANDOFF_PREFIX}${CAL_PREFIX}${uid()}`;
+  const state = `${HANDOFF_PREFIX}${statePrefixFor(b.calendar_only === true ? "calendar" : "mail+calendar")}${uid()}`;
   await c.env.DB.prepare(`INSERT INTO oauth_states (state, user_id, created_at) VALUES (?, ?, ?)`).bind(state, user.id, now()).run();
   c.executionCtx.waitUntil(c.env.DB.prepare(`DELETE FROM oauth_states WHERE created_at < ?`).bind(now() - 3600_000).run());
   const url = `${appOrigin(c)}/auth/google/handoff?state=${encodeURIComponent(state)}${hint ? `&login_hint=${encodeURIComponent(hint)}` : ""}`;
   return c.json({ url });
+});
+
+/**
+ * Take one Google account's calendars back out of heyflare: drop the calendars and their events, and
+ * forget the Calendar scope so the account offers "Connect calendar" again. Mail is untouched, the
+ * account itself stays, and nothing changes in Google — the grant is still there until the user
+ * revokes it, and reconnecting re-mirrors everything.
+ */
+calendar.post("/google/:accountId/disconnect", async (c) => {
+  const db = c.env.DB;
+  const userId = c.get("user").id;
+  const acc = await ownedAccount(db, userId, c.req.param("accountId"));
+  if (!acc) return c.json({ error: "not_found" }, 404);
+  const cals = await db
+    .prepare(`SELECT id FROM calendars WHERE user_id = ? AND account_id = ? AND source = 'google'`)
+    .bind(userId, acc.id)
+    .all<{ id: string }>();
+  for (const row of cals.results) await deleteCalendar(db, row.id);
+  const kept = (acc.scopes ?? "")
+    .split(/\s+/)
+    .filter((s) => s && s !== CALENDAR_SCOPE)
+    .join(" ");
+  await db.prepare(`UPDATE accounts SET scopes = ? WHERE id = ? AND user_id = ?`).bind(kept, acc.id, userId).run();
+  return c.json({ ok: true, removed: cals.results.length, ...(await sourcesPayload(c, userId)) });
 });
 
 /* ---------- habits ---------- */

@@ -6,15 +6,30 @@ const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me/";
 const BATCH_URL = "https://www.googleapis.com/batch/gmail/v1";
 /** Granted on every connect. Calendar is asked for separately so mail-only users aren't scared off. */
 export const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar";
+/** The one scope that decides whether an account can sync mail at all. */
+export const MAIL_SCOPE = "https://www.googleapis.com/auth/gmail.modify";
+/** Enough to identify who just signed in, and nothing more. */
+const IDENTITY_SCOPES = ["openid", "email", "profile"];
 const SCOPES = [
-  "https://www.googleapis.com/auth/gmail.modify",
+  MAIL_SCOPE,
   "https://www.googleapis.com/auth/contacts.other.readonly",
   "https://www.googleapis.com/auth/contacts.readonly",
   "https://www.googleapis.com/auth/directory.readonly",
-  "openid",
-  "email",
-  "profile",
+  ...IDENTITY_SCOPES,
 ];
+
+/**
+ * What a connect is asking Google for.
+ * - `mail` — mail, contacts and identity; the calendar is left alone.
+ * - `mail+calendar` — the same, plus Google Calendar.
+ * - `calendar` — Google Calendar and identity only. No mail access whatsoever.
+ */
+export type GoogleScopeMode = "mail" | "mail+calendar" | "calendar";
+
+function scopesFor(mode: GoogleScopeMode): string[] {
+  if (mode === "calendar") return [...IDENTITY_SCOPES, CALENDAR_SCOPE];
+  return mode === "mail+calendar" ? [...SCOPES, CALENDAR_SCOPE] : SCOPES;
+}
 
 export class GmailError extends Error {
   status: number;
@@ -35,12 +50,28 @@ export function hasCalendarScope(scopes: string | null | undefined): boolean {
   return (scopes ?? "").split(/\s+/).includes(CALENDAR_SCOPE);
 }
 
-export function googleAuthUrl(env: Env, state: string, redirectUri: string, loginHint?: string, calendar = false): string {
+/**
+ * True when this account can sync mail. Accounts connected before the `scopes` column existed
+ * recorded nothing — and every one of them was connected for mail — so an empty `scopes` counts as
+ * mail. Only an account that recorded scopes *without* gmail.modify is calendar-only.
+ */
+export function hasMailScope(scopes: string | null | undefined): boolean {
+  const s = (scopes ?? "").trim();
+  return s === "" || s.split(/\s+/).includes(MAIL_SCOPE);
+}
+
+/**
+ * The same test as `hasMailScope`, as a SQL predicate over an `accounts` row. Keep the two in step:
+ * getting this wrong silently stops mail sync for accounts that predate the `scopes` column.
+ */
+export const MAIL_SCOPE_SQL = `(scopes IS NULL OR scopes = '' OR scopes LIKE '%gmail.modify%')`;
+
+export function googleAuthUrl(env: Env, state: string, redirectUri: string, loginHint?: string, mode: GoogleScopeMode = "mail"): string {
   const u = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   u.searchParams.set("client_id", env.GOOGLE_CLIENT_ID!);
   u.searchParams.set("redirect_uri", redirectUri);
   u.searchParams.set("response_type", "code");
-  u.searchParams.set("scope", (calendar ? [...SCOPES, CALENDAR_SCOPE] : SCOPES).join(" "));
+  u.searchParams.set("scope", scopesFor(mode).join(" "));
   u.searchParams.set("access_type", "offline");
   u.searchParams.set("prompt", "consent");
   u.searchParams.set("include_granted_scopes", "true");

@@ -759,9 +759,23 @@ export function useCalendarSourceMutations() {
   };
 }
 
-/** Kicks off Google consent for the Calendar scope; open the returned URL. */
+/**
+ * Kicks off Google consent for the Calendar scope; open the returned URL. `account_id` pre-fills
+ * which account to sign in as; `calendar_only` asks for calendar access and no mail access at all.
+ */
 export function useCalendarConnectLink() {
-  return useMutation({ mutationFn: (b: { account_id?: string } = {}) => api.post<{ url: string }>("/api/calendar/google/connect-link", b) });
+  return useMutation({
+    mutationFn: (b: { account_id?: string; calendar_only?: boolean } = {}) => api.post<{ url: string }>("/api/calendar/google/connect-link", b),
+  });
+}
+
+/** Drops one Google account's calendars and their events, and forgets its Calendar scope. Mail is untouched. */
+export function useCalendarDisconnect() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (accountId: string) => api.post<{ ok: boolean; removed: number } & T.CalendarSourcesResponse>(`/api/calendar/google/${accountId}/disconnect`),
+    onSuccess: () => invalidateCalendar(qc),
+  });
 }
 
 // --- Settings ---

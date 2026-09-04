@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { CalendarPlus, Link2, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
+import { CalendarPlus, CalendarX2, Link2, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
-import type { Calendar, CalendarSettings, CalendarSource, CalendarView } from "@shared/types";
-import { useAccount } from "../context/AccountContext";
-import { useCalendarConnectLink, useCalendarSettings, useCalendarSettingsMutation, useCalendarSourceMutations, useCalendarSources } from "../api";
+import type { Calendar, CalendarSettings, CalendarSource, CalendarView, GoogleCalendarAccount } from "@shared/types";
+import {
+  useCalendarConnectLink,
+  useCalendarDisconnect,
+  useCalendarSettings,
+  useCalendarSettingsMutation,
+  useCalendarSourceMutations,
+  useCalendarSources,
+} from "../api";
 import { Section, Row, Danger, Toggle } from "../pages/Settings";
 import { fmtRelative } from "../lib/format";
 import { isNative, openExternalUrl } from "../lib/native";
@@ -183,58 +189,118 @@ function ConnectedCalendars({ calendars, loading, error }: { calendars: Calendar
   );
 }
 
-/* ---------- connect Google ---------- */
+/* ---------- Google accounts ---------- */
 
-function ConnectGoogle({ connectable }: { connectable: { id: string; email: string }[] }) {
-  const { accounts } = useAccount();
+/** What heyflare holds this account's token for, said plainly. */
+function connectedFor(a: GoogleCalendarAccount): string {
+  if (a.mail && a.calendar) return "Mail and calendar";
+  if (a.calendar) return "Calendar only";
+  if (a.mail) return "Mail only";
+  return "Nothing yet";
+}
+
+function calendarCount(n: number): string {
+  return n === 1 ? "1 calendar" : `${n} calendars`;
+}
+
+/** The key `pending` holds while the calendar-only flow is opening; no account owns it. */
+const NEW_ACCOUNT = "__new__";
+
+function GoogleAccountLine({ a, pending, onConnect }: { a: GoogleCalendarAccount; pending: string | null; onConnect: (a: GoogleCalendarAccount) => void }) {
+  const disconnect = useCalendarDisconnect();
+  const [confirm, setConfirm] = useState(false);
+  const busy = pending === a.id;
+
+  return (
+    <div className="flex flex-col gap-2 border-b border-border px-2 py-2.5 last:border-b-0 sm:flex-row sm:items-center sm:gap-3">
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm">{a.email}</div>
+        <div className="mt-0.5 text-xs text-muted-foreground">
+          {connectedFor(a)}
+          {a.calendar ? ` · ${calendarCount(a.calendar_count)} here` : " · no calendars here"}
+        </div>
+        {a.sync_error && <div className="mt-0.5 text-xs">Last sync failed: {a.sync_error}</div>}
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        <Button size="sm" variant="outline" disabled={busy} onClick={() => onConnect(a)}>
+          {a.calendar ? <RefreshCw /> : <CalendarPlus />}
+          {busy ? "Opening…" : a.calendar ? "Reconnect" : "Connect calendar"}
+        </Button>
+        {a.calendar && (
+          <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={disconnect.isPending} onClick={() => setConfirm(true)}>
+            <CalendarX2 /> Disconnect calendar
+          </Button>
+        )}
+      </div>
+      <Danger
+        open={confirm}
+        onOpenChange={setConfirm}
+        title={`Disconnect ${a.email}'s calendar?`}
+        body={`This removes ${a.calendar_count ? calendarCount(a.calendar_count) : "this account's calendars"} and every event on them from heyflare. Nothing changes in Google, and its mail stays connected. You can connect the calendar again whenever you like.`}
+        action="Disconnect calendar"
+        onConfirm={() =>
+          disconnect.mutate(a.id, {
+            onSuccess: () => toast(`${a.email}'s calendar disconnected`),
+            onError: (e) => toast.error((e as Error).message),
+          })
+        }
+      />
+    </div>
+  );
+}
+
+function GoogleAccounts({ accounts }: { accounts: GoogleCalendarAccount[] }) {
   const link = useCalendarConnectLink();
   const [pending, setPending] = useState<string | null>(null);
-  const gmail = accounts.filter((a) => a.provider === "gmail");
 
-  const connect = (accountId: string) => {
-    setPending(accountId);
-    link.mutate(
-      { account_id: accountId },
-      {
-        onSuccess: ({ url }) => {
-          // The consent screen has to run where the user's Google session lives: the real browser in
-          // the Mac and iOS shells, this tab everywhere else.
-          if (isNative) {
-            openExternalUrl(url);
-            toast("Finish in your browser, then come back.");
-            setPending(null);
-          } else {
-            location.assign(url);
-          }
-        },
-        onError: (e) => { setPending(null); toast.error((e as Error).message); },
+  const open = (key: string, body: { account_id?: string; calendar_only?: boolean }) => {
+    setPending(key);
+    link.mutate(body, {
+      onSuccess: ({ url }) => {
+        // The consent screen has to run where the user's Google session lives: the real browser in
+        // the Mac and iOS shells, this tab everywhere else.
+        if (isNative) {
+          openExternalUrl(url);
+          toast("Finish in your browser, then come back.");
+          setPending(null);
+        } else {
+          location.assign(url);
+        }
       },
-    );
+      onError: (e) => { setPending(null); toast.error((e as Error).message); },
+    });
   };
 
   return (
-    <Section title="Google Calendar" description="heyflare asks for calendar access separately from mail, so connecting an account for mail alone never touches its calendar.">
-      {gmail.length === 0 ? (
+    <Section title="Google accounts" description="heyflare asks for calendar access separately from mail, so an account connected for mail alone never touches its calendar.">
+      {accounts.length === 0 ? (
         <div className="px-2 py-2 text-[13px] text-muted-foreground">
-          No Gmail account is connected yet. Connect one under <Link to="/settings#accounts" className="underline underline-offset-2 hover:text-foreground">Accounts</Link>, then come back here.
+          No Google account is connected yet. Connect one for mail under{" "}
+          <Link to="/settings#accounts" className="underline underline-offset-2 hover:text-foreground">Accounts</Link>, or connect one just for calendar below.
         </div>
-      ) : connectable.length === 0 ? (
-        <div className="px-2 py-2 text-[13px] text-muted-foreground">Every connected account already shares its calendar.</div>
       ) : (
         <div>
-          {connectable.map((a) => (
-            <div key={a.id} className="flex items-center gap-3 border-b border-border px-2 py-2.5 last:border-b-0">
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm">{a.email}</div>
-                <div className="text-xs text-muted-foreground">Mail only. Its calendars aren't here yet.</div>
-              </div>
-              <Button size="sm" variant="outline" disabled={pending === a.id} onClick={() => connect(a.id)}>
-                <CalendarPlus /> {pending === a.id ? "Opening…" : "Connect"}
-              </Button>
-            </div>
+          {accounts.map((a) => (
+            <GoogleAccountLine
+              key={a.id}
+              a={a}
+              pending={pending}
+              // An account we hold no mail scope for stays that way: reconnecting it must not quietly
+              // ask for mail the owner never granted.
+              onConnect={(acc) => open(acc.id, { account_id: acc.id, calendar_only: !acc.mail })}
+            />
           ))}
         </div>
       )}
+      <div className="mt-4 px-2">
+        <Button size="sm" variant="outline" disabled={pending === NEW_ACCOUNT} onClick={() => open(NEW_ACCOUNT, { calendar_only: true })}>
+          <CalendarPlus /> {pending === NEW_ACCOUNT ? "Opening…" : "Connect a Google account for calendar only"}
+        </Button>
+        <p className="mt-1.5 text-xs text-muted-foreground">Asks Google for calendar access and no mail access at all.</p>
+        {accounts.some((a) => a.calendar) && (
+          <p className="mt-1 text-xs text-muted-foreground">Reconnect runs Google's consent screen again — that's how you fix a grant Google has expired or you have revoked.</p>
+        )}
+      </div>
     </Section>
   );
 }
@@ -500,7 +566,7 @@ export function CalendarSettingsSection({ compact }: { compact?: boolean }) {
   return (
     <>
       <ConnectedCalendars calendars={calendars} loading={q.isLoading} error={q.error ? (q.error as Error).message : null} />
-      <ConnectGoogle connectable={q.data?.connectable ?? []} />
+      <GoogleAccounts accounts={q.data?.google_accounts ?? []} />
       <SubscribeBlock calendars={calendars} />
       <CalendarPreferences compact={compact} />
     </>

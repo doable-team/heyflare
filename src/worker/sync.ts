@@ -1,7 +1,7 @@
 import type { Env } from "./env";
 import type { AccountRow, ContactRow, ThreadRow } from "./db";
 import { uid, now, chunk, placeholders, safeJson, runBatch, logSync } from "./db";
-import { gmailJson, gmailBatchGet, GmailError } from "./google";
+import { gmailJson, gmailBatchGet, GmailError, hasMailScope } from "./google";
 import { parseGmailMessage, stripSubjectPrefixes, parseAddressList, type GmailMessage, type ParsedMessage } from "./mime";
 import { stripTrackers, htmlToText } from "./sanitize";
 import { syncContactPhotos } from "./people";
@@ -688,6 +688,10 @@ export async function syncAccount(env: Env, account: AccountRow): Promise<{ adde
   const db = env.DB;
   if (account.sync_status === "disconnected") return { added: 0, status: "disconnected" };
   if (!account.refresh_token) return { added: 0, status: "disconnected" };
+  // An account connected for calendar only has no mail scope: every Gmail call would 403. Leave it
+  // alone rather than writing a sync error every minute. (An empty `scopes` predates the column and
+  // does have mail — see hasMailScope.)
+  if (!hasMailScope(account.scopes)) return { added: 0, status: "no_mail_scope" };
   await db.prepare(`UPDATE accounts SET sync_status = 'syncing' WHERE id = ?`).bind(account.id).run();
   let added = 0;
   try {

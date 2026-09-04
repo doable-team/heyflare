@@ -20,6 +20,7 @@ import { runLearning } from "./ai/memory";
 import domainRoutes from "./routes/domains";
 import calendarRoutes from "./routes/calendar";
 import { runCalendarSync } from "./calendar/sync";
+import { MAIL_SCOPE_SQL } from "./google";
 import { handleInboundEmail } from "./inbound";
 import { ensureMigrations } from "./migrations";
 import { VERSION, COMMIT, BUILT_AT } from "@shared/version";
@@ -95,9 +96,11 @@ async function runCron(env: Env) {
   } catch (e) {
     console.error("calendar sync failed", e);
   }
+  // Accounts connected for calendar only carry no mail scope, so they are not mail accounts to sync.
+  // MAIL_SCOPE_SQL mirrors hasMailScope: an empty `scopes` predates the column and does have mail.
   const accounts = await db
     .prepare(
-      `SELECT * FROM accounts WHERE provider = 'gmail' AND sync_status <> 'disconnected' AND refresh_token IS NOT NULL ORDER BY initial_sync_done ASC, COALESCE(last_synced_at, 0) ASC LIMIT 8`
+      `SELECT * FROM accounts WHERE provider = 'gmail' AND sync_status <> 'disconnected' AND refresh_token IS NOT NULL AND ${MAIL_SCOPE_SQL} ORDER BY initial_sync_done ASC, COALESCE(last_synced_at, 0) ASC LIMIT 8`
     )
     .all<AccountRow>();
   for (const acc of accounts.results) {

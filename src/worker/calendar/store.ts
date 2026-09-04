@@ -206,8 +206,10 @@ export function parseEventId(id: string): { id: string; occurrence: string | nul
 export async function getSettings(db: D1Database, userId: string): Promise<CalendarSettingsRow> {
   const row = await db.prepare(`SELECT * FROM calendar_settings WHERE user_id = ?`).bind(userId).first<CalendarSettingsRow>();
   if (row) return row;
-  // First touch: materialise the schema defaults so every later read is a plain SELECT.
-  await db.prepare(`INSERT OR IGNORE INTO calendar_settings (user_id, updated_at) VALUES (?, ?)`).bind(userId, now()).run();
+  // First touch: materialise the schema defaults so every later read is a plain SELECT. The view
+  // is named explicitly because the column's own default still says 'days' — SQLite cannot alter a
+  // default in place, and the week is the calendar's home.
+  await db.prepare(`INSERT OR IGNORE INTO calendar_settings (user_id, default_view, updated_at) VALUES (?, 'week', ?)`).bind(userId, now()).run();
   const fresh = await db.prepare(`SELECT * FROM calendar_settings WHERE user_id = ?`).bind(userId).first<CalendarSettingsRow>();
   return (
     fresh ?? {
@@ -218,7 +220,7 @@ export async function getSettings(db: D1Database, userId: string): Promise<Calen
       night_end: 6,
       collapse_night: 1,
       time_format: "12",
-      default_view: "days",
+      default_view: "week",
       show_declined: 0,
       cover_art: 0,
       updated_at: now(),

@@ -13,8 +13,21 @@ a journal — sit in the same column as the meetings.
 | `ics`    | A subscribed `.ics`/`webcal` URL   | no       |
 
 Google needs the `https://www.googleapis.com/auth/calendar` scope, which existing accounts were not
-connected with. `accounts.scopes` records what a refresh token actually carries; an account missing
-the scope shows up in `connectable` and gets a "Connect Calendar" button that re-runs consent.
+connected with. `accounts.scopes` records what a refresh token actually carries, and Settings →
+Calendar lists every Google account off `google_accounts` with what it is connected for — mail and
+calendar, calendar only, or mail only — how many calendars heyflare holds for it, and its last sync
+error. Each row can connect its calendar, reconnect (the same consent run, which is how a revoked or
+expired grant is recovered) or disconnect its calendar.
+
+A Google account can be connected **for calendar only**: `openid`, `email`, `profile` and the
+Calendar scope, and no mail access at all. It is still a `provider = 'gmail'` row, so the mail cron
+and `syncAccount` both skip anything whose `scopes` carry no `gmail.modify` — with the deliberate
+exception of an empty `scopes`, which predates the column and *does* mean mail. `hasMailScope` and
+`MAIL_SCOPE_SQL` in `src/worker/google.ts` are the two copies of that test; keep them in step.
+
+Disconnecting a calendar deletes that account's `google` calendars and their events and strips the
+Calendar scope from `accounts.scopes`, so the account offers "Connect calendar" again. It never
+touches mail, never deletes the account, and changes nothing in Google.
 
 ## Views
 
@@ -101,8 +114,12 @@ An `:id` may be `<row>@<YYYY-MM-DD>`, addressing one occurrence of a recurring m
 
 ### Google
 
-- `POST /api/calendar/google/connect-link` `{ account_id? }` → `{ url }` — consent in the browser
-- `GET  /auth/google/start?calendar=1` — same, from the web app
+- `POST /api/calendar/google/connect-link` `{ account_id?, calendar_only? }` → `{ url }` — consent in
+  the browser. `calendar_only` asks for calendar access and no mail access at all.
+- `POST /api/calendar/google/:accountId/disconnect` → the `/sources` payload plus `{ ok, removed }` —
+  drops that account's calendars and events and forgets its Calendar scope. Mail and the account
+  itself are untouched, and so is Google.
+- `GET  /auth/google/start?calendar=1` (or `?calendar_only=1`) — same, from the web app
 
 ### The rest
 
@@ -130,7 +147,7 @@ hooks: `useCalendarRange`, `useCalendarSources`, `useCalendarSettings`,
 `useHabits`, `useHabitMutations` (`create`/`update`/`remove`/`toggle`), `useCalendarDay`,
 `useCalendarDayMutation`, `useJournal`, `useJournalIndex`, `useJournalMutation`, `useFlexTasks`,
 `useFlexTaskMutations`, `useTimeEntries`, `useTimeMutations`, `useEventFromThread`,
-`useCalendarConnectLink`, and `eventIcsUrl`.
+`useCalendarConnectLink`, `useCalendarDisconnect`, and `eventIcsUrl`.
 
 `src/web/calendar/CalendarContext.tsx` gives every view the same state through `useCalendar()`:
 settings, calendars, `view`/`setView`, `cursor`/`setCursor`, `today`, the loaded window

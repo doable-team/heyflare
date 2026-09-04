@@ -6,7 +6,7 @@ import { syncAccount } from "../sync";
 import { syncContactPhotos } from "../people";
 import { deleteAccountData } from "./domains";
 import { appOrigin, HANDOFF_PREFIX, CAL_PREFIX } from "./auth";
-import { googleConfigured } from "../google";
+import { googleConfigured, hasMailScope } from "../google";
 import { uid, now } from "../db";
 
 const accounts = new Hono<AppEnv>();
@@ -52,6 +52,8 @@ accounts.post("/:id/sync", async (c) => {
   const acc = await ownAccount(c, c.req.param("id"));
   if (!acc) return c.json({ error: "not_found" }, 404);
   if (acc.provider === "domain") return c.json({ ok: true, added: 0, status: "ok", account: toAccount(acc) });
+  // Connected for calendar only: there is no mail to fetch, and that is not a failure.
+  if (!hasMailScope(acc.scopes)) return c.json({ ok: true, added: 0, status: "ok", account: toAccount(acc) });
   const r = await syncAccount(c.env, acc);
   const fresh = await ownAccount(c, acc.id);
   return c.json({ ok: r.status === "ok", added: r.added, status: r.status, account: toAccount(fresh!) });
@@ -69,7 +71,7 @@ accounts.post("/:id/reset", async (c) => {
     .bind(acc.id)
     .run();
   let syncError: string | null = null;
-  if (acc.provider === "gmail") {
+  if (acc.provider === "gmail" && hasMailScope(acc.scopes)) {
     const fresh = await ownAccount(c, acc.id);
     const r = await syncAccount(c.env, fresh!);
     if (r.status !== "ok") syncError = (await ownAccount(c, acc.id))?.sync_error ?? r.status;
