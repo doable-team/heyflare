@@ -7,7 +7,7 @@ import { syncContactPhotos } from "../people";
 import { deleteAccountData } from "./domains";
 import { appOrigin, HANDOFF_PREFIX, CAL_PREFIX } from "./auth";
 import { googleConfigured, hasMailScope } from "../google";
-import { hasMsMailScope } from "../microsoft";
+import { hasMsMailScope, microsoftConfigured } from "../microsoft";
 import { configFor, verifyBoth, encryptPassword, passwordHint, loadImapRow } from "../imapbox";
 import type { ImapSecurity } from "../imap";
 import type { SmtpSecurity } from "../smtp";
@@ -114,19 +114,27 @@ accounts.get("/:id/logs", async (c) => {
 });
 
 /**
- * Mints a one-time link that starts Google's consent flow in the *system browser*. The Mac app calls
- * this (it holds the session), then opens the URL outside the webview — Google increasingly refuses
- * to sign people in inside embedded web views, and the browser has the user's Google session anyway.
+ * Mints a one-time link that starts a provider's consent flow in the *system browser*. The native
+ * apps call this (they hold the session), then open the URL outside the webview — Google refuses to
+ * sign people in inside embedded web views, and Microsoft blocks it under some Conditional Access
+ * policies, so both go the same way rather than guessing which webview will be accepted.
  */
 accounts.post("/connect-link", async (c) => {
   const user = c.get("user");
-  if (!(await googleConfigured(c.env))) return c.json({ error: "google_not_configured", message: "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET secrets." }, 500);
-  const body = await c.req.json<{ login_hint?: string; calendar?: boolean }>().catch(() => ({}) as { login_hint?: string; calendar?: boolean });
-  const state = `${HANDOFF_PREFIX}${body.calendar ? CAL_PREFIX : ""}${uid()}`;
+  const body = await c.req
+    .json<{ login_hint?: string; calendar?: boolean; provider?: string }>()
+    .catch(() => ({}) as { login_hint?: string; calendar?: boolean; provider?: string });
+  const provider = body.provider === "microsoft" ? "microsoft" : "google";
+  if (provider === "microsoft") {
+    if (!(await microsoftConfigured(c.env))) return c.json({ error: "microsoft_not_configured", message: "Set MS_CLIENT_ID and MS_CLIENT_SECRET secrets." }, 500);
+  } else if (!(await googleConfigured(c.env))) {
+    return c.json({ error: "google_not_configured", message: "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET secrets." }, 500);
+  }
+  const state = `${HANDOFF_PREFIX}${provider === "google" && body.calendar ? CAL_PREFIX : ""}${uid()}`;
   await c.env.DB.prepare(`INSERT INTO oauth_states (state, user_id, created_at) VALUES (?, ?, ?)`).bind(state, user.id, now()).run();
   c.executionCtx.waitUntil(c.env.DB.prepare(`DELETE FROM oauth_states WHERE created_at < ?`).bind(now() - 3600_000).run());
   const hint = (body.login_hint ?? "").trim();
-  const url = `${appOrigin(c)}/auth/google/handoff?state=${encodeURIComponent(state)}${hint ? `&login_hint=${encodeURIComponent(hint)}` : ""}`;
+  const url = `${appOrigin(c)}/auth/${provider}/handoff?state=${encodeURIComponent(state)}${hint ? `&login_hint=${encodeURIComponent(hint)}` : ""}`;
   return c.json({ url });
 });
 

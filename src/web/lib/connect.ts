@@ -32,7 +32,7 @@ function showWaitingOverlay(onDone: () => void) {
   el.className = "fixed inset-0 z-[1000] flex flex-col items-center justify-center gap-5 bg-background text-foreground px-6 text-center";
   el.innerHTML = `${MARK}
     <div class="max-w-xs space-y-1">
-      <div class="text-sm font-medium">Waiting for Google in your browser…</div>
+      <div class="text-sm font-medium">Waiting for your browser…</div>
       <div class="text-[13px] text-muted-foreground">Finish signing in there, then come back. Your account shows up on its own.</div>
     </div>
     <div class="flex items-center gap-2">
@@ -53,14 +53,14 @@ export function setConnectRefresh(fn: () => void) {
   refresh = fn;
 }
 
-async function startNative(hint?: string) {
+async function startNative(hint?: string, provider: "google" | "microsoft" = "google") {
   let url: string | undefined;
   try {
     const res = await fetch("/api/accounts/connect-link", {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(hint ? { login_hint: hint } : {}),
+      body: JSON.stringify({ provider, ...(hint ? { login_hint: hint } : {}) }),
     });
     const data = (await res.json().catch(() => null)) as { url?: string; message?: string; error?: string } | null;
     if (!res.ok || !data?.url) throw new Error(data?.message || data?.error || "Couldn't start the Google flow.");
@@ -93,10 +93,16 @@ export function startGoogleConnect(hint?: string) {
 }
 
 /**
- * Microsoft needs no system-browser handoff: unlike Google it still signs people in inside embedded
- * web views, so the native app can run the consent screen in place and keep its session cookie.
+ * Microsoft goes through the same system-browser handoff as Google in the native apps. It is less
+ * strict about embedded web views than Google, but Conditional Access can still refuse one — and a
+ * connect that fails only for some tenants is worse than always using the path that works.
  */
 export function startMicrosoftConnect(hint?: string) {
+  if (isNative) {
+    showConnectOverlay("Opening your browser…");
+    void startNative(hint, "microsoft");
+    return;
+  }
   showConnectOverlay("Taking you to Microsoft…");
   const url = hint ? `/auth/microsoft/start?login_hint=${encodeURIComponent(hint)}` : "/auth/microsoft/start";
   requestAnimationFrame(() => setTimeout(() => (location.href = url), 30));
