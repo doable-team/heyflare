@@ -333,8 +333,10 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
               {showNow && (
                 <div className="pointer-events-none absolute inset-y-0 z-40" style={{ left: ribbon.pos(now) }}>
                   <div className="h-full w-px bg-red-500" />
+                  {/* Dot, line and time read as one marker: the pill hangs off the line itself
+                      rather than floating a few pixels clear of it. */}
                   <div className="absolute -left-[3px] -top-[3px] size-[7px] rounded-full bg-red-500" />
-                  <div className="absolute -top-[1px] left-2 rounded-sm bg-red-500 px-1 py-px text-[9.5px] font-medium tnum text-white">
+                  <div className="absolute left-0 top-0 rounded-r-sm rounded-bl-sm bg-red-500 px-1 py-px text-[9.5px] font-medium tnum text-white">
                     {heyTime(now, settings.time_format)}
                   </div>
                 </div>
