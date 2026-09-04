@@ -110,6 +110,9 @@ export function EventBlock({
   const h = Math.max(height, FLOOR_PX);
   const oneLine = h < ONE_LINE_PX;
   const roomy = h >= ICONS_PX;
+  // 6px of padding and a 12px time line come off the top; each title line costs 14px. Clamping to
+  // what actually fits stops a 2.5-hour block from slicing its second line in half.
+  const titleLines = Math.max(1, Math.min(3, Math.floor((h - 6 - 12) / 14)));
   const declined = e.rsvp === "declined";
   const maybe = isMaybe(e);
 
@@ -153,12 +156,15 @@ export function EventBlock({
           </span>
         ) : (
           <>
-            <span className="block shrink-0 text-[9.5px] leading-[12px] tnum opacity-70">{heyRange(e.starts_at, e.ends_at, format)}</span>
+            <span className="block shrink-0 truncate whitespace-nowrap text-[9.5px] leading-[12px] tnum opacity-70">{heyRange(e.starts_at, e.ends_at, format)}</span>
             <span className="flex min-w-0 items-start gap-1">
               {e.kind === "todo" && <DoneBox e={e} onToggleDone={onToggleDone} />}
               <span
-                className={cn("min-w-0 line-clamp-2 text-[12px] font-semibold leading-[14px]", (e.done || declined) && "line-through")}
-                style={maybe ? { fontFamily: HAND, fontStyle: "italic" } : undefined}
+                style={{ WebkitLineClamp: titleLines, ...(maybe ? { fontFamily: HAND, fontStyle: "italic" } : {}) }}
+                className={cn(
+                  "min-w-0 overflow-hidden text-ellipsis text-[12px] font-semibold leading-[14px] [display:-webkit-box] [-webkit-box-orient:vertical]",
+                  (e.done || declined) && "line-through",
+                )}
               >
                 {e.emoji ? `${e.emoji} ` : ""}
                 {title}

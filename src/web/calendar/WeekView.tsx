@@ -316,7 +316,7 @@ function DayHeader({ date, photo }: { date: string; photo?: boolean }) {
           "inline-flex items-baseline gap-1",
           today && "rounded-full bg-foreground px-2 py-[3px] text-background",
           // Over a photo the number goes plain white — no shadow, no halo — as HEY does.
-          !today && photo && "text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.45)]",
+          !today && photo && "text-white [text-shadow:0_0_3px_rgba(0,0,0,0.9),0_1px_2px_rgba(0,0,0,0.8)]",
         )}
       >
         <span className={cn("text-[11px] uppercase leading-none tracking-[0.1em]", !today && !photo && "text-tertiary")}>{WEEKDAYS[d.getDay()]}</span>
