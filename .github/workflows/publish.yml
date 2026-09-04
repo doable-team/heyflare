@@ -25,7 +25,12 @@ jobs:
         working-directory: packages/create-heyflare
       - run: npm test
         working-directory: packages/create-heyflare
+      # Trusted publishing (the id-token permission above) needs the package configured for it on
+      # npmjs.com; NODE_AUTH_TOKEN is the fallback and is what the NPM_TOKEN secret is for. Without
+      # either, this step fails with ENEEDAUTH and nothing reaches npm.
       - run: npm publish --provenance --access public
         working-directory: packages/create-heyflare
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
