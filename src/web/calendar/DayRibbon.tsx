@@ -6,8 +6,20 @@ import { cn } from "@/lib/utils";
 import { useCalendar } from "./CalendarContext";
 import { eventColors } from "./colors";
 import { InkCircle } from "./InkCircle";
+import {
+  DRAG_SLOP_PX,
+  dragSpan,
+  handlePx,
+  previewed,
+  spanMoved,
+  spanPatch,
+  swallowNextClick,
+  type DragMode,
+  type DragSpan,
+  type EventPreview,
+} from "./dragEvent";
 import { freeGaps, heyRange, heyTime, makeRibbon, spanLabel, type Ribbon, type RibbonRun } from "./scale";
-import { useCalendarDayMutation, useHabitMutations } from "../api";
+import { useCalendarDayMutation, useEventMutations, useHabitMutations } from "../api";
 import { DayPhotoBackdrop, DayPhotoButton } from "./DayPhoto";
 import {
   addDays,
@@ -59,6 +71,20 @@ const CAPTION_H = 19;
 const HOURS_H = 17;
 const TRACK_TOP = CAPTION_H + HOURS_H;
 
+/** One drag in progress on the strip. The instant under the press, not the pixel, is what matters. */
+interface Gesture {
+  pointerId: number;
+  event: CalEvent;
+  mode: DragMode;
+  x0: number;
+  /** The instant the press landed on, so the delta survives the ribbon's squeezed night. */
+  at0: number;
+  /** False until the pointer has travelled far enough to mean it — below that it is still a click. */
+  active: boolean;
+  captured: boolean;
+  span: DragSpan | null;
+}
+
 export function DayRibbon({ full = false }: { full?: boolean }) {
   const { cursor, setCursor, settings, eventsOn, range, openEvent, createEvent, nightOpen, setNightOpen, revealAt, reportVisibleMonth } = useCalendar();
   const { allDay } = eventsOn(cursor);
@@ -89,10 +115,26 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
 
   // Everything timed that touches the window, in one list — the ribbon runs through midnight, so
   // slicing per calendar day would only put back the boundary this view exists to remove.
-  const timed = useMemo(
+  const all = useMemo(
     () => (range?.events ?? []).filter((e) => !e.all_day && e.ends_at > winFrom && e.starts_at < winTo).sort((a, b) => a.starts_at - b.starts_at || b.ends_at - a.ends_at),
     [range, winFrom, winTo],
   );
+
+  /**
+   * Dragging a spine, sideways: the body moves the whole bar, the two ends move one edge each.
+   * The preview is spliced into the list rather than drawn over it, so the free-time bands either
+   * side of the bar open and close as you move it — which is the whole point of drawing them.
+   */
+  const { update } = useEventMutations();
+  const trackRef = useRef<HTMLDivElement>(null);
+  const gesture = useRef<Gesture | null>(null);
+  const [live, setLive] = useState<EventPreview | null>(null);
+  const [pending, setPending] = useState<EventPreview | null>(null);
+  const preview = live ?? pending;
+  const unswallow = useRef<() => void>(() => {});
+  useEffect(() => () => unswallow.current(), []);
+
+  const timed = useMemo(() => (preview ? all.map((e) => (e.id === preview.id ? previewed(preview) : e)) : all), [all, preview]);
   const layout = useMemo(() => layoutColumns(timed), [timed]);
   const gaps = useMemo(() => freeGaps(timed, winFrom, winTo), [timed, winFrom, winTo]);
 
@@ -153,13 +195,80 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
     reportVisibleMonth(dateKey(ribbon.at(el.scrollLeft + el.clientWidth / 3)).slice(0, 7));
   };
 
-  const trackRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
-  const instantAt = (clientX: number): number => {
+  /** The instant under a client x, straight off the ribbon — so the squeezed night is accounted for. */
+  const rawAt = (clientX: number): number => {
     const box = trackRef.current?.getBoundingClientRect();
     if (!box) return winFrom;
-    return Math.round(ribbon.at(clientX - box.left) / SNAP_MS) * SNAP_MS;
+    return ribbon.at(clientX - box.left);
   };
+  const instantAt = (clientX: number): number => Math.round(rawAt(clientX) / SNAP_MS) * SNAP_MS;
+
+  const beginDrag = (ev: React.PointerEvent, e: CalEvent, mode: DragMode) => {
+    const el = trackRef.current;
+    if (!el || ev.button !== 0 || e.writable === false || gesture.current) return;
+    // The strip underneath drags out a new event; this press is not for it.
+    ev.stopPropagation();
+    gesture.current = { pointerId: ev.pointerId, event: e, mode, x0: ev.clientX, at0: rawAt(ev.clientX), active: false, captured: false, span: null };
+    // The capture is taken later, once this is really a drag. Capturing here would drag the mouse
+    // compatibility events along with the pointer, and the click that opens the event — dispatched
+    // to the capture target rather than to the bar — would never reach the bar again.
+  };
+
+  const moveDrag = (ev: React.PointerEvent) => {
+    const g = gesture.current;
+    if (!g || ev.pointerId !== g.pointerId) return;
+    if (!g.active && Math.abs(ev.clientX - g.x0) < DRAG_SLOP_PX) return;
+    if (!g.active) {
+      g.active = true;
+      // Hold the pointer for the rest of the gesture, so leaving the strip doesn't drop it.
+      try {
+        trackRef.current?.setPointerCapture(ev.pointerId);
+        g.captured = true;
+      } catch {
+        /* Capture is a nicety; the handlers on the track still see the move without it. */
+      }
+    }
+    const span = dragSpan(g.event, g.mode, rawAt(ev.clientX) - g.at0);
+    g.span = span;
+    setLive({ id: g.event.id, event: g.event, ...span });
+  };
+
+  const endDrag = (ev: React.PointerEvent, commit: boolean) => {
+    const g = gesture.current;
+    if (!g || ev.pointerId !== g.pointerId) return;
+    gesture.current = null;
+    if (g.captured) {
+      try {
+        trackRef.current?.releasePointerCapture(ev.pointerId);
+      } catch {
+        /* Already released with the pointer. */
+      }
+    }
+    setLive(null);
+    // A press that never travelled is a click, and the spine opens as it always did.
+    if (!g.active) return;
+    unswallow.current();
+    unswallow.current = swallowNextClick(trackRef.current);
+    const span = g.span;
+    if (!commit || !span || !spanMoved(g.event, span)) return;
+    const next: EventPreview = { id: g.event.id, event: g.event, ...span };
+    setPending(next);
+    update.mutate({ id: g.event.id, ...spanPatch(g.event, span) }, { onError: () => setPending((p) => (p === next ? null : p)) });
+  };
+
+  // Hold the dropped position until the refetched range agrees with it, and let go regardless
+  // after long enough that a server that answered differently can't strand the bar.
+  useEffect(() => {
+    if (!pending) return;
+    const cur = (range?.events ?? []).find((e) => e.id === pending.id);
+    if (cur && cur.starts_at === pending.starts_at && cur.ends_at === pending.ends_at) {
+      setPending(null);
+      return;
+    }
+    const t = window.setTimeout(() => setPending(null), 6000);
+    return () => window.clearTimeout(t);
+  }, [pending, range]);
 
   const countdowns = (range?.events ?? [])
     .filter((e) => e.countdown && (e.start_date ?? "") >= todayKey())
@@ -287,8 +396,12 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
               ref={trackRef}
               className="absolute inset-x-0 bottom-0 select-none"
               style={{ top: TRACK_TOP }}
+              onPointerMove={moveDrag}
+              onPointerUp={(e) => endDrag(e, true)}
+              onPointerCancel={(e) => endDrag(e, false)}
               onMouseDown={(e) => {
-                if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
+                // A press on a spine — its body, or one of its grab handles — belongs to that event.
+                if (e.button !== 0 || (e.target as HTMLElement).closest("button, [data-event]")) return;
                 const from = instantAt(e.clientX);
                 setDrag({ from, to: from + 30 * 60_000 });
               }}
@@ -331,7 +444,16 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
               ))}
 
               {timed.map((e, i) => (
-                <Spine key={e.id} e={e} ribbon={ribbon} slot={layout[i]} format={settings.time_format} onClick={() => openEvent(e)} />
+                <Spine
+                  key={e.id}
+                  e={e}
+                  ribbon={ribbon}
+                  slot={layout[i]}
+                  format={settings.time_format}
+                  onClick={() => openEvent(e)}
+                  onDragStart={(ev, mode) => beginDrag(ev, e, mode)}
+                  dragging={preview?.id === e.id}
+                />
               ))}
 
               {drag && (
@@ -429,34 +551,45 @@ function Spine({
   slot,
   format,
   onClick,
+  onDragStart,
+  dragging,
 }: {
   e: CalEvent;
   ribbon: Ribbon;
   slot: { column: number; columns: number };
   format: "12" | "24";
   onClick: () => void;
+  /** Press the bar to move it, or either end to take that edge with you. */
+  onDragStart?: (ev: React.PointerEvent, mode: DragMode) => void;
+  dragging?: boolean;
 }) {
   const left = ribbon.pos(e.starts_at);
   const width = Math.max(ribbon.pos(e.ends_at) - left, MIN_BAR_PX);
   const c = eventColors(e.calendar_color);
-  const wide = width >= TIME_ON_BAR_PX;
+  // Mid-drag the times show whatever the bar's width, because they are what you are choosing.
+  const wide = width >= TIME_ON_BAR_PX || !!dragging;
   const share = 100 / slot.columns;
+  const draggable = !!onDragStart && e.writable !== false;
+  const grab = handlePx(width);
   return (
     // The bar clips its own contents, so the ink ring lives on a wrapper that does not — the ring
     // has to overshoot the bar's edges or it just reads as a border.
     <div
-      className="absolute z-20"
-      style={{ left, width, top: `calc(${slot.column * share}% + 2px)`, height: `calc(${share}% - 4px)` }}
+      className="absolute"
+      style={{ left, width, top: `calc(${slot.column * share}% + 2px)`, height: `calc(${share}% - 4px)`, zIndex: dragging ? 35 : 20 }}
+      data-event={e.id}
     >
       {e.circled && <InkCircle />}
       <button
         type="button"
         onClick={onClick}
+        onPointerDown={draggable ? (ev) => onDragStart!(ev, "move") : undefined}
         title={`${e.title || "(no title)"} · ${heyRange(e.starts_at, e.ends_at, format)}`}
         className={cn(
           "relative h-full w-full overflow-hidden rounded-[3px] text-left transition-opacity hover:opacity-90",
           e.rsvp === "declined" && "opacity-40",
           e.status === "tentative" && "opacity-70",
+          dragging && "cursor-grabbing opacity-100 shadow-lg ring-1 ring-foreground/40",
         )}
         style={{ background: c.background, color: c.color }}
       >
@@ -470,6 +603,24 @@ function Spine({
           </span>
         </span>
       </button>
+
+      {/* The two grab zones, over the bar's own ends so a neighbour is never harder to hit. */}
+      {draggable && (
+        <>
+          <span
+            onPointerDown={(ev) => onDragStart!(ev, "start")}
+            onClick={onClick}
+            className="absolute inset-y-0 left-0 z-10 cursor-ew-resize"
+            style={{ width: grab }}
+          />
+          <span
+            onPointerDown={(ev) => onDragStart!(ev, "end")}
+            onClick={onClick}
+            className="absolute inset-y-0 right-0 z-10 cursor-ew-resize"
+            style={{ width: grab }}
+          />
+        </>
+      )}
     </div>
   );
 }

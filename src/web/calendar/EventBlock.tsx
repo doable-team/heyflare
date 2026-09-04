@@ -3,6 +3,7 @@ import type { CalEvent } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { eventColors } from "./colors";
 import { InkCircle } from "./InkCircle";
+import { handlePx, type DragMode } from "./dragEvent";
 import { heyRange, heyTime } from "./scale";
 
 /**
@@ -40,13 +41,29 @@ function surface(e: CalEvent): React.CSSProperties {
  * An all-day event: a fully rounded stadium pill, solid in the calendar's colour.
  * Exported as `AllDayChip` too, which is what the month grid and the day panes still call it.
  */
-export function AllDayPill({ e, onClick, focused }: { e: CalEvent; onClick?: () => void; focused?: boolean }) {
+export function AllDayPill({
+  e,
+  onClick,
+  focused,
+  onDragStart,
+  dragging,
+}: {
+  e: CalEvent;
+  onClick?: () => void;
+  focused?: boolean;
+  /** Press-and-drag to move the pill to another day. All-day things move by whole days only. */
+  onDragStart?: (ev: React.PointerEvent) => void;
+  dragging?: boolean;
+}) {
   const declined = e.rsvp === "declined";
   const maybe = isMaybe(e);
+  const draggable = !!onDragStart && e.writable !== false;
   return (
     <button
       type="button"
+      data-event={e.id}
       onClick={onClick}
+      onPointerDown={draggable ? onDragStart : undefined}
       title={e.title || "(no title)"}
       style={surface(e)}
       className={cn(
@@ -56,6 +73,7 @@ export function AllDayPill({ e, onClick, focused }: { e: CalEvent; onClick?: () 
         e.done && "line-through",
         declined && "opacity-45 line-through",
         focused && "ring-1 ring-ring",
+        dragging && "cursor-grabbing opacity-100 shadow-lg ring-1 ring-foreground/40",
       )}
     >
       {e.emoji && <span className="shrink-0">{e.emoji}</span>}
@@ -95,6 +113,8 @@ export function EventBlock({
   onToggleDone,
   focused,
   onPhoto,
+  onDragStart,
+  dragging,
 }: {
   e: CalEvent;
   top: number;
@@ -107,6 +127,14 @@ export function EventBlock({
   focused?: boolean;
   /** Sitting over a day's photo: keep the fill opaque and ring it in white, the way HEY does. */
   onPhoto?: boolean;
+  /**
+   * Press to move the block, or press within `EDGE_PX` of the top or bottom edge to take that end
+   * with you. The view owns the gesture — it is the only thing that knows what a pixel is worth —
+   * so all the block does is say which of the three was asked for.
+   */
+  onDragStart?: (ev: React.PointerEvent, mode: DragMode) => void;
+  /** Under the pointer, or dropped and waiting for the server: draw it lifted, with live times. */
+  dragging?: boolean;
 }) {
   const h = Math.max(height, FLOOR_PX);
   const oneLine = h < ONE_LINE_PX;
@@ -123,13 +151,17 @@ export function EventBlock({
 
   const title = e.title || "(no title)";
   const icons = roomy && (e.conference_url || e.attendees.length > 0 || e.recurring || !e.writable);
+  // A read-only calendar's events are looked at, not rearranged.
+  const draggable = !!onDragStart && e.writable !== false;
+  const grab = handlePx(h);
 
   return (
-    <div className="absolute z-20" style={{ top, height: h, width, left }}>
+    <div className="absolute" style={{ top, height: h, width, left, zIndex: dragging ? 35 : 20 }} data-event={e.id}>
       {e.circled && <InkCircle />}
       <button
         type="button"
         onClick={onClick}
+        onPointerDown={draggable ? (ev) => onDragStart!(ev, "move") : undefined}
         title={`${title}${e.location ? ` · ${e.location}` : ""} · ${heyRange(e.starts_at, e.ends_at, format)}`}
         style={surface(e)}
         className={cn(
@@ -141,13 +173,17 @@ export function EventBlock({
           // whole separation device in HEY — no scrim on the picture, no shadow on the text.
           onPhoto && "shadow-[0_0_0_2px_#fff]",
           focused && "ring-1 ring-ring ring-offset-0",
+          dragging && "cursor-grabbing opacity-100 shadow-lg ring-1 ring-foreground/40",
         )}
       >
         {oneLine ? (
           // One line: the time and the title share a baseline — "5:30PM- 6PM  Weekly Call…"
           <span className="flex min-w-0 items-baseline gap-1">
             {e.kind === "todo" && <DoneBox e={e} onToggleDone={onToggleDone} />}
-            <span className="shrink-0 text-[9.5px] leading-none tnum opacity-70">{heyTime(e.starts_at, format)}</span>
+            {/* Mid-drag the whole range shows, however short the block: you are choosing both ends. */}
+            <span className="shrink-0 text-[9.5px] leading-none tnum opacity-70">
+              {dragging ? heyRange(e.starts_at, e.ends_at, format) : heyTime(e.starts_at, format)}
+            </span>
             <span
               className={cn("min-w-0 truncate text-[11px] font-semibold leading-[13px]", (e.done || declined) && "line-through")}
               style={maybe ? { fontFamily: HAND, fontStyle: "italic" } : undefined}
@@ -184,6 +220,25 @@ export function EventBlock({
           </span>
         )}
       </button>
+
+      {/* The two grab zones. They sit over the block's own edges rather than outside it, so a
+          neighbouring event is never harder to hit, and they still open the event on a click. */}
+      {draggable && (
+        <>
+          <span
+            onPointerDown={(ev) => onDragStart!(ev, "start")}
+            onClick={onClick}
+            className="absolute inset-x-0 top-0 z-10 cursor-ns-resize"
+            style={{ height: grab }}
+          />
+          <span
+            onPointerDown={(ev) => onDragStart!(ev, "end")}
+            onClick={onClick}
+            className="absolute inset-x-0 bottom-0 z-10 cursor-ns-resize"
+            style={{ height: grab }}
+          />
+        </>
+      )}
     </div>
   );
 }

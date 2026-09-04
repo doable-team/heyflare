@@ -1,11 +1,24 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CalendarDay, Habit } from "@shared/types";
+import type { CalEvent, CalendarDay, Habit } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useCalendar } from "./CalendarContext";
 import { AllDayPill, EventBlock } from "./EventBlock";
 import { WeekTasks } from "./WeekTasks";
 import { eventColors } from "./colors";
 import { DayPhotoBackdrop, DayPhotoButton, hasPhoto } from "./DayPhoto";
+import {
+  DRAG_SLOP_PX,
+  allDaySpan,
+  dragSpan,
+  previewed,
+  shiftDays,
+  spanMoved,
+  spanPatch,
+  swallowNextClick,
+  type DragMode,
+  type DragSpan,
+  type EventPreview,
+} from "./dragEvent";
 import { heyTime, snap } from "./scale";
 import { addDays, daysBetween, isToday, layoutColumns, startOfDayMs, weekStartOf } from "../lib/caldate";
 import { useEventMutations, useHabitMutations } from "../api";
@@ -187,6 +200,34 @@ export function WeekView() {
 }
 
 /**
+ * Dragging an event lives on the *row*, not on the block, for one reason: a block that moves to
+ * Thursday is unmounted from Wednesday's column and mounted in Thursday's, which would tear the
+ * pointer capture out from under the gesture halfway through. The row's grid is the one element
+ * that survives the whole drag, so it takes the capture and does the arithmetic, and the columns
+ * simply draw whatever `preview` says.
+ */
+interface RowDrag {
+  /** The event being moved, at the times it would land on. Null when nothing is being dragged. */
+  preview: EventPreview | null;
+  begin: (ev: React.PointerEvent, e: CalEvent, mode: DragMode, date: string) => void;
+}
+
+interface Gesture {
+  pointerId: number;
+  event: CalEvent;
+  mode: DragMode;
+  x0: number;
+  y0: number;
+  /** Which of the seven columns the press landed in, and that column's midnight. */
+  col: number;
+  dayStart: number;
+  /** False until the pointer has travelled far enough to mean it — below that it is still a click. */
+  active: boolean;
+  captured: boolean;
+  span: DragSpan | null;
+}
+
+/**
  * One week: the month standing on its side at the left edge, seven columns, and the week's loose
  * tasks along the floor. The row the cursor is in gets a rounded outline that lifts it out of the
  * stack; the others carry the same border in nothing, so no row is ever a pixel taller.
@@ -205,6 +246,111 @@ function WeekRow({
   register: (week: string, el: HTMLDivElement | null) => void;
 }) {
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
+  const { range } = useCalendar();
+  const { update } = useEventMutations();
+
+  const grid = useRef<HTMLDivElement>(null);
+  const gesture = useRef<Gesture | null>(null);
+  /** Under the pointer now. */
+  const [live, setLive] = useState<EventPreview | null>(null);
+  /** Dropped, and held there until the server's answer comes back through the range query. */
+  const [pending, setPending] = useState<EventPreview | null>(null);
+  const unswallow = useRef<() => void>(() => {});
+  useEffect(() => () => unswallow.current(), []);
+
+  const begin = useCallback(
+    (ev: React.PointerEvent, e: CalEvent, mode: DragMode, date: string) => {
+      const el = grid.current;
+      if (!el || ev.button !== 0 || e.writable === false || gesture.current) return;
+      // The track underneath drags out a new event; this press is not for it.
+      ev.stopPropagation();
+      gesture.current = {
+        pointerId: ev.pointerId,
+        event: e,
+        // An all-day pill has no time to change, only a day, so it only ever moves.
+        mode: e.all_day ? "move" : mode,
+        x0: ev.clientX,
+        y0: ev.clientY,
+        col: Math.max(0, Math.min(6, daysBetween(weekStart, date))),
+        dayStart: startOfDayMs(date),
+        active: false,
+        captured: false,
+        span: null,
+      };
+      // The capture is taken later, in the move handler. Capturing here would drag the mouse
+      // compatibility events along with the pointer, and the click that opens the event — which is
+      // dispatched to the capture target, not to the block — would never reach the block again.
+    },
+    [weekStart],
+  );
+
+  const onPointerMove = (ev: React.PointerEvent) => {
+    const g = gesture.current;
+    const el = grid.current;
+    if (!g || !el || ev.pointerId !== g.pointerId) return;
+    const dx = ev.clientX - g.x0;
+    const dy = ev.clientY - g.y0;
+    if (!g.active && Math.abs(dx) < DRAG_SLOP_PX && Math.abs(dy) < DRAG_SLOP_PX) return;
+    if (!g.active) {
+      g.active = true;
+      // Now that it is a drag, hold the pointer: leaving the block — or the column, or the row —
+      // must not drop the gesture halfway through.
+      try {
+        el.setPointerCapture(ev.pointerId);
+        g.captured = true;
+      } catch {
+        /* Capture is a nicety; the handlers on the grid still see the move without it. */
+      }
+    }
+
+    // Horizontally the week is seven equal columns, and the event stays in this row: the shift is
+    // clamped to what is left of the row either side of where it started.
+    const colW = el.getBoundingClientRect().width / 7;
+    const days = g.mode === "move" && colW > 0 ? Math.max(-g.col, Math.min(6 - g.col, Math.round(dx / colW))) : 0;
+    const span = g.event.all_day
+      ? allDaySpan(g.event, days)
+      : dragSpan(g.event, g.mode, dy / PX_PER_MS, days, { min: shiftDays(g.dayStart, days), max: shiftDays(g.dayStart, days + 1) });
+    g.span = span;
+    setLive({ id: g.event.id, event: g.event, ...span });
+  };
+
+  const finish = (ev: React.PointerEvent, commit: boolean) => {
+    const g = gesture.current;
+    if (!g || ev.pointerId !== g.pointerId) return;
+    gesture.current = null;
+    if (g.captured) {
+      try {
+        grid.current?.releasePointerCapture(ev.pointerId);
+      } catch {
+        /* Already released with the pointer. */
+      }
+    }
+    setLive(null);
+    // A press that never became a drag is a click, and the block opens as it always did.
+    if (!g.active) return;
+    unswallow.current();
+    unswallow.current = swallowNextClick(grid.current);
+    const span = g.span;
+    if (!commit || !span || !spanMoved(g.event, span)) return;
+    const next: EventPreview = { id: g.event.id, event: g.event, ...span };
+    setPending(next);
+    update.mutate({ id: g.event.id, ...spanPatch(g.event, span) }, { onError: () => setPending((p) => (p === next ? null : p)) });
+  };
+
+  // Let go of the dropped position once the refetched range agrees with it — or, if the server
+  // answered with something else entirely, after long enough that the block can't be stuck.
+  useEffect(() => {
+    if (!pending) return;
+    const cur = (range?.events ?? []).find((e) => e.id === pending.id);
+    if (cur && cur.starts_at === pending.starts_at && cur.ends_at === pending.ends_at) {
+      setPending(null);
+      return;
+    }
+    const t = window.setTimeout(() => setPending(null), 6000);
+    return () => window.clearTimeout(t);
+  }, [pending, range]);
+
+  const drag = useMemo<RowDrag>(() => ({ preview: live ?? pending, begin }), [live, pending, begin]);
 
   // A month that turns inside the row is announced on the divider it turns at, with its year.
   const turns = useMemo(
@@ -246,7 +392,13 @@ function WeekRow({
           ))}
         </div>
 
-        <div className="relative grid min-w-0 flex-1 grid-cols-[repeat(7,minmax(0,1fr))]">
+        <div
+          ref={grid}
+          onPointerMove={onPointerMove}
+          onPointerUp={(ev) => finish(ev, true)}
+          onPointerCancel={(ev) => finish(ev, false)}
+          className="relative grid min-w-0 flex-1 grid-cols-[repeat(7,minmax(0,1fr))]"
+        >
           {/* Hour rules behind the events: every hour faint, every sixth a shade stronger. */}
           <div className="pointer-events-none absolute inset-x-0 z-0" style={{ top: HABITS_PX + HEADER_PX, height: BODY_PX }}>
             {Array.from({ length: 23 }, (_, i) => i + 1).map((h) => (
@@ -259,7 +411,7 @@ function WeekRow({
           </div>
 
           {days.map((d, i) => (
-            <DayColumn key={d} date={d} first={i === 0} day={dayMeta.get(d)} habits={habits} />
+            <DayColumn key={d} date={d} first={i === 0} day={dayMeta.get(d)} habits={habits} drag={drag} />
           ))}
 
           {turns.map((t) => (
@@ -298,12 +450,24 @@ function hourLabel(h: number): string {
   return h < 12 ? `${h}a` : `${h - 12}p`;
 }
 
-function DayColumn({ date, first, day, habits }: { date: string; first: boolean; day: CalendarDay | undefined; habits: Habit[] }) {
+function DayColumn({
+  date,
+  first,
+  day,
+  habits,
+  drag,
+}: {
+  date: string;
+  first: boolean;
+  day: CalendarDay | undefined;
+  habits: Habit[];
+  drag: RowDrag;
+}) {
   return (
     <div className="group/day relative flex min-w-0 flex-col">
       <HabitRail date={date} habits={habits} />
       <DayHeader date={date} photo={hasPhoto(day)} />
-      <Track date={date} first={first} day={day} />
+      <Track date={date} first={first} day={day} drag={drag} />
       {/* HEY's entry point: hover the day's top-left corner and a photo icon appears over it. */}
       <div className="absolute left-1.5 z-30" style={{ top: HABITS_PX + HEADER_PX + 6 }}>
         <DayPhotoButton
@@ -391,7 +555,7 @@ function DayHeader({ date, photo }: { date: string; photo?: boolean }) {
  * The ruler is linear and complete: midnight at the top, midnight at the bottom, 24 hours in
  * between at one rate. No hour rules, no labels, no bands. The boxes *are* the day.
  */
-function Track({ date, first, day }: { date: string; first: boolean; day: CalendarDay | undefined }) {
+function Track({ date, first, day, drag }: { date: string; first: boolean; day: CalendarDay | undefined; drag: RowDrag }) {
   const { settings, cursor, setCursor, eventsOn, openEvent, createEvent } = useCalendar();
   const { setDone } = useEventMutations();
   const { timed, allDay } = eventsOn(date);
@@ -400,10 +564,32 @@ function Track({ date, first, day }: { date: string; first: boolean; day: Calend
   const dayStart = useMemo(() => startOfDayMs(date), [date]);
   const posOf = useCallback((ms: number) => Math.max(0, Math.min(BODY_PX, (ms - dayStart) * PX_PER_MS)), [dayStart]);
 
-  const layout = useMemo(() => layoutColumns(timed), [timed]);
+  /**
+   * A dragged event is drawn where it is *going*, which may well be another column. Every column
+   * drops it from its own list, and the column its prospective span lands in draws it on top —
+   * full width, out of the overlap layout, so the blocks underneath don't shuffle as it passes.
+   */
+  const preview = drag.preview;
+  const { rest, ghost } = useMemo(() => {
+    if (!preview) return { rest: timed, ghost: null as CalEvent | null };
+    const kept = timed.filter((e) => e.id !== preview.id);
+    const here = !preview.event.all_day && preview.ends_at > dayStart && preview.starts_at < dayStart + DAY_MS;
+    return { rest: kept, ghost: here ? previewed(preview) : null };
+  }, [timed, preview, dayStart]);
+
+  const pills = useMemo(() => {
+    if (!preview) return allDay;
+    const kept = allDay.filter((e) => e.id !== preview.id);
+    if (!preview.event.all_day) return kept;
+    const from = preview.start_date ?? "";
+    const to = preview.end_date ?? from;
+    return date >= from && date <= to ? [...kept, previewed(preview)] : kept;
+  }, [allDay, preview, date]);
+
+  const layout = useMemo(() => layoutColumns(rest), [rest]);
 
   const box = useRef<HTMLDivElement>(null);
-  const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
+  const [sketch, setSketch] = useState<{ from: number; to: number } | null>(null);
   const msAtY = useCallback(
     (clientY: number) => {
       const r = box.current?.getBoundingClientRect();
@@ -422,7 +608,7 @@ function Track({ date, first, day }: { date: string; first: boolean; day: Calend
     return () => window.clearInterval(t);
   }, [today]);
 
-  const extra = allDay.length - ALLDAY_MAX;
+  const extra = pills.length - ALLDAY_MAX;
 
   return (
     <div
@@ -436,17 +622,18 @@ function Track({ date, first, day }: { date: string; first: boolean; day: Calend
       onMouseDown={(e) => {
         if (e.button !== 0) return;
         setCursor(date);
-        if ((e.target as HTMLElement).closest("button")) return;
+        // A press on an event — its body, or one of its grab handles — belongs to that event.
+        if ((e.target as HTMLElement).closest("button, [data-event]")) return;
         const from = msAtY(e.clientY);
-        setDrag({ from, to: from + 30 * 60_000 });
+        setSketch({ from, to: from + 30 * 60_000 });
       }}
-      onMouseMove={(e) => drag && setDrag({ from: drag.from, to: msAtY(e.clientY) })}
-      onMouseLeave={() => setDrag(null)}
+      onMouseMove={(e) => sketch && setSketch({ from: sketch.from, to: msAtY(e.clientY) })}
+      onMouseLeave={() => setSketch(null)}
       onMouseUp={() => {
-        if (!drag) return;
-        const a = Math.min(drag.from, drag.to);
-        const b = Math.max(drag.from, drag.to);
-        setDrag(null);
+        if (!sketch) return;
+        const a = Math.min(sketch.from, sketch.to);
+        const b = Math.max(sketch.from, sketch.to);
+        setSketch(null);
         createEvent({ starts_at: a, ends_at: b === a ? a + 30 * 60_000 : b });
       }}
     >
@@ -454,7 +641,7 @@ function Track({ date, first, day }: { date: string; first: boolean; day: Calend
           comes from the events on top of it, which stay opaque and gain a white keyline. */}
       <DayPhotoBackdrop day={day} className="z-0" />
 
-      {timed.map((e, i) => {
+      {rest.map((e, i) => {
         const top = posOf(Math.max(e.starts_at, dayStart));
         const bottom = posOf(Math.min(e.ends_at, dayStart + DAY_MS));
         return (
@@ -469,25 +656,46 @@ function Track({ date, first, day }: { date: string; first: boolean; day: Calend
             format={settings.time_format}
             onClick={() => openEvent(e)}
             onToggleDone={() => setDone.mutate({ id: e.id, done: !e.done, date })}
+            onDragStart={(ev, mode) => drag.begin(ev, e, mode, date)}
           />
         );
       })}
 
-      {drag && (
+      {ghost && (
+        <EventBlock
+          onPhoto={hasPhoto(day)}
+          e={ghost}
+          top={posOf(Math.max(ghost.starts_at, dayStart))}
+          height={posOf(Math.min(ghost.ends_at, dayStart + DAY_MS)) - posOf(Math.max(ghost.starts_at, dayStart))}
+          column={0}
+          columns={1}
+          format={settings.time_format}
+          dragging
+          onClick={() => openEvent(ghost)}
+        />
+      )}
+
+      {sketch && (
         <div
           className="pointer-events-none absolute inset-x-0.5 z-30 rounded-[3px] border border-dashed border-foreground/60 bg-foreground/5"
           style={{
-            top: posOf(Math.min(drag.from, drag.to)),
-            height: Math.max(posOf(Math.max(drag.from, drag.to)) - posOf(Math.min(drag.from, drag.to)), 8),
+            top: posOf(Math.min(sketch.from, sketch.to)),
+            height: Math.max(posOf(Math.max(sketch.from, sketch.to)) - posOf(Math.min(sketch.from, sketch.to)), 8),
           }}
         />
       )}
 
       {/* All-day things sit on the floor of the day — the ground it stands on, not a banner. */}
-      {allDay.length > 0 && (
+      {pills.length > 0 && (
         <div className="pointer-events-auto absolute inset-x-1 bottom-1 z-30 flex flex-col gap-[2px]">
-          {allDay.slice(0, ALLDAY_MAX).map((e) => (
-            <AllDayPill key={e.id} e={e} onClick={() => openEvent(e)} />
+          {pills.slice(0, ALLDAY_MAX).map((e) => (
+            <AllDayPill
+              key={e.id}
+              e={e}
+              onClick={() => openEvent(e)}
+              onDragStart={(ev) => drag.begin(ev, e, "move", date)}
+              dragging={preview?.id === e.id}
+            />
           ))}
           {extra > 0 && <span className="px-2 text-[10px] leading-none text-tertiary">+{extra} more</span>}
         </div>
