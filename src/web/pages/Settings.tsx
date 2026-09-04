@@ -676,7 +676,8 @@ export function PreferencesSection({ compact }: { compact?: boolean }) {
  * cPanel-style webmail host, which is usually mail.<your-domain>.
  */
 const IMAP_PRESETS: { id: string; label: string; imap_host: string; smtp_host: string; note?: string }[] = [
-  { id: "zoho", label: "Zoho Mail", imap_host: "imap.zoho.com", smtp_host: "smtp.zoho.com", note: "Enable IMAP in Zoho settings, and use an app password if two-factor is on." },
+  { id: "zoho", label: "Zoho Mail (personal @zohomail.com)", imap_host: "imap.zoho.com", smtp_host: "smtp.zoho.com", note: "Enable IMAP under Settings → Mail Accounts, and use an app password if two-factor is on. IMAP needs a paid plan — the free plan is browser-only." },
+  { id: "zoho-pro", label: "Zoho Mail (your own domain)", imap_host: "imappro.zoho.com", smtp_host: "smtppro.zoho.com", note: "Organisation accounts on a custom domain use the 'pro' servers. On a non-US data centre swap .com for .eu, .in or .com.au." },
   { id: "fastmail", label: "Fastmail", imap_host: "imap.fastmail.com", smtp_host: "smtp.fastmail.com", note: "Create an app password in Fastmail under Settings → Privacy & Security." },
   { id: "migadu", label: "Migadu", imap_host: "imap.migadu.com", smtp_host: "smtp.migadu.com" },
   { id: "other", label: "Other / webmail", imap_host: "", smtp_host: "", note: "For cPanel-style hosting this is usually mail.yourdomain.com on 993 and 465." },
