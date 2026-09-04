@@ -7,3 +7,7 @@ wrangler.local.jsonc
 .env
 *.local
 .DS_Store
+
+# Local wrangler dev state (miniflare)
+.calstate/
+.wdev.log
