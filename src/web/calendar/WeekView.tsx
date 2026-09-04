@@ -166,7 +166,7 @@ export function WeekView() {
   }, [from, to, extend, reportVisibleMonth]);
 
   return (
-    <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+    <div ref={scroller} onScroll={onScroll} className="overscroll-contain min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
       <div className="relative px-1 py-2">
         {weeks.map((w) => (
           <WeekRow

@@ -239,7 +239,7 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
       <div className="relative min-h-0 flex-1">
         <DayPhotoBackdrop day={day} />
 
-        <div ref={scrollRef} onScroll={onRibbonScroll} className="absolute inset-0 overflow-x-auto overflow-y-hidden">
+        <div ref={scrollRef} onScroll={onRibbonScroll} className="overscroll-contain absolute inset-0 overflow-x-auto overflow-y-hidden">
           <div className="relative h-full" style={{ width: Math.max(ribbon.length, 1) }}>
             {/* Which day you are scrolled into. */}
             {dayMarks.map((m) => (

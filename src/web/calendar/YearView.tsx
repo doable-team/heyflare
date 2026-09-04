@@ -126,7 +126,7 @@ export function YearView() {
   };
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden rounded-md border border-border bg-background">
+    <div className="overscroll-contain min-h-0 flex-1 overflow-y-auto overflow-x-hidden rounded-md border border-border bg-background">
       {Array.from({ length: rowCount }, (_, r) => (
         <Row
           key={r}

@@ -52,7 +52,7 @@ function CalendarInner() {
   });
 
   return (
-    <div className="flex h-[calc(100dvh-6.5rem)] min-h-96 flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <CalendarToolbar />
       {view === "year" ? (
         <YearView />

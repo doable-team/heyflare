@@ -58,6 +58,7 @@ export function Shell() {
   const { user, loading, error } = useAccount();
   const loc = useLocation();
   const [open, setOpen] = useState<boolean>(readOpen);
+  const fullHeight = loc.pathname.startsWith("/calendar");
   const aState = useAssistant();
   const docked = aState.open && aState.mode === "dock";
   if (loading) {
@@ -83,9 +84,12 @@ export function Shell() {
         }}
       >
         <AppSidebar />
-        <SidebarInset className="min-w-0 transition-[padding] duration-150" style={{ paddingRight: docked ? aState.width : undefined }}>
+        <SidebarInset className={cn("min-w-0 transition-[padding] duration-150", fullHeight && "h-svh overflow-hidden")} style={{ paddingRight: docked ? aState.width : undefined }}>
           <TopBar />
-          <main className="flex-1 w-full px-4 sm:px-8 pt-4 pb-24">
+          {/* The calendar is a full-height app view that scrolls inside itself, so it gets the
+              viewport exactly and no tall bottom padding — otherwise the page scrolls too and the
+              toolbar drifts away under you. Every other page wants the room to grow. */}
+          <main className={cn("w-full px-4 sm:px-8 pt-4", fullHeight ? "min-h-0 flex-1 overflow-hidden pb-3" : "flex-1 pb-24")}>
             <Outlet />
           </main>
         </SidebarInset>
