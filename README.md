@@ -230,19 +230,20 @@ npm run dev                       # vite on :5173 (proxies /api and /auth)
 ```
 Inbound mail can be simulated against the local worker: `POST http://localhost:8787/cdn-cgi/handler/email?from=a@b.co&to=you@yourdomain` with a raw RFC 822 body.
 
-## Other mailboxes (Zoho, Fastmail, webmail…)
+## Other mailboxes (Fastmail, Migadu, webmail…)
 
 Settings → Accounts → **Add mailbox**. Any server that speaks IMAP and SMTP works: pick a provider
-preset or type the host names yourself, then give it an app-specific password. heyflare checks both
-servers before saving, so a typo never leaves a half-connected account behind.
+preset or type the host names yourself, then give it an app-specific password. heyflare logs in to
+both servers before saving, so a typo never leaves a half-connected account behind. Passwords are
+encrypted at rest and never returned by the API.
 
-- **IMAP** on 993 with implicit TLS.
-- **SMTP** on 465 (implicit TLS) or 587 (STARTTLS). **Port 25 cannot work** — Cloudflare blocks
-  outbound connections to it, with no way around it.
-- Passwords are encrypted at rest with AES-GCM, keyed off `SESSION_SECRET`, and are never returned
-  by the API — Settings shows only a masked hint.
-- Turn IMAP access on with your provider first (Zoho in particular requires it), and use an
-  app-specific password if you have two-factor auth enabled.
+**Port 25 cannot work** — Cloudflare blocks outbound connections to it. Use 465 or 587.
+
+Note that **Zoho's free plan cannot be connected at all**: it excludes IMAP, POP3 and forwarding, and
+is browser-only. A paid plan is required.
+
+[`docs/MAILBOXES.md`](docs/MAILBOXES.md) covers all four mailbox types, the setup each one needs, and
+what to do when a connection is refused.
 
 ## Tests
 
@@ -259,6 +260,7 @@ TOTP (Google Authenticator, 1Password, Authy…) with 10 single-use recovery cod
 
 ## Docs
 - `API.md` — the worker/web API contract.
+- [`docs/MAILBOXES.md`](docs/MAILBOXES.md) — connecting Gmail, Outlook, IMAP/SMTP and domain mailboxes, with troubleshooting.
 - `DESIGN.md` — the design system (Notion-minimal, shadcn, mobile spec).
 - [`docs/CALENDAR.md`](docs/CALENDAR.md) — how the calendar is put together: sources, views, schema, API, sync.
 - [`docs/UPDATING.md`](docs/UPDATING.md) — what an update changes, how to update, how to roll back.
