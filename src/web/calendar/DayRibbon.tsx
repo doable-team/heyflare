@@ -161,12 +161,10 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
 
   return (
     <div className={cn("flex min-h-0 flex-col overflow-hidden rounded-md border border-border bg-background", full ? "flex-1" : "h-full")}>
-      <header className="shrink-0 border-b border-border px-3 py-2">
-        <div className="flex items-center gap-1">
-          <div className="min-w-0 flex-1 text-center">
-            <div className="truncate text-[14px] font-semibold">{longDayLabel(cursor)}</div>
-            {relativeDay(cursor) && <div className="text-[11px] text-muted-foreground">{relativeDay(cursor)}</div>}
-          </div>
+      {/* The icons are taken out of the flow. In a flex row they stole width from the title, so the
+          date centred on a different axis from the day's name directly beneath it. */}
+      <header className="relative shrink-0 border-b border-border px-3 py-2">
+        <div className="absolute right-2 top-2 flex items-center gap-1">
           <Link to={`/journal/${cursor}`} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" title="Journal">
             <BookOpen size={15} />
           </Link>
@@ -179,6 +177,11 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
           >
             <Plus size={15} />
           </button>
+        </div>
+
+        <div className="px-16 text-center">
+          <div className="truncate text-[14px] font-semibold">{longDayLabel(cursor)}</div>
+          {relativeDay(cursor) && <div className="text-[11px] text-muted-foreground">{relativeDay(cursor)}</div>}
         </div>
 
         {editingLabel ? (
@@ -199,13 +202,13 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
             }}
             placeholder=""
             aria-label="Name this day"
-            className="mt-1 h-5 w-full bg-transparent text-center text-[12px] outline-none"
+            className="mt-1 h-5 w-full bg-transparent px-16 text-center text-[12px] outline-none"
           />
         ) : (
           <button
             type="button"
             onClick={() => setEditingLabel(true)}
-            className={cn("mt-0.5 h-5 w-full truncate text-center text-[12px]", day?.label ? "text-muted-foreground" : "text-tertiary/70 hover:text-tertiary")}
+            className={cn("mt-0.5 h-5 w-full truncate px-16 text-center text-[12px]", day?.label ? "text-muted-foreground" : "text-tertiary/70 hover:text-tertiary")}
           >
             {day?.label || "Name this day"}
           </button>
