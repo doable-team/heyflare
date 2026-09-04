@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useToast } from "../components/Toast";
 import { Link } from "react-router-dom";
 import { BookOpen, Plus } from "lucide-react";
 import type { CalEvent } from "@shared/types";
@@ -143,6 +144,7 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
   // A caption per day boundary. `ribbon.midnights` only reports the midnights that land on a run
   // boundary, and with the night compressed midnight sits *inside* the night run, so the rest are
   // filled in by date.
+  const { toast } = useToast();
   // A day's caption belongs over that day's daylight, not over midnight — midnight sits inside the
   // compressed night block, so anchoring there parks the label on the wrong side of the join.
   const dayMarks = useMemo(() => {
@@ -256,7 +258,16 @@ export function DayRibbon({ full = false }: { full?: boolean }) {
     if (!commit || !span || !spanMoved(g.event, span)) return;
     const next: EventPreview = { id: g.event.id, event: g.event, ...span };
     setPending(next);
-    update.mutate({ id: g.event.id, ...spanPatch(g.event, span) }, { onError: () => setPending((p) => (p === next ? null : p)) });
+        // Same as the week: the snap back needs to arrive with its reason attached.
+    update.mutate(
+      { id: g.event.id, ...spanPatch(g.event, span) },
+      {
+        onError: (err) => {
+          setPending((p) => (p === next ? null : p));
+          toast((err as Error)?.message || "Couldn't move this event.", { kind: "error" });
+        },
+      }
+    );
   };
 
   // Hold the dropped position until the refetched range agrees with it, and let go regardless

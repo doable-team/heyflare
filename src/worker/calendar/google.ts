@@ -522,8 +522,14 @@ export async function updateRemoteEvent(env: Env, cal: CalendarRow, account: Acc
   if (!row.remote_id) throw new GmailError(400, "no_remote_id", "Event has no Google id to update");
   const u = new URL(eventsUrl(cal, `/${encodeURIComponent(row.remote_id)}`));
   u.searchParams.set("sendUpdates", sendUpdates(row));
+  // PATCH, not PUT. A PUT replaces the whole event with what we send, and we do not model all of
+  // it: `eventType` is the one that bites, because a birthday, holiday, out-of-office or
+  // Gmail-derived event silently becomes `default` and Google rejects the lot with
+  // "Event type cannot be changed" — after which the next sync pulls the unchanged event back and
+  // the edit appears to undo itself. Omitting `recurrence` on a master would likewise have dropped
+  // the repeat. PATCH touches only the fields named here and leaves the rest of the event alone.
   const j = await calJson<GEvent>(env, account, u.toString(), {
-    method: "PUT",
+    method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(eventBody(row)),
   });

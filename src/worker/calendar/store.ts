@@ -698,6 +698,21 @@ export function seriesMasterId(remoteId: string | null | undefined): string | nu
 /** Deleting more instances than this one at a time is a mistake, not an intention. */
 const SERIES_DELETE_CAP = 400;
 
+/**
+ * Google's own words for why it would not take an edit, in a form worth putting in front of
+ * someone. The API buries the useful part in a JSON envelope; the reason code is the bit that
+ * actually distinguishes "this kind of event cannot be moved" from "you may not write here".
+ */
+function googleRefusal(e: unknown): string {
+  const raw = (e as Error)?.message ?? String(e);
+  const reason = /"reason":\s*"([^"]+)"/.exec(raw)?.[1] ?? "";
+  const said = /"message":\s*"([^"]+)"/.exec(raw)?.[1] ?? "";
+  if (reason === "eventTypeRestriction") return "Google won't move this kind of event — birthdays, holidays and working-location entries are fixed where they are.";
+  if (reason === "forbiddenForServiceAccounts" || /readonly|forbidden/i.test(reason)) return "That calendar is read-only, so the change couldn't be saved to Google.";
+  if (/^4\d\d/.test(raw) && said) return `Google wouldn't accept this change: ${said}`;
+  return "Couldn't save this change to Google, so it has been put back.";
+}
+
 async function mirrorGoogle<T>(env: Env, cal: CalendarRow, what: string, fn: (account: AccountRow) => Promise<T>): Promise<T | null> {
   if (cal.source !== "google") return null;
   try {
@@ -948,6 +963,27 @@ export async function updateEvent(
   }
 
   const next = await updateEventRow(db, row, fieldsFrom(patch, row, tz));
+
+  // Google is the authority for its own events, and it does refuse things: a birthday cannot be
+  // moved off its date, and some event types will not take an edit at all. Swallowing that refusal
+  // used to mean the row changed here, the next sync pulled Google's unchanged copy back over it,
+  // and the edit undid itself a minute later with nothing said. Put the row back at once instead,
+  // and report what Google actually objected to, so the failure lands where the change was made.
+  if (cal.source === "google") {
+    const account = cal.account_id ? await db.prepare(`SELECT * FROM accounts WHERE id = ?`).bind(cal.account_id).first<AccountRow>() : null;
+    try {
+      if (!account) throw new Error("That calendar's Google account is no longer connected.");
+      const r = await updateRemoteEvent(env, cal, account, next);
+      await db.prepare(`UPDATE events SET etag = ? WHERE id = ?`).bind(r.etag ?? null, next.id).run();
+    } catch (e) {
+      await updateEventRow(db, next, fieldsFrom({}, row, tz));
+      const why = googleRefusal(e);
+      await logSync(db, cal.account_id, "error", `calendar update (${cal.name || cal.id}): ${(e as Error)?.message ?? String(e)}`);
+      throw new Error(why);
+    }
+    return toEvent(next, cal);
+  }
+
   const remote = await mirrorGoogle(env, cal, "update", (account) => updateRemoteEvent(env, cal, account, next));
   if (remote && "etag" in remote) {
     await db.prepare(`UPDATE events SET etag = ? WHERE id = ?`).bind(remote.etag ?? null, next.id).run();
