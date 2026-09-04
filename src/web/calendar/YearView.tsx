@@ -57,7 +57,7 @@ interface Segment {
 }
 
 export function YearView() {
-  const { cursor, setCursor, setView, openEvent, range } = useCalendar();
+  const { cursor, setCursor, setView, openEvent, range, revealAt } = useCalendar();
 
   const year = cursor.slice(0, 4);
   const jan1 = `${year}-01-01`;
@@ -149,11 +149,38 @@ export function YearView() {
     setView("days");
   };
 
+  /**
+   * Open on the row you are actually on. A year is thirteen screens of grid, and landing at January
+   * every time means hunting for today before you can read anything.
+   */
+  const rowOf = (date: string) => Math.floor(daysBetween(gridStart, date) / cols);
+  const rowRefs = useRef(new Map<number, HTMLDivElement>());
+  const landed = useRef(false);
+  useEffect(() => {
+    const box = boxRef.current;
+    const row = rowRefs.current.get(rowOf(cursor));
+    if (!box || !row) return;
+    const top = row.offsetTop - (box.clientHeight - row.offsetHeight) / 2;
+    const first = !landed.current;
+    if (!first) {
+      // Already comfortably on screen: leave the scroll where the reader put it.
+      const rel = row.offsetTop - box.scrollTop;
+      if (rel >= 0 && rel + row.offsetHeight <= box.clientHeight) return;
+    }
+    box.scrollTo({ top: Math.max(0, top), behavior: first ? "auto" : "smooth" });
+    if (range) landed.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cursor, cols, rowCount, range, revealAt.nonce]);
+
   return (
     <div ref={boxRef} className="overscroll-contain min-h-0 flex-1 overflow-y-auto overflow-x-hidden rounded-md border border-border bg-background">
       {Array.from({ length: rowCount }, (_, r) => (
         <Row
           key={r}
+          innerRef={(el) => {
+            if (el) rowRefs.current.set(r, el);
+            else rowRefs.current.delete(r);
+          }}
           rowStart={addDays(gridStart, r * cols)}
           cols={cols}
           jan1={jan1}
@@ -183,7 +210,9 @@ function Row({
   segments,
   onPick,
   onOpenEvent,
+  innerRef,
 }: {
+  innerRef: (el: HTMLDivElement | null) => void;
   rowStart: string;
   jan1: string;
   dec31: string;
@@ -197,7 +226,7 @@ function Row({
   const days = useMemo(() => Array.from({ length: cols }, (_, i) => addDays(rowStart, i)), [rowStart, cols]);
 
   return (
-    <div className="relative grid" style={{ height: ROW_PX, gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+    <div ref={innerRef} className="relative grid" style={{ height: ROW_PX, gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
       {days.map((d, c) => (
         <Cell
           key={d}
