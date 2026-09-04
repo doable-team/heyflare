@@ -16,6 +16,7 @@ me.get("/", async (c) => {
     accounts: accounts.results.map(toAccount),
     setup_required: false,
     google_configured: !!(c.env.GOOGLE_CLIENT_ID && c.env.GOOGLE_CLIENT_SECRET),
+    microsoft_configured: !!(c.env.MS_CLIENT_ID && c.env.MS_CLIENT_SECRET),
   });
 });
 

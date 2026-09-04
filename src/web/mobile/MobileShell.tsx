@@ -2,7 +2,7 @@ import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { Layers, Plus, Settings } from "lucide-react";
 import { Mark } from "../components/Logo";
 import { ALL, useAccount } from "../context/AccountContext";
-import { startGoogleConnect } from "../lib/connect";
+import { startGoogleConnect, startMicrosoftConnect } from "../lib/connect";
 import { ActionSheet } from "./ActionSheet";
 import { useNavigate } from "react-router-dom";
 
@@ -34,6 +34,7 @@ export function ScopeSheet({ open, onOpenChange }: { open: boolean; onOpenChange
         { icon: <Layers />, label: "All accounts", hint: accounts.length > 1 ? accounts.length : undefined, checked: scope === ALL, onSelect: () => { setScope(ALL); nav("/"); } },
         ...accounts.map((a) => ({ icon: <span className="text-[13px] w-5 text-center">{glyphFor(a.id)}</span>, label: a.email, checked: scope === a.id, onSelect: () => { setScope(a.id); nav("/"); } })),
         { icon: <Plus />, label: "Connect Gmail", onSelect: () => startGoogleConnect() },
+        { icon: <Plus />, label: "Connect Outlook", onSelect: () => startMicrosoftConnect() },
         { icon: <Settings />, label: "Manage accounts", onSelect: () => nav("/settings#accounts") },
       ]}
     />

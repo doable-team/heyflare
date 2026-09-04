@@ -7,6 +7,7 @@ import { syncContactPhotos } from "../people";
 import { deleteAccountData } from "./domains";
 import { appOrigin, HANDOFF_PREFIX, CAL_PREFIX } from "./auth";
 import { googleConfigured, hasMailScope } from "../google";
+import { hasMsMailScope } from "../microsoft";
 import { uid, now } from "../db";
 
 const accounts = new Hono<AppEnv>();
@@ -39,8 +40,9 @@ accounts.delete("/:id", async (c) => {
   if (!acc) return c.json({ error: "not_found" }, 404);
   // Explicit cleanup (D1 may not have FK enforcement on for all statements).
   await deleteAccountData(c.env.DB, acc.id);
-  // Best-effort token revocation.
-  if (acc.refresh_token) {
+  // Best-effort token revocation. Google-only: Microsoft has no equivalent revoke endpoint for a
+  // delegated refresh token, and posting one to Google's would leak it to the wrong provider.
+  if (acc.provider === "gmail" && acc.refresh_token) {
     c.executionCtx.waitUntil(
       fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(acc.refresh_token)}`, { method: "POST" }).catch(() => {})
     );
@@ -53,7 +55,8 @@ accounts.post("/:id/sync", async (c) => {
   if (!acc) return c.json({ error: "not_found" }, 404);
   if (acc.provider === "domain") return c.json({ ok: true, added: 0, status: "ok", account: toAccount(acc) });
   // Connected for calendar only: there is no mail to fetch, and that is not a failure.
-  if (!hasMailScope(acc.scopes)) return c.json({ ok: true, added: 0, status: "ok", account: toAccount(acc) });
+  const scoped = acc.provider === "outlook" ? hasMsMailScope(acc.scopes) : hasMailScope(acc.scopes);
+  if (!scoped) return c.json({ ok: true, added: 0, status: "ok", account: toAccount(acc) });
   const r = await syncAccount(c.env, acc);
   const fresh = await ownAccount(c, acc.id);
   return c.json({ ok: r.status === "ok", added: r.added, status: r.status, account: toAccount(fresh!) });
@@ -66,12 +69,13 @@ accounts.post("/:id/reset", async (c) => {
   await deleteAccountData(c.env.DB, acc.id, { keepAccount: true });
   await c.env.DB.prepare(
     `UPDATE accounts SET initial_sync_done = 0, initial_sync_count = 0, initial_sync_page_token = NULL, history_id = NULL,
-       sync_status = 'idle', sync_error = NULL, photos_synced_at = NULL WHERE id = ?`
+       delta_link = NULL, sync_status = 'idle', sync_error = NULL, photos_synced_at = NULL WHERE id = ?`
   )
     .bind(acc.id)
     .run();
   let syncError: string | null = null;
-  if (acc.provider === "gmail" && hasMailScope(acc.scopes)) {
+  const canResync = acc.provider === "gmail" ? hasMailScope(acc.scopes) : acc.provider === "outlook" && hasMsMailScope(acc.scopes);
+  if (canResync) {
     const fresh = await ownAccount(c, acc.id);
     const r = await syncAccount(c.env, fresh!);
     if (r.status !== "ok") syncError = (await ownAccount(c, acc.id))?.sync_error ?? r.status;

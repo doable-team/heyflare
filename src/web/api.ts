@@ -152,6 +152,7 @@ export function removeThreadsFromLists(qc: QueryClient, ids: string[]) {
 export interface MeResponse {
   user: T.User | null;
   google_configured?: boolean;
+  microsoft_configured?: boolean;
   accounts: T.Account[];
   setup_required: boolean;
 }

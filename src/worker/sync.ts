@@ -2,6 +2,7 @@ import type { Env } from "./env";
 import type { AccountRow, ContactRow, ThreadRow } from "./db";
 import { uid, now, chunk, placeholders, safeJson, runBatch, logSync } from "./db";
 import { gmailJson, gmailBatchGet, GmailError, hasMailScope } from "./google";
+import { MicrosoftError, hasMsMailScope } from "./microsoft";
 import { parseGmailMessage, stripSubjectPrefixes, parseAddressList, type GmailMessage, type ParsedMessage } from "./mime";
 import { stripTrackers, htmlToText } from "./sanitize";
 import { syncContactPhotos } from "./people";
@@ -701,15 +702,23 @@ export async function syncAccount(env: Env, account: AccountRow): Promise<{ adde
   // An account connected for calendar only has no mail scope: every Gmail call would 403. Leave it
   // alone rather than writing a sync error every minute. (An empty `scopes` predates the column and
   // does have mail — see hasMailScope.)
-  if (!hasMailScope(account.scopes)) return { added: 0, status: "no_mail_scope" };
+  if (account.provider === "outlook") {
+    if (!hasMsMailScope(account.scopes)) return { added: 0, status: "no_mail_scope" };
+  } else if (!hasMailScope(account.scopes)) {
+    return { added: 0, status: "no_mail_scope" };
+  }
   // The 'syncing' marker exists so a long run isn't started twice by overlapping cron ticks, and so
   // the UI can show a spinner. An incremental poll finishes in well under a second and needs
-  // neither, so only the initial backfill pays for the marker.
+  // neither, so only the initial backfill pays for the marker. An Outlook mailbox is still walking
+  // its delta chain while `initial_sync_done` is 0, so it pays for the marker on the same terms.
   const slow = !account.initial_sync_done;
   if (slow) await db.prepare(`UPDATE accounts SET sync_status = 'syncing' WHERE id = ?`).bind(account.id).run();
   let added = 0;
   try {
-    if (!account.initial_sync_done) {
+    if (account.provider === "outlook") {
+      const { syncOutlookAccount } = await import("./outlook");
+      added += (await syncOutlookAccount(env, account)).added;
+    } else if (!account.initial_sync_done) {
       await startFromNow(env, account);
     } else {
       added += (await incrementalSync(env, account)).added;
@@ -743,7 +752,8 @@ export async function syncAccount(env: Env, account: AccountRow): Promise<{ adde
     return { added, status: "ok" };
   } catch (e) {
     const msg = (e as Error).message ?? String(e);
-    const disconnected = e instanceof GmailError && (e.status === 401 || /invalid_grant|no_refresh_token/i.test(e.body));
+    const disconnected =
+      (e instanceof GmailError || e instanceof MicrosoftError) && (e.status === 401 || /invalid_grant|no_refresh_token/i.test(e.body));
     await db
       .prepare(`UPDATE accounts SET sync_status = ?, sync_error = ?, last_synced_at = ? WHERE id = ?`)
       .bind(disconnected ? "disconnected" : "error", msg.slice(0, 1000), now(), account.id)

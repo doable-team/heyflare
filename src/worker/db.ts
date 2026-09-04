@@ -30,7 +30,7 @@ export interface UserRow {
 export interface AccountRow {
   id: string;
   user_id: string;
-  provider: "gmail" | "domain";
+  provider: "gmail" | "domain" | "outlook";
   domain_id: string | null;
   email: string;
   display_name: string;
@@ -38,6 +38,8 @@ export interface AccountRow {
   refresh_token: string | null;
   token_expires_at: number | null;
   history_id: string | null;
+  /** Outlook only: the Graph @odata.deltaLink cursor. Optional — predates 0015 on older rows. */
+  delta_link?: string | null;
   initial_sync_done: number;
   initial_sync_page_token: string | null;
   initial_sync_count: number;
@@ -249,7 +251,7 @@ export function toAccount(r: AccountRow): Account {
     id: r.id,
     email: r.email,
     display_name: r.display_name,
-    provider: r.provider === "domain" ? "domain" : "gmail",
+    provider: r.provider === "domain" ? "domain" : r.provider === "outlook" ? "outlook" : "gmail",
     domain_id: r.domain_id ?? null,
     initial_sync_done: !!r.initial_sync_done,
     initial_sync_count: r.initial_sync_count,

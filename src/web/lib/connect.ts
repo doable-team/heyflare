@@ -92,6 +92,16 @@ export function startGoogleConnect(hint?: string) {
   requestAnimationFrame(() => setTimeout(() => (location.href = url), 30));
 }
 
+/**
+ * Microsoft needs no system-browser handoff: unlike Google it still signs people in inside embedded
+ * web views, so the native app can run the consent screen in place and keep its session cookie.
+ */
+export function startMicrosoftConnect(hint?: string) {
+  showConnectOverlay("Taking you to Microsoft…");
+  const url = hint ? `/auth/microsoft/start?login_hint=${encodeURIComponent(hint)}` : "/auth/microsoft/start";
+  requestAnimationFrame(() => setTimeout(() => (location.href = url), 30));
+}
+
 /** Intercepts every <a href="/auth/google/start…"> so Connect/Reconnect links take the right path. */
 export function installConnectInterceptor() {
   document.addEventListener("click", (e) => {

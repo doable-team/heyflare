@@ -286,6 +286,8 @@ export interface BuildMimeParams {
   inReplyTo?: string;
   references?: string;
   attachments?: OutgoingAttachment[];
+  /** Supply one when the caller needs to record the sent message locally; otherwise a fresh id is minted. */
+  messageId?: string;
 }
 
 function isAscii(s: string): boolean {
@@ -313,14 +315,21 @@ function randomBoundary(prefix: string): string {
   return `${prefix}_${Array.from(arr, (b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
-export function buildRawMime(p: BuildMimeParams): string {
+/**
+ * The message as a real RFC822 string. Recipients live in the headers, Bcc included: both consumers
+ * of this — the Gmail `raw` field and Graph's MIME `sendMail` — derive the envelope from the headers
+ * and strip Bcc themselves. A direct SMTP transport would instead need Bcc omitted here and passed
+ * as envelope RCPT TO, which is what `opts.includeBcc` is for.
+ */
+export function buildRfc822(p: BuildMimeParams, opts: { includeBcc?: boolean } = {}): string {
+  const includeBcc = opts.includeBcc ?? true;
   const CRLF = "\r\n";
   const lines: string[] = [];
-  const msgId = `<${crypto.randomUUID()}@${p.from.email.split("@")[1] || "hey.local"}>`;
+  const msgId = p.messageId ?? `<${crypto.randomUUID()}@${p.from.email.split("@")[1] || "hey.local"}>`;
   lines.push(`From: ${formatAddress(p.from)}`);
   if (p.to.length) lines.push(`To: ${p.to.map(formatAddress).join(", ")}`);
   if (p.cc?.length) lines.push(`Cc: ${p.cc.map(formatAddress).join(", ")}`);
-  if (p.bcc?.length) lines.push(`Bcc: ${p.bcc.map(formatAddress).join(", ")}`);
+  if (includeBcc && p.bcc?.length) lines.push(`Bcc: ${p.bcc.map(formatAddress).join(", ")}`);
   lines.push(`Subject: ${encodeHeaderWord(p.subject ?? "")}`);
   lines.push(`Date: ${new Date().toUTCString()}`);
   lines.push(`Message-ID: ${msgId}`);
@@ -376,6 +385,15 @@ export function buildRawMime(p: BuildMimeParams): string {
     body = altBody;
   }
 
-  const raw = lines.join(CRLF) + CRLF + CRLF + body + CRLF;
-  return Buffer.from(raw, "utf8").toString("base64url");
+  return lines.join(CRLF) + CRLF + CRLF + body + CRLF;
+}
+
+/** The Gmail `messages/send` `raw` field: base64url of {@link buildRfc822}. */
+export function buildRawMime(p: BuildMimeParams): string {
+  return Buffer.from(buildRfc822(p), "utf8").toString("base64url");
+}
+
+/** Graph's `POST /me/sendMail` MIME body: standard base64 of {@link buildRfc822}. */
+export function buildMimeBase64(p: BuildMimeParams): string {
+  return Buffer.from(buildRfc822(p), "utf8").toString("base64");
 }

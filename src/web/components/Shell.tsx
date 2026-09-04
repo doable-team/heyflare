@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { Mark } from "./Logo";
 import { isNative, isMac, native, onMenu, installExternalLinkHandler } from "../lib/native";
-import { startGoogleConnect } from "../lib/connect";
+import { startGoogleConnect, startMicrosoftConnect } from "../lib/connect";
 import { ALL, useAccount } from "../context/AccountContext";
 import { useCompose } from "../context/ComposeContext";
 import { api, useCounts, useMeMutations } from "../api";
@@ -435,11 +435,15 @@ function AppSidebar() {
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>
-            {accounts.length === 0 && <div className="px-2 py-1.5 text-xs text-muted-foreground">No Gmail connected yet.</div>}
+            {accounts.length === 0 && <div className="px-2 py-1.5 text-xs text-muted-foreground">Nothing connected yet.</div>}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => startGoogleConnect()}>
               <Plus />
               Connect Gmail
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => startMicrosoftConnect()}>
+              <Plus />
+              Connect Outlook
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => nav("/settings#accounts")}>
               <Settings />

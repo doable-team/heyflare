@@ -2,7 +2,8 @@ import type { Env } from "./env";
 import type { AccountRow, MessageRow, ThreadRow } from "./db";
 import { now, safeJson } from "./db";
 import { gmailJson, gmailPost } from "./google";
-import { buildRawMime, type GmailMessage, type OutgoingAttachment } from "./mime";
+import { buildRawMime, buildMimeBase64, type GmailMessage, type OutgoingAttachment } from "./mime";
+import { graphFetch, MicrosoftError } from "./microsoft";
 import { htmlToText } from "./sanitize";
 import { ingestMessages, ingestParsed } from "./sync";
 import { uid } from "./db";
@@ -46,9 +47,9 @@ export async function sendMail(env: Env, account: AccountRow, p: SendParams): Pr
     references = [replyTo.references_header, replyTo.message_id_header].filter(Boolean).join(" ");
   }
   const from: Address = { email: account.email, name: account.display_name };
-  if (account.provider === "domain") {
-    return sendFromDomainMailbox(env, account, p, { thread, replyTo, subject, inReplyTo, references, from });
-  }
+  const ctx: DomainSendCtx = { thread, replyTo, subject, inReplyTo, references, from };
+  if (account.provider === "domain") return sendFromDomainMailbox(env, account, p, ctx);
+  if (account.provider === "outlook") return sendFromOutlook(env, account, p, ctx);
   const raw = buildRawMime({
     from,
     to: p.to,
@@ -198,7 +199,23 @@ async function sendFromDomainMailbox(env: Env, account: AccountRow, p: SendParam
     throw new Error("sending_not_configured");
   }
 
-  // Store the sent message locally so it shows up immediately.
+  return recordSentMessage(env, account, p, ctx, messageId, text);
+}
+
+/**
+ * Store a message we just handed to a transport that gives us nothing to read back (Cloudflare Email
+ * Sending, Resend, Graph `sendMail`), so it appears in the thread immediately. The Gmail path instead
+ * re-fetches the real message by id.
+ */
+async function recordSentMessage(
+  env: Env,
+  account: AccountRow,
+  p: SendParams,
+  ctx: DomainSendCtx,
+  messageId: string,
+  text: string
+): Promise<{ thread_id: string; message_id: string }> {
+  const db = env.DB;
   const t = now();
   const parsed: ParsedMessage = {
     gmailId: messageId,
@@ -236,6 +253,43 @@ async function sendFromDomainMailbox(env: Env, account: AccountRow, p: SendParam
       .run();
   }
   return { thread_id: localThreadId, message_id: row?.id ?? "" };
+}
+
+// ---------- Outlook: Microsoft Graph ----------
+
+/**
+ * Graph accepts a whole RFC822 message as base64 with `Content-Type: text/plain`, derives the
+ * envelope from the headers (Bcc included, which it strips before delivery) and files the result in
+ * Sent Items itself — the same end state Gmail sending reaches. It answers 202 with an empty body,
+ * so there is nothing to read back and we record the message locally instead.
+ */
+async function sendFromOutlook(env: Env, account: AccountRow, p: SendParams, ctx: DomainSendCtx): Promise<{ thread_id: string; message_id: string }> {
+  const domain = account.email.split("@")[1] || "outlook.com";
+  const messageId = `<${uid()}@${domain}>`;
+  const text = htmlToText(p.body_html);
+  const mime = buildMimeBase64({
+    from: ctx.from,
+    to: p.to,
+    cc: p.cc ?? [],
+    bcc: p.bcc ?? [],
+    subject: ctx.subject,
+    html: p.body_html,
+    text,
+    inReplyTo: ctx.inReplyTo,
+    references: ctx.references,
+    attachments: p.attachments ?? [],
+    messageId,
+  });
+  const res = await graphFetch(env, account, "sendMail", {
+    method: "POST",
+    headers: { "content-type": "text/plain" },
+    body: mime,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new MicrosoftError(res.status, body, `outlook_send_failed: ${body.slice(0, 300)}`);
+  }
+  return recordSentMessage(env, account, p, ctx, messageId, text);
 }
 
 export async function processScheduledSends(env: Env): Promise<number> {

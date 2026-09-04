@@ -9,9 +9,11 @@ Account-scoped routes take the account via `X-Account-Id` header (web stores the
 - `POST /auth/logout`
 - `GET  /auth/google/start` -> 302 to Google consent (scopes: gmail.modify, userinfo.email, userinfo.profile). Requires session.
 - `GET  /auth/google/callback?code&state` -> creates/updates account, 302 to `/` (or `/?connected=1`).
+- `GET  /auth/microsoft/start` -> 302 to Microsoft consent (scopes: Mail.ReadWrite, Mail.Send, User.Read, offline_access, openid/email/profile). Requires session.
+- `GET  /auth/microsoft/callback?code&state` -> creates/updates an account with `provider = 'outlook'`, 302 to `/?connected=1`.
 
 ## Me / settings
-- `GET  /api/me` -> {user, accounts: Account[], registration_open}
+- `GET  /api/me` -> {user, accounts: Account[], registration_open, google_configured, microsoft_configured}
 - `PATCH /api/me` {name?, settings?} -> {user}
 - `POST /api/me/password` {current,next}
 - `GET  /api/accounts` -> Account[]
@@ -131,7 +133,7 @@ Without `CF_API_TOKEN`, domain setup is "manual": the API returns the exact step
   `catch_all` makes this mailbox receive mail for any unknown address on the domain.
 - `PATCH /api/domains/:id` { catch_all_account_id?: string|null }
 - Mailboxes are deleted via `DELETE /api/accounts/:id` (existing).
-- `Account` gains `provider: 'gmail'|'domain'` and `domain_id: string|null`.
+- `Account` gains `provider: 'gmail'|'domain'|'outlook'` and `domain_id: string|null`.
 - Inbound (`email()` handler): parse with postal-mime; look up RCPT TO in accounts (provider domain); else domain catch-all;
   else `setReject("550 5.1.1 No such mailbox")`. Ingest as a message (same screener/bucket logic; attachments stored in a new
   `attachment_blobs` table when total ≤ 900KB per attachment, else metadata only with `stored=0`), dedupe on Message-ID.

@@ -121,7 +121,7 @@ export function googleFetch(env: Env, account: AccountRow, url: string, init: Re
 }
 
 async function refreshAccessToken(env: Env, account: AccountRow): Promise<string> {
-  if (account.provider === "domain") throw new GmailError(400, "not_gmail", "Not a Gmail account");
+  if (account.provider !== "gmail") throw new GmailError(400, "not_gmail", "Not a Gmail account");
   if (!account.refresh_token) {
     await markDisconnected(env, account, "No refresh token; please reconnect the account.");
     throw new GmailError(401, "no_refresh_token", "Account disconnected: no refresh token");
@@ -167,7 +167,7 @@ export async function getAccessToken(env: Env, account: AccountRow, force = fals
 
 /** Fetch against the Gmail API. `path` is relative to users/me/ (or absolute). */
 export async function gmailFetch(env: Env, account: AccountRow, path: string, init: RequestInit = {}): Promise<Response> {
-  if (account.provider === "domain") throw new GmailError(400, "not_gmail", "Not a Gmail account");
+  if (account.provider !== "gmail") throw new GmailError(400, "not_gmail", "Not a Gmail account");
   const url = /^https?:/i.test(path) ? path : GMAIL_BASE + path;
   let token = await getAccessToken(env, account);
   const doFetch = (t: string) =>

@@ -21,6 +21,7 @@ import domainRoutes from "./routes/domains";
 import calendarRoutes from "./routes/calendar";
 import { runCalendarSync } from "./calendar/sync";
 import { MAIL_SCOPE_SQL } from "./google";
+import { MS_MAIL_SCOPE_SQL, microsoftConfigured } from "./microsoft";
 import { handleInboundEmail } from "./inbound";
 import { ensureMigrations } from "./migrations";
 import { VERSION, COMMIT, BUILT_AT } from "@shared/version";
@@ -40,7 +41,7 @@ api.get("/me", async (c, next) => {
   const user = await getSessionUser(c);
   if (user) return next();
   const n = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM users`).first<{ n: number }>();
-  return c.json({ user: null, accounts: [], setup_required: (n?.n ?? 0) === 0, google_configured: !!(c.env.GOOGLE_CLIENT_ID && c.env.GOOGLE_CLIENT_SECRET) });
+  return c.json({ user: null, accounts: [], setup_required: (n?.n ?? 0) === 0, google_configured: !!(c.env.GOOGLE_CLIENT_ID && c.env.GOOGLE_CLIENT_SECRET), microsoft_configured: microsoftConfigured(c.env) });
 });
 // What this deployment is running (used by the update check).
 api.get("/version", (c) => c.json({ version: VERSION, commit: COMMIT, built_at: BUILT_AT, latest: null }));
@@ -110,6 +111,22 @@ async function runCron(env: Env) {
       await syncAccount(env, acc);
     } catch (e) {
       console.error("sync failed", acc.email, e);
+    }
+  }
+
+  // Outlook is a separate pass rather than a widened query: MAIL_SCOPE_SQL tests for a Gmail scope,
+  // so an Outlook row could never satisfy it.
+  const outlook = await db
+    .prepare(
+      `SELECT * FROM accounts WHERE provider = 'outlook' AND sync_status <> 'disconnected' AND refresh_token IS NOT NULL AND ${MS_MAIL_SCOPE_SQL} ORDER BY COALESCE(last_synced_at, 0) ASC LIMIT 8`
+    )
+    .all<AccountRow>();
+  for (const acc of outlook.results) {
+    if (acc.sync_status === "syncing" && acc.last_synced_at && Date.now() - acc.last_synced_at < 10 * 60_000) continue;
+    try {
+      await syncAccount(env, acc);
+    } catch (e) {
+      console.error("outlook sync failed", acc.email, e);
     }
   }
 }

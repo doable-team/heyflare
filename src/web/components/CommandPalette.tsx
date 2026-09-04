@@ -1,4 +1,4 @@
-import { startGoogleConnect } from "../lib/connect";
+import { startGoogleConnect, startMicrosoftConnect } from "../lib/connect";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowUpCircle, Bookmark, CalendarClock, CalendarDays, Clock, Eye, FileText, Files, FolderOpen, Inbox, Keyboard, Mail, Moon, NotebookPen, PenSquare, Plus, Repeat, Rss, Scissors, Send, Settings, Shield, ShieldOff, Sparkles, Sun, Tag, Trash2, Users } from "lucide-react";
@@ -74,6 +74,7 @@ export function CommandPalette({
       { id: "compose", label: "Compose a new message", icon: <PenSquare />, kbd: "c", run: onCompose, keywords: "write new email" },
       ...(onAssistant ? [{ id: "assistant", label: "Open the Assistant", icon: <Sparkles />, kbd: "⌘J", run: onAssistant, keywords: "ai chat help" }] : []),
       { id: "connect", label: "Connect a Gmail account", icon: <Plus />, run: () => startGoogleConnect(), keywords: "google add account" },
+      { id: "connect-ms", label: "Connect an Outlook account", icon: <Plus />, run: () => startMicrosoftConnect(), keywords: "microsoft outlook office365 add account" },
       { id: "theme", label: theme === "dark" ? "Switch to light theme" : "Switch to dark theme", icon: theme === "dark" ? <Sun /> : <Moon />, run: onToggleTheme, keywords: "dark light mode appearance" },
       { id: "shortcuts", label: "Keyboard shortcuts", icon: <Keyboard />, kbd: "?", run: onShortcuts },
     ],

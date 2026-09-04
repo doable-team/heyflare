@@ -58,11 +58,11 @@ function applyTheme(theme: "light" | "dark" | "system") {
 }
 
 
-/** Kick a Gmail sync when the app is opened or regains focus (throttled), so mail feels live without any push setup. */
+/** Kick a sync when the app is opened or regains focus (throttled), so mail feels live without any push setup. */
 function useSyncOnFocus(accounts: Account[], qc: ReturnType<typeof useQueryClient>) {
   const last = useRef(0);
   useEffect(() => {
-    const gmail = accounts.filter((a) => a.provider === "gmail" && a.sync_status !== "disconnected");
+    const gmail = accounts.filter((a) => (a.provider === "gmail" || a.provider === "outlook") && a.sync_status !== "disconnected");
     if (gmail.length === 0) return;
     const run = () => {
       if (document.visibilityState !== "visible") return;

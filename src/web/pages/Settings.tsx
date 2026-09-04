@@ -176,7 +176,7 @@ function AccountBlock({ a }: { a: Account }) {
   useEffect(() => { setSignature(a.signature); setDisplayName(a.display_name); }, [a.signature, a.display_name]);
   const dirty = signature !== a.signature || displayName !== a.display_name;
   const st = statusOf(a);
-  const isGmail = a.provider === "gmail";
+  const isGmail = a.provider === "gmail" || a.provider === "outlook";
   const save = () =>
     update.mutate(
       { id: a.id, signature, display_name: displayName },
@@ -672,19 +672,24 @@ export function PreferencesSection({ compact }: { compact?: boolean }) {
 
 export function AccountsSection({ onNewMailbox }: { onNewMailbox?: () => void }) {
   const { accounts } = useAccount();
-  const gmail = accounts.filter((a) => a.provider !== "domain");
+  const remote = accounts.filter((a) => a.provider !== "domain");
   const boxes = accounts.filter((a) => a.provider === "domain");
   return (
     <>
       <Section
-        title="Gmail accounts"
+        title="Connected accounts"
         description="What's connected, and how it signs off."
-        actions={<Button size="sm" variant="ghost" className="text-muted-foreground" asChild><a href="/auth/google/start"><Plus /> Connect Gmail</a></Button>}
+        actions={
+          <div className="flex items-center gap-1">
+            <Button size="sm" variant="ghost" className="text-muted-foreground" asChild><a href="/auth/google/start"><Plus /> Connect Gmail</a></Button>
+            <Button size="sm" variant="ghost" className="text-muted-foreground" asChild><a href="/auth/microsoft/start"><Plus /> Connect Outlook</a></Button>
+          </div>
+        }
       >
-        {gmail.length === 0 ? (
-          <div className="px-2 py-2 text-[13px] text-muted-foreground">No Gmail connected yet.</div>
+        {remote.length === 0 ? (
+          <div className="px-2 py-2 text-[13px] text-muted-foreground">Nothing connected yet.</div>
         ) : (
-          <div>{gmail.map((a) => <AccountBlock key={a.id} a={a} />)}</div>
+          <div>{remote.map((a) => <AccountBlock key={a.id} a={a} />)}</div>
         )}
       </Section>
       <Section
