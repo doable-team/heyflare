@@ -804,6 +804,8 @@ export function useEventMutations() {
   const inv = () => invalidateCalendar(qc);
   return {
     create: useMutation({ mutationFn: (b: EventInput) => api.post<T.CalEvent>("/api/calendar/events", b), onSuccess: inv }),
+    /** Copy an event onto the same calendar, at the same time, so it can be moved. */
+    duplicate: useMutation({ mutationFn: (id: string) => api.post<T.CalEvent>(`${eventPath(id)}/duplicate`), onSuccess: inv }),
     /** `scope` rides as a query param, per the recurring-event contract. */
     update: useMutation({
       mutationFn: ({ id, scope, ...b }: EventInput & { id: string; scope?: EventScope }) => api.patch<T.CalEvent>(`${eventPath(id)}${qs({ scope })}`, b),

@@ -15,6 +15,7 @@ import {
   Trash2,
   Video,
   X,
+  CopyPlus,
 } from "lucide-react";
 import type { CalEvent, Calendar, EventAttendee, Reminder, Rsvp } from "@shared/types";
 import { cn } from "@/lib/utils";
@@ -410,7 +411,7 @@ export function EventSheet() {
 }
 
 function EventForm({ target }: { target: EditorTarget }) {
-  const { closeEditor, calendars, settings } = useCalendar();
+  const { closeEditor, calendars, settings, openEvent } = useCalendar();
   const { user, accounts } = useAccount();
   const m = useEventMutations();
   const ev = target.mode === "edit" ? target.event : null;
@@ -903,9 +904,31 @@ function EventForm({ target }: { target: EditorTarget }) {
 
         <div className="flex items-center gap-2 border-t border-border p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
           {ev && !readOnly && (
-            <Button variant="ghost" size="icon-sm" aria-label="Delete event" className="text-muted-foreground hover:text-destructive" onClick={requestDelete} disabled={busy}>
-              <Trash2 />
-            </Button>
+            <>
+              <Button variant="ghost" size="icon-sm" aria-label="Delete event" className="text-muted-foreground hover:text-destructive" onClick={requestDelete} disabled={busy}>
+                <Trash2 />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Duplicate event"
+                title="Duplicate"
+                className="text-muted-foreground"
+                disabled={busy}
+                onClick={async () => {
+                  setError(null);
+                  try {
+                    // Open the copy straight away: you duplicate something in order to change it.
+                    const copy = await m.duplicate.mutateAsync(ev.id);
+                    openEvent(copy);
+                  } catch (e) {
+                    setError((e as Error).message || "Couldn't duplicate that.");
+                  }
+                }}
+              >
+                <CopyPlus />
+              </Button>
+            </>
           )}
           {error && (
             <span className="min-w-0 flex-1 truncate text-[13px] text-destructive" role="alert" title={error}>

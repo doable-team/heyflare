@@ -22,6 +22,7 @@ import {
   ownedEvent,
   rangeFor,
   createEvent,
+  duplicateEvent,
   updateEvent,
   deleteEvent,
   setRsvp,
@@ -249,6 +250,14 @@ calendar.delete("/events/:id", async (c) => {
   try {
     await deleteEvent(c.env, userId, id, scopeFor(c, parsed.occurrence));
     return c.json({ ok: true });
+  } catch (e) {
+    return fail(c, e);
+  }
+});
+
+calendar.post("/events/:id/duplicate", async (c) => {
+  try {
+    return c.json(await duplicateEvent(c.env, c.get("user").id, c.req.param("id")));
   } catch (e) {
     return fail(c, e);
   }

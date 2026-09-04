@@ -94,6 +94,8 @@ user's timezone. Hidden calendars are excluded unless `all=1`.
 - `POST   /api/calendar/events` → `CalEvent`
 - `PATCH  /api/calendar/events/:id` — `?scope=this|following|all` for recurring events
 - `DELETE /api/calendar/events/:id` — same `scope`
+- `POST   /api/calendar/events/:id/duplicate` — a standalone copy on the same calendar, no
+  recurrence and no attendees; one occurrence of a series copies that occurrence's own times
 - `POST   /api/calendar/events/:id/rsvp` `{ rsvp }`
 - `POST   /api/calendar/events/:id/done` `{ done, date? }` — todos
 - `POST   /api/calendar/events/from-thread` `{ thread_id }` — prefill from an email

@@ -33,6 +33,14 @@ function CalendarInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loc.state]);
 
+  // Opening the calendar lands on today. The cursor already defaults to today, but the view may
+  // have been scrolled a long way from it, so this asks to be shown it rather than merely set to
+  // it. A URL that names a date — the Imbox snapshot, a pick out of the year — is left alone.
+  useEffect(() => {
+    if (!new URLSearchParams(loc.search).get("d")) reveal(today);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ↑ ↓ walk the calendar; ← → keep their meaning everywhere else in the app — out to the sidebar
   // and over to the assistant — so the calendar deliberately does not claim them.
   //
