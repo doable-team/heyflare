@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CalEvent, CalendarDay } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useCalendar } from "./CalendarContext";
@@ -28,7 +28,13 @@ import { addDays, dateKey, daysBetween, isPast, isToday, keyToDate } from "../li
  */
 
 /** Four weeks to a row. The whole idiom hangs off this number. */
-const COLS = 28;
+/**
+ * Four weeks to a row is HEY's shape, but it only works when a cell is wide enough for "SAT 10".
+ * Below that the grid clips two-digit dates, so the row falls back to two weeks, then one — always
+ * a whole number of weeks, which is what keeps the weekend stripes aligned down the page.
+ */
+const WEEK_OPTIONS = [4, 2, 1] as const;
+const MIN_CELL_PX = 52;
 /** Enough for the date line plus a couple of pills or a glimpse of a photo. */
 const ROW_PX = 84;
 /** Where the pill overlay starts — clear of the date line. */
@@ -59,12 +65,30 @@ export function YearView() {
 
   // The ribbon's own window: back to the Sunday on or before Jan 1, forward to fill the last row.
   // It spills outside the loaded range at both ends; those cells simply render empty.
+  // How many weeks fit a row at this width. Measured, not guessed at a breakpoint, because the
+  // sidebar and the assistant panel both change how much room this actually has.
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [cols, setCols] = useState(28);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const measure = () => {
+      const w = el.clientWidth;
+      const weeks = WEEK_OPTIONS.find((n) => w / (n * 7) >= MIN_CELL_PX) ?? 1;
+      setCols(weeks * 7);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const { gridStart, rowCount, totalDays } = useMemo(() => {
     const start = addDays(jan1, -keyToDate(jan1).getDay());
     const days = daysBetween(start, dec31) + 1;
-    const rows = Math.ceil(days / COLS);
-    return { gridStart: start, rowCount: rows, totalDays: rows * COLS };
-  }, [jan1, dec31]);
+    const rows = Math.ceil(days / cols);
+    return { gridStart: start, rowCount: rows, totalDays: rows * cols };
+  }, [jan1, dec31, cols]);
 
   // Day photos show through here too, read-only — the year is where you notice you had a life.
   const dayByKey = useMemo(() => new Map((range?.days ?? []).map((d) => [d.date, d] as const)), [range?.days]);
@@ -93,9 +117,9 @@ export function YearView() {
       if (b < a) continue;
 
       for (let i = a; i <= b; ) {
-        const row = Math.floor(i / COLS);
-        const rowStart = row * COLS;
-        const last = Math.min(b, rowStart + COLS - 1);
+        const row = Math.floor(i / cols);
+        const rowStart = row * cols;
+        const last = Math.min(b, rowStart + cols - 1);
         raw.push({ row, start: i - rowStart, end: last - rowStart, e });
         i = last + 1;
       }
@@ -118,7 +142,7 @@ export function YearView() {
       rows[s.row].push({ e: s.e, start: s.start, end: s.end, lane });
     }
     return rows;
-  }, [range?.events, gridStart, rowCount, totalDays]);
+  }, [range?.events, gridStart, rowCount, totalDays, cols]);
 
   const pick = (date: string) => {
     setCursor(date);
@@ -126,11 +150,12 @@ export function YearView() {
   };
 
   return (
-    <div className="overscroll-contain min-h-0 flex-1 overflow-y-auto overflow-x-hidden rounded-md border border-border bg-background">
+    <div ref={boxRef} className="overscroll-contain min-h-0 flex-1 overflow-y-auto overflow-x-hidden rounded-md border border-border bg-background">
       {Array.from({ length: rowCount }, (_, r) => (
         <Row
           key={r}
-          rowStart={addDays(gridStart, r * COLS)}
+          rowStart={addDays(gridStart, r * cols)}
+          cols={cols}
           jan1={jan1}
           dec31={dec31}
           cursor={cursor}
@@ -154,6 +179,7 @@ function Row({
   dec31,
   cursor,
   dayByKey,
+  cols,
   segments,
   onPick,
   onOpenEvent,
@@ -163,14 +189,15 @@ function Row({
   dec31: string;
   cursor: string;
   dayByKey: Map<string, CalendarDay>;
+  cols: number;
   segments: Segment[];
   onPick: (date: string) => void;
   onOpenEvent: (e: CalEvent) => void;
 }) {
-  const days = useMemo(() => Array.from({ length: COLS }, (_, i) => addDays(rowStart, i)), [rowStart]);
+  const days = useMemo(() => Array.from({ length: cols }, (_, i) => addDays(rowStart, i)), [rowStart, cols]);
 
   return (
-    <div className="relative grid grid-cols-[repeat(28,minmax(0,1fr))]" style={{ height: ROW_PX }}>
+    <div className="relative grid" style={{ height: ROW_PX, gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
       {days.map((d, c) => (
         <Cell
           key={d}
@@ -191,8 +218,8 @@ function Row({
             key={`${s.e.id}:${s.start}`}
             className="absolute px-[1px]"
             style={{
-              left: `${(s.start / COLS) * 100}%`,
-              width: `${((s.end - s.start + 1) / COLS) * 100}%`,
+              left: `${(s.start / cols) * 100}%`,
+              width: `${((s.end - s.start + 1) / cols) * 100}%`,
               top: s.lane * (PILL_PX + PILL_GAP),
             }}
           >
