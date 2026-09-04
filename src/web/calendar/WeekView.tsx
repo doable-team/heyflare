@@ -54,6 +54,9 @@ const BODY_PX = 460;
 const PX_PER_MS = BODY_PX / DAY_MS;
 /** The "sometime this week" strip along the floor of the row. */
 const TASKS_PX = 28;
+
+/** Which hours get a number in the gutter. Every one would collide at ~19px an hour. */
+const HOUR_MARKS = [0, 3, 6, 9, 12, 15, 18, 21];
 /** Air between one week and the next. */
 const ROW_GAP_PX = 12;
 
@@ -229,7 +232,32 @@ function WeekRow({
           </span>
         </div>
 
+        {/* The hour gutter. HEY's own week view has neither this nor the rules across the columns —
+            its days are a clean field — but reading a time off a block is guesswork without them. */}
+        <div className="relative w-9 shrink-0" style={{ paddingTop: HABITS_PX + HEADER_PX }}>
+          {HOUR_MARKS.map((h) => (
+            <span
+              key={h}
+              className="absolute right-1 -translate-y-1/2 text-[9.5px] tnum leading-none text-tertiary"
+              style={{ top: HABITS_PX + HEADER_PX + (h / 24) * BODY_PX }}
+            >
+              {hourLabel(h)}
+            </span>
+          ))}
+        </div>
+
         <div className="relative grid min-w-0 flex-1 grid-cols-[repeat(7,minmax(0,1fr))]">
+          {/* Hour rules behind the events: every hour faint, every sixth a shade stronger. */}
+          <div className="pointer-events-none absolute inset-x-0 z-0" style={{ top: HABITS_PX + HEADER_PX, height: BODY_PX }}>
+            {Array.from({ length: 23 }, (_, i) => i + 1).map((h) => (
+              <div
+                key={h}
+                className={cn("absolute inset-x-0 border-t", h % 6 === 0 ? "border-border" : "border-border/40")}
+                style={{ top: (h / 24) * BODY_PX }}
+              />
+            ))}
+          </div>
+
           {days.map((d, i) => (
             <DayColumn key={d} date={d} first={i === 0} day={dayMeta.get(d)} habits={habits} />
           ))}
@@ -263,6 +291,13 @@ function WeekRow({
 }
 
 /** One day: habits on their rail, the header, then the track. */
+/** "6a", "12p", "9p" — short enough for a 36px gutter. */
+function hourLabel(h: number): string {
+  if (h === 0) return "12a";
+  if (h === 12) return "12p";
+  return h < 12 ? `${h}a` : `${h - 12}p`;
+}
+
 function DayColumn({ date, first, day, habits }: { date: string; first: boolean; day: CalendarDay | undefined; habits: Habit[] }) {
   return (
     <div className="group/day relative flex min-w-0 flex-col">
