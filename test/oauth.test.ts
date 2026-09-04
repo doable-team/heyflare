@@ -62,6 +62,40 @@ describe("resolveCreds precedence", () => {
   });
 });
 
+describe("taking over from a Worker secret", () => {
+  it("keeps using the Worker secret until the takeover is explicit", async () => {
+    await saveCreds(withEnv, "microsoft", { client_id: "db-id", client_secret: "db-secret-value" });
+    expect((await resolveCreds(withEnv, "microsoft")).source).toBe("env");
+  });
+
+  it("uses the stored credentials once overriding", async () => {
+    // Without this, a deployment configured by `wrangler secret put` could never rotate from the UI.
+    await saveCreds(withEnv, "microsoft", { client_id: "db-id", client_secret: "db-secret-value", override_env: true });
+    const r = await resolveCreds(withEnv, "microsoft");
+    expect(r).toMatchObject({ clientId: "db-id", clientSecret: "db-secret-value", source: "db" });
+    const st = await credentialsStatus(withEnv, "microsoft");
+    expect(st.overriding).toBe(true);
+    expect(st.env_available).toBe(true);
+  });
+
+  it("falls back to the Worker secret when the override is turned off", async () => {
+    await saveCreds(withEnv, "microsoft", { client_id: "db-id", client_secret: "db-secret-value", override_env: true });
+    await saveCreds(withEnv, "microsoft", { override_env: false });
+    expect((await resolveCreds(withEnv, "microsoft")).source).toBe("env");
+  });
+
+  it("ignores an override with nothing stored behind it", async () => {
+    await saveCreds(withEnv, "microsoft", { override_env: true });
+    expect((await resolveCreds(withEnv, "microsoft")).source).toBe("env");
+  });
+
+  it("reports env_available false when no Worker secret exists", async () => {
+    const st = await credentialsStatus(dbOnly, "microsoft");
+    expect(st.env_available).toBe(false);
+    expect(st.overriding).toBe(false);
+  });
+});
+
 describe("saveCreds is three-state", () => {
   it("leaves the secret alone when it is omitted", async () => {
     await saveCreds(dbOnly, "microsoft", { client_id: "id-1", client_secret: "secret-value-1" });

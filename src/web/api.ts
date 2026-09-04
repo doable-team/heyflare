@@ -506,8 +506,12 @@ export async function createDomain(body: { name: string; confirm?: boolean }): P
 export interface OAuthCredentialStatus {
   provider: "google" | "microsoft";
   configured: boolean;
-  /** "env" means a Worker secret is set, so the stored value is ignored and the form is read-only. */
+  /** Which credentials are in use right now. */
   source: "env" | "db" | "none";
+  /** A Worker secret exists for this provider, whether or not it is the one in use. */
+  env_available: boolean;
+  /** Stored credentials are deliberately overriding a Worker secret. */
+  overriding: boolean;
   client_id: string;
   secret_hint: string;
 }
@@ -524,8 +528,12 @@ export function useOAuthMutations() {
   };
   return {
     save: useMutation({
-      mutationFn: (b: { provider: string; client_id?: string; client_secret?: string | null }) =>
-        request<OAuthCredentialStatus>("PUT", `/api/oauth/${b.provider}`, { client_id: b.client_id, client_secret: b.client_secret }),
+      mutationFn: (b: { provider: string; client_id?: string; client_secret?: string | null; override_env?: boolean }) =>
+        request<OAuthCredentialStatus>("PUT", `/api/oauth/${b.provider}`, {
+          client_id: b.client_id,
+          client_secret: b.client_secret,
+          override_env: b.override_env,
+        }),
       onSuccess: inv,
     }),
   };

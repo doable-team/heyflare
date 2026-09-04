@@ -817,7 +817,11 @@ const PROVIDER_LABELS: Record<string, { name: string; hint: string; docs: string
 function CredentialRow({ c, compact }: { c: OAuthCredentialStatus; compact?: boolean }) {
   const { save } = useOAuthMutations();
   const meta = PROVIDER_LABELS[c.provider];
+  // A Worker secret is used by default, but you can take over here — otherwise a deployment set up
+  // with `wrangler secret put` could never rotate an expiring secret without the CLI.
   const managed = c.source === "env";
+  const [takingOver, setTakingOver] = useState(false);
+  const showForm = !managed || takingOver;
   const [clientId, setClientId] = useState(c.client_id);
   const [secret, setSecret] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -827,9 +831,15 @@ function CredentialRow({ c, compact }: { c: OAuthCredentialStatus; compact?: boo
     save.mutate(
       { provider: c.provider, client_id: clientId.trim(), client_secret: secret.trim() ? secret.trim() : undefined },
       {
-        onSuccess: () => { toast(`${meta.name} credentials saved`); setSecret(""); setDirty(false); },
+        onSuccess: () => { toast(`${meta.name} credentials saved`); setSecret(""); setDirty(false); setTakingOver(false); },
         onError: (e: unknown) => toast.error((e as Error).message),
       }
+    );
+
+  const revert = () =>
+    save.mutate(
+      { provider: c.provider, override_env: false },
+      { onSuccess: () => { toast(`Using the Worker secret for ${meta.name} again`); setTakingOver(false); }, onError: (e: unknown) => toast.error((e as Error).message) }
     );
 
   return (
@@ -838,11 +848,17 @@ function CredentialRow({ c, compact }: { c: OAuthCredentialStatus; compact?: boo
         <span className="text-sm font-medium">{meta.name}</span>
         {c.configured ? <Badge variant="secondary">Connected</Badge> : <Badge variant="outline">Not set</Badge>}
         {managed ? <Badge variant="outline">Worker secret</Badge> : null}
+        {c.overriding ? <Badge variant="outline">Overriding Worker secret</Badge> : null}
       </div>
-      {managed ? (
-        <div className="text-[13px] text-muted-foreground">
-          Set by a Worker secret, which always wins over anything stored here. Rotate it with{" "}
-          <code className="text-[12px]">wrangler secret put</code>, or remove the secret to manage it in this form.
+      {managed && !takingOver ? (
+        <div className="text-[13px] text-muted-foreground space-y-2">
+          <div>
+            Currently using the <code className="text-[12px]">{c.provider === "google" ? "GOOGLE_CLIENT_SECRET" : "MS_CLIENT_SECRET"}</code>{" "}
+            Worker secret. Rotate it with <code className="text-[12px]">wrangler secret put</code>, or manage it here instead.
+          </div>
+          <Button size="sm" variant="outline" onClick={() => { setTakingOver(true); setClientId(c.client_id); }}>
+            Manage here instead
+          </Button>
         </div>
       ) : (
         <FieldGroup>
@@ -860,10 +876,17 @@ function CredentialRow({ c, compact }: { c: OAuthCredentialStatus; compact?: boo
               ) : null}
             </FieldDescription>
           </Field>
-          <div>
+          {managed && takingOver ? (
+            <div className="rounded-md bg-muted/60 px-3 py-2 text-[13px]">
+              Saving will use these credentials instead of the Worker secret. Enter both a client ID and a secret.
+            </div>
+          ) : null}
+          <div className="flex items-center gap-2">
             <Button size={compact ? "lg" : "sm"} disabled={save.isPending || (!dirty && !secret)} onClick={submit}>
               {save.isPending ? <Loader2 className="animate-spin" /> : null} Save
             </Button>
+            {takingOver ? <Button size={compact ? "lg" : "sm"} variant="ghost" onClick={() => { setTakingOver(false); setSecret(""); setDirty(false); }}>Cancel</Button> : null}
+            {c.overriding ? <Button size={compact ? "lg" : "sm"} variant="ghost" onClick={revert} disabled={save.isPending}>Use the Worker secret</Button> : null}
           </div>
         </FieldGroup>
       )}

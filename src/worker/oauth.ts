@@ -26,6 +26,8 @@ interface CredRow {
   client_id: string;
   secret_enc: string;
   secret_hint: string;
+  /** 1 when the stored credentials should be used even though a Worker secret exists. */
+  override_env?: number;
   updated_at: number;
 }
 
@@ -39,10 +41,16 @@ export async function resolveCreds(env: Env, provider: OAuthProvider): Promise<R
   const names = envNames(provider);
   const envId = (env[names.id] as string | undefined) ?? "";
   const envSecret = (env[names.secret] as string | undefined) ?? "";
-  if (envId && envSecret) return { clientId: envId, clientSecret: envSecret, source: "env" };
+  const hasEnv = !!(envId && envSecret);
 
   const row = await env.DB.prepare(`SELECT * FROM oauth_credentials WHERE provider = ?`).bind(provider).first<CredRow>();
-  if (!row?.client_id || !row?.secret_enc) return { clientId: "", clientSecret: "", source: "none" };
+  const stored = !!(row?.client_id && row?.secret_enc);
+
+  // The Worker secret is the default because it lives in Cloudflare's secret store rather than the
+  // database — but only until someone deliberately takes over management here, which is the only way
+  // to rotate an expiring secret without CLI access.
+  if (hasEnv && !(stored && row?.override_env)) return { clientId: envId, clientSecret: envSecret, source: "env" };
+  if (!stored) return { clientId: "", clientSecret: "", source: "none" };
   try {
     const secret = await decryptSecret(await getSessionSecret(env), row.secret_enc);
     return { clientId: row.client_id, clientSecret: secret, source: "db" };
@@ -65,19 +73,27 @@ export function secretHint(secret: string): string {
 export interface CredentialStatus {
   provider: OAuthProvider;
   configured: boolean;
-  /** "env" means a Worker secret is set, so the stored value is ignored and the UI is read-only. */
+  /** Which credentials are actually in use right now. */
   source: CredentialSource;
+  /** True when a Worker secret exists for this provider, whether or not it is the one being used. */
+  env_available: boolean;
+  /** True when the stored credentials are deliberately overriding a Worker secret. */
+  overriding: boolean;
   client_id: string;
   secret_hint: string;
 }
 
 export async function credentialsStatus(env: Env, provider: OAuthProvider): Promise<CredentialStatus> {
+  const names = envNames(provider);
+  const envAvailable = !!((env[names.id] as string | undefined) && (env[names.secret] as string | undefined));
   const resolved = await resolveCreds(env, provider);
   const row = await env.DB.prepare(`SELECT * FROM oauth_credentials WHERE provider = ?`).bind(provider).first<CredRow>();
   return {
     provider,
     configured: resolved.source !== "none",
     source: resolved.source,
+    env_available: envAvailable,
+    overriding: resolved.source === "db" && envAvailable,
     client_id: resolved.source === "env" ? resolved.clientId : (row?.client_id ?? ""),
     secret_hint: resolved.source === "env" ? "set by a Worker secret" : (row?.secret_hint ?? ""),
   };
@@ -91,12 +107,14 @@ export async function credentialsStatus(env: Env, provider: OAuthProvider): Prom
 export async function saveCreds(
   env: Env,
   provider: OAuthProvider,
-  patch: { client_id?: string; client_secret?: string | null }
+  patch: { client_id?: string; client_secret?: string | null; override_env?: boolean }
 ): Promise<void> {
   const row = await env.DB.prepare(`SELECT * FROM oauth_credentials WHERE provider = ?`).bind(provider).first<CredRow>();
   let clientId = row?.client_id ?? "";
   let enc = row?.secret_enc ?? "";
   let hint = row?.secret_hint ?? "";
+  let override = row?.override_env ?? 0;
+  if (typeof patch.override_env === "boolean") override = patch.override_env ? 1 : 0;
 
   if (typeof patch.client_id === "string") clientId = patch.client_id.trim();
   if (typeof patch.client_secret === "string") {
@@ -111,11 +129,11 @@ export async function saveCreds(
   }
 
   await env.DB.prepare(
-    `INSERT INTO oauth_credentials (provider, client_id, secret_enc, secret_hint, updated_at)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO oauth_credentials (provider, client_id, secret_enc, secret_hint, override_env, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(provider) DO UPDATE SET client_id = excluded.client_id, secret_enc = excluded.secret_enc,
-       secret_hint = excluded.secret_hint, updated_at = excluded.updated_at`
+       secret_hint = excluded.secret_hint, override_env = excluded.override_env, updated_at = excluded.updated_at`
   )
-    .bind(provider, clientId, enc, hint, now())
+    .bind(provider, clientId, enc, hint, override, now())
     .run();
 }
