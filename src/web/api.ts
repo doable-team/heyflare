@@ -161,7 +161,7 @@ export function useMe(enabled = true) {
 
 // ---------- Mail ----------
 export function useCounts(enabled = true) {
-  return useQuery({ queryKey: keys.counts, queryFn: () => api.get<T.Counts>("/api/counts"), refetchInterval: 30_000, enabled });
+  return useQuery({ queryKey: keys.counts, queryFn: () => api.get<T.Counts>("/api/counts"), refetchInterval: 60_000, enabled });
 }
 export function useImbox(enabled = true) {
   return useQuery({ queryKey: keys.imbox, queryFn: () => api.get<T.ImboxResponse>("/api/imbox"), refetchInterval: 60_000, enabled });

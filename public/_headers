@@ -1,0 +1,5 @@
+# Everything under /assets/ carries a content hash in its name, so a URL can never serve
+# different bytes. Without this the Worker answers every request with max-age=0 and the
+# browser revalidates every script, stylesheet and font on every page load.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

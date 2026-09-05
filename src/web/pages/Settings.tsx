@@ -6,7 +6,6 @@ import type { Account, Domain, UserSettings } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useAccount } from "../context/AccountContext";
 import { DomainMxError, domainErrorMessage, useAccountMutations, useDomainMutations, useDomains, useMeMutations, useTwoFactor, useTwoFactorMutations } from "../api";
-import QRCode from "qrcode";
 import { Avatar, AccountGlyph } from "../components/Avatar";
 import { PageHeader } from "../components/EmptyState";
 import { fmtRelative } from "../lib/format";
@@ -787,6 +786,8 @@ function TwoFactorBlock({ compact }: { compact?: boolean }) {
       onSuccess: async (r) => {
         setSecret(r.secret);
         try {
+          // The QR library is 70 KB and used exactly here, once, while enabling 2FA.
+          const { default: QRCode } = await import("qrcode");
           setQr(await QRCode.toDataURL(r.otpauth_url, { margin: 1, width: 192, color: { dark: "#000000", light: "#ffffff" } }));
         } catch {
           setQr("");

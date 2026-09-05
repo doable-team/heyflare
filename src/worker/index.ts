@@ -35,6 +35,32 @@ app.onError((err, c) => {
 app.route("/auth", authRoutes);
 
 const api = new Hono<AppEnv>();
+
+/**
+ * Conditional GETs for JSON. The Imbox, counts and lists are polled every minute and mostly have
+ * not changed; with an ETag the browser sends `If-None-Match` and an unchanged answer is a 304 with
+ * no body. `no-cache` (not `no-store`) is what lets the browser keep the copy it revalidates
+ * against. Attachments set their own Cache-Control and are left alone, as is anything that is not
+ * JSON — hashing a multi-megabyte file to save nothing would be a poor trade.
+ */
+api.use("*", async (c, next) => {
+  await next();
+  if (c.req.method !== "GET" || c.res.status !== 200) return;
+  if (!/^application\/json/i.test(c.res.headers.get("content-type") ?? "")) return;
+  const body = await c.res.clone().arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-1", body);
+  const tag = `W/"${[...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")}"`;
+  const headers = new Headers(c.res.headers);
+  headers.set("etag", tag);
+  if (!headers.has("cache-control")) headers.set("cache-control", "private, no-cache");
+  const match = c.req.header("if-none-match");
+  if (match && match.split(",").some((m) => m.trim() === tag)) {
+    c.res = new Response(null, { status: 304, headers });
+    return;
+  }
+  c.res = new Response(body, { status: 200, headers });
+});
+
 // Anonymous GET /api/me -> { user: null, registration_open } (used by the register page)
 api.get("/me", async (c, next) => {
   const user = await getSessionUser(c);

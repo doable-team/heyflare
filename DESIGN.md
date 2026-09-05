@@ -174,3 +174,19 @@ hatching, dashed edge.
 
 Mobile is deliberately conventional — a month grid plus agenda, and a vertical day timeline. HEY's
 own phone app is vertical too; the horizontal ribbon is a desktop idea and does not survive a thumb.
+
+## 10. Loading — what a visit downloads
+
+The build is split so that a page only pays for what it shows:
+
+- **Two apps, two chunks.** `App.tsx` routes `/login` and `/setup` itself and lazy-loads `DesktopApp` or `MobileApp` for everything else, chosen synchronously from the viewport (`useIsMobile` decides on the first render, never in an effect). A phone never downloads the desktop shell, and the sign-in page downloads neither.
+- **One chunk per page**, via `page()` in `lib/lazy.tsx`. Its Suspense boundary sits *inside* the page, so the shell, sidebar and cursor stay put while a chunk arrives; `v7_startTransition` on the router keeps the previous page on screen instead of a fallback. The Imbox is imported statically — it is where a session lands, and should not cost a second round trip.
+- **Warm what will be clicked.** Each app calls `warm([...])` with the pages nearly every session reaches; they are fetched in idle time after first paint, so the first click is instant. The sign-in page warms the app chunk the same way.
+- **Heavy libraries load on use, not on import**: the composer (`ComposeContext`), the month grid in `DatePicker` (react-day-picker and the date-fns it drags in), and the QR encoder in Settings are `import()`ed the first time they are needed.
+- **Libraries are grouped by how often they change** (`manualChunks` in `vite.config.ts`): `vendor` is React, the router and the query client; `icons` is every lucide icon in use; `ui` is Radix and Floating UI. With immutable caching, a deploy costs a returning visitor the app code (about 35 KB gzip) and the pages that changed — not React again. Do not add Rollup's minimum-chunk-size merge: it folds a lazy tree into its own lazy children.
+- **Assets are immutable.** `public/_headers` sends `/assets/*` with a one-year `immutable` Cache-Control; the filenames are content hashes, so a repeat visit makes no asset requests at all. Without it Workers answers `max-age=0` and every load revalidates every file.
+- **JSON answers carry an ETag.** The Worker hashes JSON `GET` responses and answers `If-None-Match` with a `304` (`src/worker/index.ts`). Polls that change nothing move no bytes. `Cache-Control: private, no-cache` is what lets the browser keep a copy to revalidate against — `no-store` would defeat it.
+- **Rows do not re-render for nothing.** `ThreadRow` is memoised and `ThreadList` hands it callbacks with stable identity; a poll that returns the same threads (the query client shares structure) leaves every unchanged row alone.
+- **Polling follows the cron.** Mail arrives once a minute, so nothing polls faster than that, and `refetchOnWindowFocus` is off — `useSyncOnFocus` already syncs on focus and invalidates afterwards, which is the refetch that actually has new data.
+
+To see what a change did: `npm run build` prints every chunk with its gzip size. The sign-in page is the entry chunk; the desktop and mobile first paints are the entry chunk plus `DesktopApp-*`/`MobileApp-*` and their static imports.

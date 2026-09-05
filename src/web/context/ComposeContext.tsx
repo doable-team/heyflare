@@ -1,12 +1,20 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { invalidateMail, sendMail, type SendPayload } from "../api";
-import { Composer, type ComposerHandle, type ComposerInitial } from "../components/Composer";
+import type { ComposerHandle, ComposerInitial } from "../components/Composer";
+import { whenIdle } from "../lib/lazy";
 import { useKeys } from "../lib/keys";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { MobileComposer } from "../mobile/MobileComposer";
+
+// The composer is the heaviest thing that is not a page — editor, recipients, attachments, the
+// scheduling picker — and most sessions never open it. Each form factor gets its own chunk,
+// fetched in idle time so the first ⌘N still opens instantly.
+const loadComposer = () => import("../components/Composer");
+const loadMobileComposer = () => import("../mobile/MobileComposer");
+const Composer = lazy(() => loadComposer().then((m) => ({ default: m.Composer })));
+const MobileComposer = lazy(() => loadMobileComposer().then((m) => ({ default: m.MobileComposer })));
 
 interface Ctx {
   openCompose: (initial?: ComposerInitial) => void;
@@ -105,12 +113,17 @@ export function ComposeProvider({ children }: { children: ReactNode }) {
 
   const title = open?.initial.title || (open?.initial.thread_id ? "Reply" : "New message");
   const mobile = useIsMobile();
+  useEffect(() => {
+    whenIdle(() => void (mobile ? loadMobileComposer() : loadComposer()).catch(() => {}));
+  }, [mobile]);
 
   if (mobile) {
     return (
       <C.Provider value={{ openCompose, closeCompose, queueSend }}>
         {children}
-        <MobileComposer open={open} composerRef={composer} title={title} onRequestClose={requestClose} onClose={closeCompose} />
+        <Suspense fallback={null}>
+          <MobileComposer open={open} composerRef={composer} title={title} onRequestClose={requestClose} onClose={closeCompose} />
+        </Suspense>
       </C.Provider>
     );
   }
@@ -125,7 +138,11 @@ export function ComposeProvider({ children }: { children: ReactNode }) {
             <SheetDescription className="sr-only">Compose a message</SheetDescription>
           </SheetHeader>
           <div className="flex-1 min-h-0 overflow-y-auto">
-            {open && <Composer key={open.key} ref={composer} initial={open.initial} onDone={closeCompose} onCancel={closeCompose} />}
+            {open && (
+              <Suspense fallback={null}>
+                <Composer key={open.key} ref={composer} initial={open.initial} onDone={closeCompose} onCancel={closeCompose} />
+              </Suspense>
+            )}
           </div>
         </SheetContent>
       </Sheet>

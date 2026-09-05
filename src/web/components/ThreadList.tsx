@@ -107,14 +107,21 @@ export function ThreadList({
     if (cursor >= items.length) setCursor(items.length - 1);
   }, [items, cursor]);
 
-  const toggle = (id: string, shift: boolean) => {
+  // The row callbacks read the latest list and action through refs and are created once. Rows are
+  // memoised, and a poll that changes nothing hands back the very same thread objects (the query
+  // client shares structure), so with stable callbacks an unchanged row does not render at all —
+  // rather than all four hundred of them re-rendering every minute.
+  const allRef = useRef(all);
+  allRef.current = all;
+  const toggle = useCallback((id: string, shift: boolean) => {
+    const list = allRef.current;
     setSelected((s) => {
       const n = new Set(s);
       if (shift && lastClick.current) {
-        const a = all.findIndex((t) => t.id === lastClick.current);
-        const b = all.findIndex((t) => t.id === id);
+        const a = list.findIndex((t) => t.id === lastClick.current);
+        const b = list.findIndex((t) => t.id === id);
         if (a >= 0 && b >= 0) {
-          for (let i = Math.min(a, b); i <= Math.max(a, b); i++) n.add(all[i].id);
+          for (let i = Math.min(a, b); i <= Math.max(a, b); i++) n.add(list[i].id);
           return n;
         }
       }
@@ -123,7 +130,7 @@ export function ThreadList({
       return n;
     });
     lastClick.current = id;
-  };
+  }, []);
 
   const cur = cursor >= 0 ? items[cursor] : undefined;
   const curThread = cur?.kind === "thread" ? cur.t : undefined;
@@ -149,13 +156,16 @@ export function ThreadList({
     [bulk, toast],
   );
 
-  const onQuick = (id: string, q: QuickAction) => {
-    const t = all.find((x) => x.id === id);
+  const actRef = useRef(act);
+  actRef.current = act;
+  const onQuick = useCallback((id: string, q: QuickAction) => {
+    const t = allRef.current.find((x) => x.id === id);
+    const act = actRef.current;
     if (q === "reply_later") act([id], { action: "reply_later", on: !t?.reply_later }, t?.reply_later ? "Removed from Reply Later" : "Added to Reply Later", !t?.reply_later);
     else if (q === "set_aside") act([id], { action: "set_aside", on: !t?.set_aside }, t?.set_aside ? "Back in the Imbox" : "Set aside", !t?.set_aside);
     else if (q === "bubble_up") setBubbleFor([id]);
     else if (q === "trash") act([id], { action: "move", bucket: "trash" }, "Moved to trash");
-  };
+  }, []);
 
   const open = () => {
     if (!cur) return;

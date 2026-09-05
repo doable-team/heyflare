@@ -1,8 +1,10 @@
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { CalendarClock, CalendarDays, Coffee, Moon, Sunrise, Sun } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Calendar } from "@/components/ui/calendar";
+// react-day-picker and the date-fns it drags in are 170 KB — for a month grid that is behind a
+// "Pick a date…" button most people never press.
+const Calendar = lazy(() => import("@/components/ui/calendar").then((m) => ({ default: m.Calendar })));
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 
@@ -86,7 +88,9 @@ export function DateTimePicker({ onPick, onCancel, title = "Bubble up", verb = "
       {showCal && (
         <>
           <Separator className="my-1" />
-          <Calendar mode="single" selected={day} onSelect={setDay} disabled={{ before: new Date() }} className="p-1" />
+          <Suspense fallback={<div className="h-[290px]" aria-busy="true" />}>
+            <Calendar mode="single" selected={day} onSelect={setDay} disabled={{ before: new Date() }} className="p-1" />
+          </Suspense>
           <div className="flex items-center gap-1.5 px-1 pb-1">
             <Select value={time} onValueChange={setTime}>
               <SelectTrigger size="sm" className="flex-1"><SelectValue /></SelectTrigger>

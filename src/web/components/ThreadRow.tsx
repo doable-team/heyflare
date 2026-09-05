@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Link } from "react-router-dom";
 import { ArrowUpCircle, Bookmark, Clock, Paperclip, ShieldCheck, StickyNote, Trash2 } from "lucide-react";
 import type { ThreadSummary } from "@shared/types";
@@ -38,7 +39,11 @@ function Quick({ label, kbd, icon, onClick, active }: { label: string; kbd: stri
 }
 
 /** Notion-dense thread row: 44px two-line (default) or 40px one-line (compact). */
-export function ThreadRow({
+/**
+ * Memoised: see ThreadList, which keeps every callback it passes here referentially stable so that
+ * a poll returning the same threads leaves the rows untouched.
+ */
+export const ThreadRow = memo(function ThreadRow({
   thread: t,
   selected,
   focused,
@@ -173,4 +178,4 @@ export function ThreadRow({
       </div>
     </div>
   );
-}
+});
