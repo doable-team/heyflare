@@ -21,6 +21,9 @@ interface Ctx {
   /** True when more than one account is connected (show glyphs). */
   multi: boolean;
   setupRequired: boolean;
+  /** False when no OAuth client is configured, so the UI can offer setup instead of a failing connect. */
+  googleConfigured: boolean;
+  microsoftConfigured: boolean;
   loading: boolean;
   error: Error | null;
   setScope: (scope: Scope) => void;
@@ -40,6 +43,8 @@ const AccountCtx = createContext<Ctx>({
   account: null,
   multi: false,
   setupRequired: false,
+  googleConfigured: false,
+  microsoftConfigured: false,
   loading: true,
   error: null,
   setScope: () => {},
@@ -58,11 +63,12 @@ function applyTheme(theme: "light" | "dark" | "system") {
 }
 
 
-/** Kick a Gmail sync when the app is opened or regains focus (throttled), so mail feels live without any push setup. */
+/** Kick a sync when the app is opened or regains focus (throttled), so mail feels live without any push setup. */
 function useSyncOnFocus(accounts: Account[], qc: ReturnType<typeof useQueryClient>) {
   const last = useRef(0);
   useEffect(() => {
-    const gmail = accounts.filter((a) => a.provider === "gmail" && a.sync_status !== "disconnected");
+    // Every polled provider, i.e. everything except a domain mailbox, which is pushed to instantly.
+    const gmail = accounts.filter((a) => a.provider !== "domain" && a.sync_status !== "disconnected");
     if (gmail.length === 0) return;
     const run = () => {
       if (document.visibilityState !== "visible") return;
@@ -146,6 +152,8 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     account,
     multi: accounts.length > 1,
     setupRequired: me.data?.setup_required ?? false,
+    googleConfigured: me.data?.google_configured ?? false,
+    microsoftConfigured: me.data?.microsoft_configured ?? false,
     loading: me.isLoading,
     error: (me.error as Error) ?? null,
     setScope,

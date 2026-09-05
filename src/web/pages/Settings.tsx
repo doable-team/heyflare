@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { AlertTriangle, CalendarDays, Check, ChevronDown, Copy, FileText, Globe, Inbox, KeyRound, Mail, Monitor, Moon, Plus, RefreshCw, Rss, ShieldCheck, SlidersHorizontal, Sun, Trash2, Unplug, User, Sparkles } from "lucide-react";
+import { AlertTriangle, CalendarDays, Check, ChevronDown, Copy, FileText, Globe, Inbox, KeyRound, Mail, Monitor, Moon, Plus, RefreshCw, Rss, ShieldCheck, SlidersHorizontal, Sun, Trash2, Unplug, User, Sparkles, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import type { Account, Domain, UserSettings } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useAccount } from "../context/AccountContext";
-import { DomainMxError, domainErrorMessage, useAccountMutations, useDomainMutations, useDomains, useMeMutations, useTwoFactor, useTwoFactorMutations } from "../api";
+import { DomainMxError, domainErrorMessage, useAccountMutations, useDomainMutations, useDomains, useMeMutations, useTwoFactor, useTwoFactorMutations, useImapMutations, api, useOAuthCredentials, useOAuthMutations, type OAuthCredentialStatus } from "../api";
 import QRCode from "qrcode";
 import { Avatar, AccountGlyph } from "../components/Avatar";
 import { PageHeader } from "../components/EmptyState";
@@ -157,6 +157,7 @@ function FormShell({ open, onClose, title, description, footer, variant = "dialo
 
 export function statusOf(a: Account): { label: string; spin?: boolean } {
   if (a.provider === "domain") return { label: "Mailbox · receives via Cloudflare" };
+  if (a.provider === "imap" && a.sync_status === "idle") return { label: "Mailbox · IMAP" };
   if (a.sync_status === "disconnected") return { label: "Disconnected" };
   if (a.sync_status === "error") return { label: "Sync error" };
   if (!a.initial_sync_done) return { label: "Connecting", spin: true };
@@ -173,10 +174,11 @@ function AccountBlock({ a }: { a: Account }) {
   const [displayName, setDisplayName] = useState(a.display_name);
   const [confirm, setConfirm] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [editImap, setEditImap] = useState(false);
   useEffect(() => { setSignature(a.signature); setDisplayName(a.display_name); }, [a.signature, a.display_name]);
   const dirty = signature !== a.signature || displayName !== a.display_name;
   const st = statusOf(a);
-  const isGmail = a.provider === "gmail";
+  const isGmail = a.provider === "gmail" || a.provider === "outlook";
   const save = () =>
     update.mutate(
       { id: a.id, signature, display_name: displayName },
@@ -184,6 +186,7 @@ function AccountBlock({ a }: { a: Account }) {
     );
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="border-b border-border last:border-b-0">
+      {a.provider === "imap" ? <EditImapDialog account={a} open={editImap} onOpenChange={setEditImap} /> : null}
       <div className="flex items-center gap-3 px-2 h-12">
         <Avatar email={a.email} name={a.display_name} src={a.avatar_url} size={24} />
         <div className="flex-1 min-w-0">
@@ -233,6 +236,11 @@ function AccountBlock({ a }: { a: Account }) {
             <Button size="sm" onClick={save} disabled={!dirty || update.isPending}>Save</Button>
             <SavedMark show={saved && !dirty} />
             <span className="flex-1" />
+            {a.provider === "imap" && (
+              <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => setEditImap(true)}>
+                <SlidersHorizontal /> Server settings
+              </Button>
+            )}
             {isGmail && (
               <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={reset.isPending} onClick={() => setConfirmReset(true)}>
                 <RefreshCw /> Start fresh
@@ -670,23 +678,365 @@ export function PreferencesSection({ compact }: { compact?: boolean }) {
   );
 }
 
+/** Change an IMAP mailbox's server settings or password without losing its synced mail. */
+export function EditImapDialog({ account, open, onOpenChange, variant = "dialog" }: { account: Account; open: boolean; onOpenChange: (o: boolean) => void; variant?: "dialog" | "drawer" }) {
+  const { update, test } = useImapMutations();
+  const [imapHost, setImapHost] = useState("");
+  const [smtpHost, setSmtpHost] = useState("");
+  const [imapPort, setImapPort] = useState(993);
+  const [smtpPort, setSmtpPort] = useState(465);
+  const [password, setPassword] = useState("");
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!open || loaded) return;
+    void (async () => {
+      try {
+        const r = await api.get<{ imap_host: string; imap_port: number; smtp_host: string; smtp_port: number }>(`/api/accounts/${account.id}/imap`);
+        setImapHost(r.imap_host); setImapPort(r.imap_port); setSmtpHost(r.smtp_host); setSmtpPort(r.smtp_port);
+        setLoaded(true);
+      } catch (e) { toast.error((e as Error).message); }
+    })();
+  }, [open, loaded, account.id]);
+
+  const close = () => { onOpenChange(false); setPassword(""); setLoaded(false); };
+  const submit = () =>
+    update.mutate(
+      { id: account.id, imap_host: imapHost.trim(), imap_port: imapPort, imap_security: imapPort === 143 ? "starttls" : "tls",
+        smtp_host: smtpHost.trim(), smtp_port: smtpPort, smtp_security: smtpPort === 587 ? "starttls" : "tls",
+        ...(password.trim() ? { password: password.trim() } : {}) },
+      { onSuccess: () => { toast(`${account.email} updated`); close(); },
+        onError: (e: unknown) => toast.error("Couldn't connect", { description: (e as Error).message, duration: 12000 }) }
+    );
+
+  const mobile = variant === "drawer";
+  return (
+    <FormShell
+      open={open}
+      onClose={close}
+      variant={variant}
+      title={`Edit ${account.email}`}
+      description="Checked against both servers before anything is saved. Your mail is kept."
+      footer={
+        <>
+          <Button type="button" variant="ghost" size={mobile ? "lg" : "default"} onClick={close}>Cancel</Button>
+          <Button type="button" size={mobile ? "lg" : "default"} disabled={!loaded || update.isPending} onClick={submit}>
+            {update.isPending ? <Loader2 className="animate-spin" /> : null} Save
+          </Button>
+        </>
+      }
+    >
+      <FieldGroup>
+        <Field>
+          <FieldLabel htmlFor="e-pass">Password</FieldLabel>
+          <Input id="e-pass" type="password" autoComplete="off" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Leave blank to keep the current one" className={cn(mobile && "h-11 text-[16px]")} />
+          <FieldDescription>Set this when your provider's app password has been rotated.</FieldDescription>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="e-imap">IMAP server</FieldLabel>
+          <div className="flex gap-2">
+            <Input id="e-imap" value={imapHost} onChange={(e) => setImapHost(e.target.value)} className={cn("flex-1", mobile && "h-11 text-[16px]")} />
+            <Input aria-label="IMAP port" type="number" value={imapPort} onChange={(e) => setImapPort(Number(e.target.value))} className={cn("w-24", mobile && "h-11 text-[16px]")} />
+          </div>
+          <FieldDescription>993 for implicit TLS, or 143 for STARTTLS.</FieldDescription>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="e-smtp">SMTP server</FieldLabel>
+          <div className="flex gap-2">
+            <Input id="e-smtp" value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} className={cn("flex-1", mobile && "h-11 text-[16px]")} />
+            <Input aria-label="SMTP port" type="number" value={smtpPort} onChange={(e) => setSmtpPort(Number(e.target.value))} className={cn("w-24", mobile && "h-11 text-[16px]")} />
+          </div>
+          <FieldDescription>465 for implicit TLS, 587 for STARTTLS. Port 25 is blocked by Cloudflare.</FieldDescription>
+        </Field>
+        <div>
+          <Button size="sm" variant="outline" disabled={test.isPending} onClick={() => test.mutate(account.id, {
+            onSuccess: (r: { ok: boolean; error?: string }) => (r.ok ? toast("Both servers answered") : toast.error(r.error ?? "Failed")),
+            onError: (e: unknown) => toast.error((e as Error).message),
+          })}>
+            {test.isPending ? <Loader2 className="animate-spin" /> : null} Test stored credentials
+          </Button>
+        </div>
+      </FieldGroup>
+    </FormShell>
+  );
+}
+
+/**
+ * Common providers, so nobody has to look up host names. "Other" leaves the fields blank for a
+ * cPanel-style webmail host, which is usually mail.<your-domain>.
+ */
+const IMAP_PRESETS: { id: string; label: string; imap_host: string; smtp_host: string; note?: string }[] = [
+  { id: "zoho", label: "Zoho Mail (personal @zohomail.com)", imap_host: "imap.zoho.com", smtp_host: "smtp.zoho.com", note: "Enable IMAP under Settings → Mail Accounts, and use an app password if two-factor is on. IMAP needs a paid plan — the free plan is browser-only." },
+  { id: "zoho-pro", label: "Zoho Mail (your own domain)", imap_host: "imappro.zoho.com", smtp_host: "smtppro.zoho.com", note: "Organisation accounts on a custom domain use the 'pro' servers. On a non-US data centre swap .com for .eu, .in or .com.au." },
+  { id: "fastmail", label: "Fastmail", imap_host: "imap.fastmail.com", smtp_host: "smtp.fastmail.com", note: "Create an app password in Fastmail under Settings → Privacy & Security." },
+  { id: "migadu", label: "Migadu", imap_host: "imap.migadu.com", smtp_host: "smtp.migadu.com" },
+  { id: "other", label: "Other / webmail", imap_host: "", smtp_host: "", note: "For cPanel-style hosting this is usually mail.yourdomain.com on 993 and 465." },
+];
+
+export function AddImapDialog({ open, onOpenChange, variant = "dialog" }: { open: boolean; onOpenChange: (o: boolean) => void; variant?: "dialog" | "drawer" }) {
+  const { create } = useImapMutations();
+  const [preset, setPreset] = useState("zoho");
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [imapHost, setImapHost] = useState("imap.zoho.com");
+  const [smtpHost, setSmtpHost] = useState("smtp.zoho.com");
+  const [imapPort, setImapPort] = useState(993);
+  const [smtpPort, setSmtpPort] = useState(465);
+  const [imapSecurity, setImapSecurity] = useState<"tls" | "starttls">("tls");
+  const [smtpSecurity, setSmtpSecurity] = useState<"tls" | "starttls">("tls");
+  const [advanced, setAdvanced] = useState(false);
+
+  const pickPreset = (id: string) => {
+    setPreset(id);
+    const pr = IMAP_PRESETS.find((x) => x.id === id)!;
+    setImapHost(pr.imap_host);
+    setSmtpHost(pr.smtp_host);
+    setImapPort(993);
+    setSmtpPort(465);
+    setImapSecurity("tls");
+    setSmtpSecurity("tls");
+  };
+
+  const close = () => {
+    onOpenChange(false);
+    setEmail(""); setName(""); setPassword(""); setAdvanced(false);
+  };
+
+  const submit = () =>
+    create.mutate(
+      {
+        email: email.trim().toLowerCase(),
+        display_name: name.trim(),
+        imap_host: imapHost.trim(),
+        imap_port: imapPort,
+        imap_security: imapSecurity,
+        smtp_host: smtpHost.trim(),
+        smtp_port: smtpPort,
+        smtp_security: smtpSecurity,
+        password,
+      },
+      {
+        onSuccess: (r: { account: { email: string } }) => { toast(`${r.account.email} is connected`); close(); },
+        onError: (e: unknown) => toast.error("Couldn't connect", { description: (e as Error).message, duration: 12000 }),
+      }
+    );
+
+  const mobile = variant === "drawer";
+  const note = IMAP_PRESETS.find((x) => x.id === preset)?.note;
+  const ready = email.trim() && password && imapHost.trim() && smtpHost.trim();
+
+  return (
+    <FormShell
+      open={open}
+      onClose={close}
+      variant={variant}
+      title="Add a mailbox"
+      description="Connect any mailbox that speaks IMAP and SMTP — Zoho, Fastmail, Migadu or your own webmail."
+      footer={
+        <>
+          <Button type="button" variant="ghost" size={mobile ? "lg" : "default"} onClick={close}>Cancel</Button>
+          <Button type="button" size={mobile ? "lg" : "default"} disabled={!ready || create.isPending} onClick={submit}>
+            {create.isPending ? <Loader2 className="animate-spin" /> : null} Connect
+          </Button>
+        </>
+      }
+    >
+      <form onSubmit={(e) => { e.preventDefault(); if (ready) submit(); }}>
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor="imap-preset">Provider</FieldLabel>
+            <select id="imap-preset" value={preset} onChange={(e) => pickPreset(e.target.value)} className={cn("rounded-md bg-input px-2.5 outline-none focus:bg-background focus:ring-1 focus:ring-ring", mobile ? "h-11 text-[16px]" : "h-8 text-sm")}>
+              {IMAP_PRESETS.map((pr) => <option key={pr.id} value={pr.id}>{pr.label}</option>)}
+            </select>
+            {note ? <FieldDescription>{note}</FieldDescription> : null}
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="imap-email">Email address</FieldLabel>
+            <Input id="imap-email" type="email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" className={cn(mobile && "h-11 text-[16px]")} required />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="imap-name">Display name</FieldLabel>
+            <Input id="imap-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Sanjay" className={cn(mobile && "h-11 text-[16px]")} />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="imap-pass">Password</FieldLabel>
+            <Input id="imap-pass" type="password" autoComplete="off" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="App password" className={cn(mobile && "h-11 text-[16px]")} required />
+            <FieldDescription>Stored encrypted on your server and never shown again. Use an app-specific password where your provider offers one.</FieldDescription>
+          </Field>
+
+          <Field orientation="horizontal">
+            <Switch id="imap-adv" checked={advanced} onCheckedChange={setAdvanced} />
+            <div>
+              <FieldLabel htmlFor="imap-adv">Server settings</FieldLabel>
+              <FieldDescription>Only needed for a host that is not in the list above.</FieldDescription>
+            </div>
+          </Field>
+
+          {advanced ? (
+            <>
+              <Field>
+                <FieldLabel htmlFor="imap-host">IMAP server</FieldLabel>
+                <div className="flex gap-2">
+                  <Input id="imap-host" value={imapHost} onChange={(e) => setImapHost(e.target.value)} placeholder="imap.example.com" className={cn("flex-1", mobile && "h-11 text-[16px]")} />
+                  <Input aria-label="IMAP port" type="number" value={imapPort} onChange={(e) => { const v = Number(e.target.value); setImapPort(v); setImapSecurity(v === 143 ? "starttls" : "tls"); }} className={cn("w-24", mobile && "h-11 text-[16px]")} />
+                </div>
+                <FieldDescription>993 for implicit TLS, or 143 for STARTTLS.</FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="smtp-host">SMTP server</FieldLabel>
+                <div className="flex gap-2">
+                  <Input id="smtp-host" value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} placeholder="smtp.example.com" className={cn("flex-1", mobile && "h-11 text-[16px]")} />
+                  <Input aria-label="SMTP port" type="number" value={smtpPort} onChange={(e) => { const v = Number(e.target.value); setSmtpPort(v); setSmtpSecurity(v === 587 ? "starttls" : "tls"); }} className={cn("w-24", mobile && "h-11 text-[16px]")} />
+                </div>
+                <FieldDescription>
+                  465 for implicit TLS, or 587 for STARTTLS. Port 25 is blocked by Cloudflare and cannot be used.
+                </FieldDescription>
+              </Field>
+            </>
+          ) : null}
+        </FieldGroup>
+      </form>
+    </FormShell>
+  );
+}
+
+const PROVIDER_LABELS: Record<string, { name: string; hint: string; docs: string }> = {
+  google: { name: "Google", hint: "Client ID and secret from the Google Cloud OAuth client.", docs: "https://console.cloud.google.com/apis/credentials" },
+  microsoft: { name: "Microsoft", hint: "Application (client) ID and a client secret from your Entra app registration.", docs: "https://portal.azure.com" },
+};
+
+function CredentialRow({ c, compact }: { c: OAuthCredentialStatus; compact?: boolean }) {
+  const { save } = useOAuthMutations();
+  const meta = PROVIDER_LABELS[c.provider];
+  // A Worker secret is used by default, but you can take over here — otherwise a deployment set up
+  // with `wrangler secret put` could never rotate an expiring secret without the CLI.
+  const managed = c.source === "env";
+  const [takingOver, setTakingOver] = useState(false);
+  const showForm = !managed || takingOver;
+  const [clientId, setClientId] = useState(c.client_id);
+  const [secret, setSecret] = useState("");
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => { if (!dirty) setClientId(c.client_id); }, [c.client_id, dirty]);
+
+  const submit = () =>
+    save.mutate(
+      { provider: c.provider, client_id: clientId.trim(), client_secret: secret.trim() ? secret.trim() : undefined },
+      {
+        onSuccess: () => { toast(`${meta.name} credentials saved`); setSecret(""); setDirty(false); setTakingOver(false); },
+        onError: (e: unknown) => toast.error((e as Error).message),
+      }
+    );
+
+  const revert = () =>
+    save.mutate(
+      { provider: c.provider, override_env: false },
+      { onSuccess: () => { toast(`Using the Worker secret for ${meta.name} again`); setTakingOver(false); }, onError: (e: unknown) => toast.error((e as Error).message) }
+    );
+
+  return (
+    <div className="px-2 py-3 border-b border-border last:border-b-0">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-sm font-medium">{meta.name}</span>
+        {c.configured ? <Badge variant="secondary">Connected</Badge> : <Badge variant="outline">Not set</Badge>}
+        {managed ? <Badge variant="outline">Worker secret</Badge> : null}
+        {c.overriding ? <Badge variant="outline">Overriding Worker secret</Badge> : null}
+      </div>
+      {managed && !takingOver ? (
+        <div className="text-[13px] text-muted-foreground space-y-2">
+          <div>
+            Currently using the <code className="text-[12px]">{c.provider === "google" ? "GOOGLE_CLIENT_SECRET" : "MS_CLIENT_SECRET"}</code>{" "}
+            Worker secret. Rotate it with <code className="text-[12px]">wrangler secret put</code>, or manage it here instead.
+          </div>
+          <Button size="sm" variant="outline" onClick={() => { setTakingOver(true); setClientId(c.client_id); }}>
+            Manage here instead
+          </Button>
+        </div>
+      ) : (
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor={`cid-${c.provider}`}>Client ID</FieldLabel>
+            <Input id={`cid-${c.provider}`} value={clientId} autoComplete="off" onChange={(e) => { setClientId(e.target.value); setDirty(true); }} className={cn(compact && "h-11 text-[16px]")} />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`csec-${c.provider}`}>Client secret</FieldLabel>
+            <Input id={`csec-${c.provider}`} type="password" autoComplete="off" value={secret} onChange={(e) => { setSecret(e.target.value); setDirty(true); }} placeholder={c.secret_hint ? `Stored · ${c.secret_hint}` : "Client secret"} className={cn(compact && "h-11 text-[16px]")} />
+            <FieldDescription className="flex flex-wrap items-center gap-2">
+              <span>{meta.hint} Encrypted on your server and never shown again.</span>
+              {c.secret_hint ? (
+                <button type="button" className="underline underline-offset-2" onClick={() => save.mutate({ provider: c.provider, client_secret: null }, { onSuccess: () => toast("Secret removed") })}>Remove</button>
+              ) : null}
+            </FieldDescription>
+          </Field>
+          {managed && takingOver ? (
+            <div className="rounded-md bg-muted/60 px-3 py-2 text-[13px]">
+              Saving will use these credentials instead of the Worker secret. Enter both a client ID and a secret.
+            </div>
+          ) : null}
+          <div className="flex items-center gap-2">
+            <Button size={compact ? "lg" : "sm"} disabled={save.isPending || (!dirty && !secret)} onClick={submit}>
+              {save.isPending ? <Loader2 className="animate-spin" /> : null} Save
+            </Button>
+            {takingOver ? <Button size={compact ? "lg" : "sm"} variant="ghost" onClick={() => { setTakingOver(false); setSecret(""); setDirty(false); }}>Cancel</Button> : null}
+            {c.overriding ? <Button size={compact ? "lg" : "sm"} variant="ghost" onClick={revert} disabled={save.isPending}>Use the Worker secret</Button> : null}
+          </div>
+        </FieldGroup>
+      )}
+    </div>
+  );
+}
+
+/** Manage the OAuth app credentials used to connect Gmail and Outlook. */
+export function ConnectorCredentialsSection({ compact }: { compact?: boolean }) {
+  const { data, isLoading } = useOAuthCredentials();
+  return (
+    <Section title="Provider credentials" description="The OAuth apps heyflare uses to connect Gmail and Outlook. Rotate a secret here without redeploying.">
+      {isLoading ? (
+        <div className="px-2 py-2"><Skeleton className="h-16 w-full" /></div>
+      ) : (
+        <div>{(data ?? []).map((c) => <CredentialRow key={c.provider} c={c} compact={compact} />)}</div>
+      )}
+    </Section>
+  );
+}
+
 export function AccountsSection({ onNewMailbox }: { onNewMailbox?: () => void }) {
-  const { accounts } = useAccount();
-  const gmail = accounts.filter((a) => a.provider !== "domain");
+  const { accounts, googleConfigured, microsoftConfigured } = useAccount();
+  const [addImap, setAddImap] = useState(false);
+  const remote = accounts.filter((a) => a.provider !== "domain");
   const boxes = accounts.filter((a) => a.provider === "domain");
   return (
     <>
+      <AddImapDialog open={addImap} onOpenChange={setAddImap} />
       <Section
-        title="Gmail accounts"
+        title="Connected accounts"
         description="What's connected, and how it signs off."
-        actions={<Button size="sm" variant="ghost" className="text-muted-foreground" asChild><a href="/auth/google/start"><Plus /> Connect Gmail</a></Button>}
+        actions={
+          <div className="flex items-center gap-1">
+            {googleConfigured ? (
+              <Button size="sm" variant="ghost" className="text-muted-foreground" asChild><a href="/auth/google/start"><Plus /> Connect Gmail</a></Button>
+            ) : null}
+            {microsoftConfigured ? (
+              <Button size="sm" variant="ghost" className="text-muted-foreground" asChild><a href="/auth/microsoft/start"><Plus /> Connect Outlook</a></Button>
+            ) : null}
+            <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => setAddImap(true)}><Plus /> Add mailbox</Button>
+          </div>
+        }
       >
-        {gmail.length === 0 ? (
-          <div className="px-2 py-2 text-[13px] text-muted-foreground">No Gmail connected yet.</div>
+        {!googleConfigured || !microsoftConfigured ? (
+          <div className="mx-2 mb-3 rounded-md bg-muted/60 px-3 py-2 text-[13px] text-muted-foreground">
+            {!googleConfigured && !microsoftConfigured ? "Gmail and Outlook need" : !googleConfigured ? "Gmail needs" : "Outlook needs"} an OAuth
+            client before {!googleConfigured && !microsoftConfigured ? "they" : "it"} can be connected — add the credentials under{" "}
+            <strong>Provider credentials</strong> below. IMAP mailboxes need no setup.
+          </div>
+        ) : null}
+        {remote.length === 0 ? (
+          <div className="px-2 py-2 text-[13px] text-muted-foreground">Nothing connected yet.</div>
         ) : (
-          <div>{gmail.map((a) => <AccountBlock key={a.id} a={a} />)}</div>
+          <div>{remote.map((a) => <AccountBlock key={a.id} a={a} />)}</div>
         )}
       </Section>
+      <ConnectorCredentialsSection />
       <Section
         title="Domain mailboxes"
         description="Addresses on your own domains."

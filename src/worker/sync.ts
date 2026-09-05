@@ -2,6 +2,9 @@ import type { Env } from "./env";
 import type { AccountRow, ContactRow, ThreadRow } from "./db";
 import { uid, now, chunk, placeholders, safeJson, runBatch, logSync } from "./db";
 import { gmailJson, gmailBatchGet, GmailError, hasMailScope } from "./google";
+import { MicrosoftError, hasMsMailScope } from "./microsoft";
+import { ImapError } from "./imap";
+import { SmtpError } from "./smtp";
 import { parseGmailMessage, stripSubjectPrefixes, parseAddressList, type GmailMessage, type ParsedMessage } from "./mime";
 import { stripTrackers, htmlToText } from "./sanitize";
 import { syncContactPhotos } from "./people";
@@ -697,19 +700,34 @@ const HEARTBEAT_MS = 10 * 60_000;
 export async function syncAccount(env: Env, account: AccountRow): Promise<{ added: number; status: string }> {
   const db = env.DB;
   if (account.sync_status === "disconnected") return { added: 0, status: "disconnected" };
-  if (!account.refresh_token) return { added: 0, status: "disconnected" };
+  // IMAP mailboxes hold a stored password in `imap_accounts`, not an OAuth refresh token, so the
+  // token check below would wrongly disconnect every one of them.
+  if (account.provider !== "imap" && !account.refresh_token) return { added: 0, status: "disconnected" };
   // An account connected for calendar only has no mail scope: every Gmail call would 403. Leave it
   // alone rather than writing a sync error every minute. (An empty `scopes` predates the column and
   // does have mail — see hasMailScope.)
-  if (!hasMailScope(account.scopes)) return { added: 0, status: "no_mail_scope" };
+  if (account.provider === "imap") {
+    /* nothing to scope-check: an IMAP mailbox either has working credentials or it does not */
+  } else if (account.provider === "outlook") {
+    if (!hasMsMailScope(account.scopes)) return { added: 0, status: "no_mail_scope" };
+  } else if (!hasMailScope(account.scopes)) {
+    return { added: 0, status: "no_mail_scope" };
+  }
   // The 'syncing' marker exists so a long run isn't started twice by overlapping cron ticks, and so
   // the UI can show a spinner. An incremental poll finishes in well under a second and needs
-  // neither, so only the initial backfill pays for the marker.
+  // neither, so only the initial backfill pays for the marker. An Outlook mailbox is still walking
+  // its delta chain while `initial_sync_done` is 0, so it pays for the marker on the same terms.
   const slow = !account.initial_sync_done;
   if (slow) await db.prepare(`UPDATE accounts SET sync_status = 'syncing' WHERE id = ?`).bind(account.id).run();
   let added = 0;
   try {
-    if (!account.initial_sync_done) {
+    if (account.provider === "imap") {
+      const { syncImapAccount } = await import("./imapbox");
+      added += (await syncImapAccount(env, account)).added;
+    } else if (account.provider === "outlook") {
+      const { syncOutlookAccount } = await import("./outlook");
+      added += (await syncOutlookAccount(env, account)).added;
+    } else if (!account.initial_sync_done) {
       await startFromNow(env, account);
     } else {
       added += (await incrementalSync(env, account)).added;
@@ -742,14 +760,27 @@ export async function syncAccount(env: Env, account: AccountRow): Promise<{ adde
     }
     return { added, status: "ok" };
   } catch (e) {
-    const msg = (e as Error).message ?? String(e);
-    const disconnected = e instanceof GmailError && (e.status === 401 || /invalid_grant|no_refresh_token/i.test(e.body));
-    await db
-      .prepare(`UPDATE accounts SET sync_status = ?, sync_error = ?, last_synced_at = ? WHERE id = ?`)
-      .bind(disconnected ? "disconnected" : "error", msg.slice(0, 1000), now(), account.id)
-      .run();
-    await logSync(db, account.id, "error", `Sync failed: ${msg}`);
-    return { added, status: disconnected ? "disconnected" : "error" };
+    const msg = ((e as Error).message ?? String(e)).slice(0, 1000);
+    // Credentials the server has rejected are not going to start working on the next tick. Gmail and
+    // Graph signal that with a 401; IMAP and SMTP raise it explicitly, so all four retire the account
+    // rather than being re-selected by the cron a minute later, forever.
+    const disconnected =
+      ((e instanceof GmailError || e instanceof MicrosoftError) && (e.status === 401 || /invalid_grant|no_refresh_token/i.test(e.body))) ||
+      ((e instanceof ImapError || e instanceof SmtpError) && e.auth);
+    const status = disconnected ? "disconnected" : "error";
+    // An account that keeps failing the same way has nothing new to record. Writing the row anyway
+    // would cost an UPDATE and a log line every minute for as long as the fault lasts — the same
+    // write amplification the heartbeat above exists to avoid on the success path.
+    if (account.sync_status !== status || account.sync_error !== msg) {
+      account.sync_status = status;
+      account.sync_error = msg;
+      await db
+        .prepare(`UPDATE accounts SET sync_status = ?, sync_error = ?, last_synced_at = ? WHERE id = ?`)
+        .bind(status, msg, now(), account.id)
+        .run();
+      await logSync(db, account.id, "error", `Sync failed: ${msg}`);
+    }
+    return { added, status };
   }
 }
 

@@ -20,7 +20,7 @@ export interface ChatDeps {
 
 export async function buildSystemPrompt(d: ChatDeps): Promise<string> {
   const memory = memoryText(await listMemory(d.env, d.user.id));
-  const accounts = d.accounts.map((a) => `- ${a.email} (${a.provider === "gmail" ? "Gmail" : "domain mailbox"}, id ${a.id})`).join("\n") || "- none connected yet";
+  const accounts = d.accounts.map((a) => `- ${a.email} (${a.provider === "gmail" ? "Gmail" : a.provider === "outlook" ? "Outlook" : a.provider === "imap" ? "IMAP mailbox" : "domain mailbox"}, id ${a.id})`).join("\n") || "- none connected yet";
   return [
     `You are the assistant inside heyflare, a HEY-style email client. You help ${d.user.name || d.user.email} read, triage, organise, and write email.`,
     ``,

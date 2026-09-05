@@ -14,8 +14,8 @@ import { api, domainErrorMessage, useAccountMutations, useDomainMutations, useDo
 import { useAccount } from "../context/AccountContext";
 import { Avatar, AccountGlyph } from "../components/Avatar";
 import { fmtRelative } from "../lib/format";
-import { startGoogleConnect } from "../lib/connect";
-import { AddDomainDialog, CopyButton, Danger, DomainBadges, NewMailboxDialog, PreferencesSection, ProfileSection, SecuritySection, statusOf } from "../pages/Settings";
+import { startGoogleConnect, startMicrosoftConnect } from "../lib/connect";
+import { AddDomainDialog, AddImapDialog, CopyButton, Danger, DomainBadges, NewMailboxDialog, PreferencesSection, ProfileSection, SecuritySection, statusOf } from "../pages/Settings";
 import { Screen } from "./Screen";
 import { ActionSheet } from "./ActionSheet";
 
@@ -164,7 +164,7 @@ function AccountRow({ a }: { a: Account }) {
         <span className="inline-flex items-center gap-1.5">
           {st.spin && <RefreshCw size={11} className="animate-spin" />}
           {st.label}
-          {a.provider === "gmail" && a.last_synced_at && <span>· {fmtRelative(a.last_synced_at)}</span>}
+          {a.provider !== "domain" && a.last_synced_at && <span>· {fmtRelative(a.last_synced_at)}</span>}
         </span>
       }
     />
@@ -172,14 +172,18 @@ function AccountRow({ a }: { a: Account }) {
 }
 
 export function MobileSettingsAccounts() {
-  const { accounts } = useAccount();
-  const gmail = accounts.filter((a) => a.provider !== "domain");
+  const { accounts, googleConfigured, microsoftConfigured } = useAccount();
+  const [addImap, setAddImap] = useState(false);
+  const remote = accounts.filter((a) => a.provider !== "domain");
   const boxes = accounts.filter((a) => a.provider === "domain");
   return (
     <Sub title="Accounts">
-      <Group title="Gmail" footer={gmail.length === 0 ? "No Gmail connected yet." : undefined}>
-        {gmail.map((a) => <AccountRow key={a.id} a={a} />)}
-        <Row icon={<Plus />} label="Connect Gmail" onClick={() => startGoogleConnect()} chevron={false} />
+      <AddImapDialog open={addImap} onOpenChange={setAddImap} variant="drawer" />
+      <Group title="Connected accounts" footer={remote.length === 0 ? "Nothing connected yet." : undefined}>
+        {remote.map((a) => <AccountRow key={a.id} a={a} />)}
+{googleConfigured ? <Row icon={<Plus />} label="Connect Gmail" onClick={() => startGoogleConnect()} chevron={false} /> : null}
+        {microsoftConfigured ? <Row icon={<Plus />} label="Connect Outlook" onClick={() => startMicrosoftConnect()} chevron={false} /> : null}
+        <Row icon={<Plus />} label="Add mailbox (IMAP)" onClick={() => setAddImap(true)} chevron={false} />
       </Group>
       <Group title="Domain mailboxes" footer={boxes.length === 0 ? "No mailboxes yet. Add a domain first." : undefined}>
         {boxes.map((a) => <AccountRow key={a.id} a={a} />)}
@@ -202,7 +206,7 @@ export function MobileSettingsAccountDetail() {
   useEffect(() => { if (a) { setSignature(a.signature); setDisplayName(a.display_name); } }, [a?.signature, a?.display_name]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!a) return <Navigate to="/settings/accounts" replace />;
   const st = statusOf(a);
-  const isGmail = a.provider === "gmail";
+  const isGmail = a.provider === "gmail" || a.provider === "outlook";
   const dirty = signature !== a.signature || displayName !== a.display_name;
   const save = () => update.mutate({ id: a.id, signature, display_name: displayName }, { onSuccess: () => toast("Saved"), onError: (e) => toast.error((e as Error).message) });
   return (
