@@ -160,6 +160,10 @@ function sec(v: unknown, fallback: "tls" | "starttls"): ImapSecurity & SmtpSecur
   return v === "starttls" || v === "tls" ? v : fallback;
 }
 
+function validPort(n: number): boolean {
+  return Number.isInteger(n) && n > 0 && n < 65536;
+}
+
 /** Shape a request body into a config, without touching the database. */
 function readBody(b: ImapBody) {
   const email = String(b.email ?? "").trim().toLowerCase();
@@ -190,6 +194,7 @@ accounts.post("/imap", async (c) => {
   if (!EMAIL_RE.test(cfg.email)) return c.json({ error: "invalid_email" }, 400);
   if (!cfg.imap_host || !cfg.smtp_host) return c.json({ error: "missing_host" }, 400);
   if (!password) return c.json({ error: "missing_password" }, 400);
+  if (!validPort(cfg.imap_port) || !validPort(cfg.smtp_port)) return c.json({ error: "invalid_port" }, 400);
   if (cfg.smtp_port === 25) return c.json({ error: "smtp_port_25_blocked", message: "Cloudflare blocks port 25. Use 465 or 587." }, 400);
 
   const dup = await c.env.DB.prepare(`SELECT id FROM accounts WHERE user_id = ? AND email = ?`).bind(user.id, cfg.email).first();
@@ -248,6 +253,64 @@ accounts.get("/:id/imap", async (c) => {
   if (!row) return c.json({ error: "not_found" }, 404);
   const { password_enc, ...safe } = row;
   return c.json(safe);
+});
+
+/**
+ * Update a mailbox in place. Rotating a mail password must not mean deleting the account, because
+ * `deleteAccountData` takes the synced mail with it. Omitting `password` keeps the stored one, so
+ * changing a host or port does not require re-typing the secret.
+ */
+accounts.patch("/:id/imap", async (c) => {
+  const acc = await ownAccount(c, c.req.param("id"));
+  if (!acc || acc.provider !== "imap") return c.json({ error: "not_found" }, 404);
+  const row = await loadImapRow(c.env, acc.id);
+  if (!row) return c.json({ error: "not_configured" }, 400);
+
+  const b = await c.req.json<ImapBody>().catch(() => ({}) as ImapBody);
+  const next = {
+    imap_host: typeof b.imap_host === "string" && b.imap_host.trim() ? b.imap_host.trim() : row.imap_host,
+    imap_port: typeof b.imap_port === "number" ? b.imap_port : row.imap_port,
+    imap_security: b.imap_security ? sec(b.imap_security, row.imap_security) : row.imap_security,
+    smtp_host: typeof b.smtp_host === "string" && b.smtp_host.trim() ? b.smtp_host.trim() : row.smtp_host,
+    smtp_port: typeof b.smtp_port === "number" ? b.smtp_port : row.smtp_port,
+    smtp_security: b.smtp_security ? sec(b.smtp_security, row.smtp_security) : row.smtp_security,
+    username: typeof b.username === "string" && b.username.trim() ? b.username.trim() : row.username,
+    folder: typeof b.folder === "string" && b.folder.trim() ? b.folder.trim() : row.folder,
+  };
+  if (!validPort(next.imap_port) || !validPort(next.smtp_port)) return c.json({ error: "invalid_port" }, 400);
+  if (next.smtp_port === 25) return c.json({ error: "smtp_port_25_blocked", message: "Cloudflare blocks port 25. Use 465 or 587." }, 400);
+
+  const typed = typeof b.password === "string" ? b.password : "";
+  const password = typed || (await configFor(c.env, acc.id))?.imap.password || "";
+  if (!password) return c.json({ error: "missing_password" }, 400);
+
+  // Verify before writing, so a wrong value cannot leave a working mailbox broken.
+  try {
+    await verifyBoth({
+      imap: { host: next.imap_host, port: next.imap_port, security: next.imap_security, username: next.username, password },
+      smtp: { host: next.smtp_host, port: next.smtp_port, security: next.smtp_security, username: next.username, password },
+    });
+  } catch (e) {
+    return c.json({ error: "connection_failed", message: (e as Error).message?.slice(0, 300) }, 400);
+  }
+
+  // A different folder invalidates the stored UIDs, so re-baseline rather than replaying old ones.
+  const folderChanged = next.folder !== row.folder;
+  const enc = typed ? await encryptPassword(c.env, typed) : row.password_enc;
+  await c.env.DB.prepare(
+    `UPDATE imap_accounts SET imap_host = ?, imap_port = ?, imap_security = ?, smtp_host = ?, smtp_port = ?, smtp_security = ?,
+       username = ?, password_enc = ?, password_hint = ?, folder = ?, uid_validity = ?, last_uid = ?, updated_at = ?
+     WHERE account_id = ?`
+  )
+    .bind(next.imap_host, next.imap_port, next.imap_security, next.smtp_host, next.smtp_port, next.smtp_security,
+          next.username, enc, passwordHint(password), next.folder,
+          folderChanged ? 0 : row.uid_validity, folderChanged ? 0 : row.last_uid, now(), acc.id)
+    .run();
+
+  // Working credentials retire the disconnected state the sync loop may have set.
+  await c.env.DB.prepare(`UPDATE accounts SET sync_status = 'idle', sync_error = NULL WHERE id = ?`).bind(acc.id).run();
+  const fresh = await ownAccount(c, acc.id);
+  return c.json({ ok: true, account: toAccount(fresh!) });
 });
 
 /** Re-check the stored credentials against both servers. */

@@ -21,7 +21,14 @@ export interface ImapConfig {
   password: string;
 }
 
-export class ImapError extends Error {}
+export class ImapError extends Error {
+  /** True when the server rejected the credentials, which retrying cannot fix. */
+  auth: boolean;
+  constructor(message: string, opts: { auth?: boolean } = {}) {
+    super(message);
+    this.auth = opts.auth ?? false;
+  }
+}
 
 const READ_TIMEOUT_MS = 20_000;
 
@@ -188,7 +195,18 @@ async function open(cfg: ImapConfig) {
   }
 
   const session = new ImapSession(reader, writer);
-  await session.run(`LOGIN ${quote(cfg.username)} ${quote(cfg.password)}`, "login");
+  try {
+    await session.run(`LOGIN ${quote(cfg.username)} ${quote(cfg.password)}`, "login");
+  } catch (e) {
+    // Leaving the socket open here would leak a connection on every failed poll.
+    try {
+      await socket.close();
+    } catch {
+      /* already gone */
+    }
+    if (e instanceof ImapError && /login/.test(e.message)) throw new ImapError(e.message, { auth: true });
+    throw e;
+  }
   return { socket, session };
 }
 
@@ -221,6 +239,12 @@ export async function imapFetchNew(
   const { socket, session } = await open(cfg);
   try {
     const selected = parseSelect((await session.run(`SELECT ${quote(folder)}`, "select")).map((l) => l.text));
+    // RFC 3501 requires UIDVALIDITY on SELECT. Without it every UID we store is meaningless — and
+    // since 0 is also the "never baselined" marker, accepting it would re-baseline on every run and
+    // the mailbox would stay silent forever instead of reporting a problem.
+    if (!selected.uidValidity) {
+      throw new ImapError(`imap_select_failed: ${folder} returned no UIDVALIDITY`);
+    }
     const reset = cursor.uidValidity !== 0 && selected.uidValidity !== cursor.uidValidity;
 
     // A fresh mailbox, or one that was renumbered, only records where things stand — importing the

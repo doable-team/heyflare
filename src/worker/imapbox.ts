@@ -33,9 +33,15 @@ export async function loadImapRow(env: Env, accountId: string): Promise<ImapAcco
   );
 }
 
-/** Mask a password for display. The plaintext never leaves the worker. */
-export function passwordHint(password: string): string {
-  return password.length > 4 ? `${"•".repeat(Math.min(8, password.length - 2))}${password.slice(-2)}` : "••••";
+/**
+ * A fixed placeholder standing in for a stored password. Deliberately reveals nothing — not the
+ * last characters and not the length. An API key hint elsewhere in the app helps you tell two of
+ * your own keys apart; a mailbox password is a credential to someone else's system, and the ends of
+ * it are worth more to an attacker than the reassurance is worth to you.
+ */
+export const PASSWORD_PLACEHOLDER = "••••••••";
+export function passwordHint(_password: string): string {
+  return PASSWORD_PLACEHOLDER;
 }
 
 export async function encryptPassword(env: Env, password: string): Promise<string> {

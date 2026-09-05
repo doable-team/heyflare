@@ -564,6 +564,11 @@ export function useImapMutations() {
       mutationFn: (b: ImapDraft) => api.post<{ ok: boolean; account: T.Account }>("/api/accounts/imap", b),
       onSuccess: inv,
     }),
+    update: useMutation({
+      mutationFn: ({ id, ...b }: Partial<ImapDraft> & { id: string }) =>
+        request<{ ok: boolean; account: T.Account }>("PATCH", `/api/accounts/${id}/imap`, b),
+      onSuccess: inv,
+    }),
     test: useMutation({
       mutationFn: (id: string) => api.post<{ ok: boolean; error?: string }>(`/api/accounts/${id}/imap/test`),
     }),

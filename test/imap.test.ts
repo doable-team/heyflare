@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { literalSize, quote, parseSearchUids, parseSelect, parseFetchUid } from "../src/worker/imap";
+import { literalSize, quote, parseSearchUids, parseSelect, parseFetchUid, ImapError } from "../src/worker/imap";
 
 describe("literalSize", () => {
   it("reads a trailing literal marker", () => {
@@ -62,5 +62,15 @@ describe("parseFetchUid", () => {
 
   it("returns null when absent", () => {
     expect(parseFetchUid("* 1 FETCH (BODY[] {10}")).toBeNull();
+  });
+});
+
+describe("ImapError", () => {
+  it("marks credential rejections as permanent so sync can retire the account", () => {
+    expect(new ImapError("imap_login_failed", { auth: true }).auth).toBe(true);
+  });
+
+  it("treats anything else as transient and worth retrying", () => {
+    expect(new ImapError("imap_timeout: greeting").auth).toBe(false);
   });
 });

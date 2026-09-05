@@ -22,7 +22,9 @@ Account-scoped routes take the account via `X-Account-Id` header (web stores the
 - `POST /api/accounts/:id/sync` -> triggers a sync now -> {ok, added}
 - `POST /api/accounts/imap` {email, display_name?, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, username?, password, folder?} -> {ok, account}.
   Verifies both servers before writing; 400 `connection_failed` with the protocol error, 409 `account_exists`, 400 `smtp_port_25_blocked`.
-- `GET  /api/accounts/:id/imap` -> stored settings, password reduced to `password_hint`.
+- `GET  /api/accounts/:id/imap` -> stored settings; the password is never returned, only a fixed placeholder.
+- `PATCH /api/accounts/:id/imap` {imap_host?, imap_port?, imap_security?, smtp_host?, smtp_port?, smtp_security?, username?, password?, folder?} -> {ok, account}.
+  Verifies both servers before writing; omitting `password` keeps the stored one. Changing `folder` re-baselines the UID cursor.
 - `POST /api/accounts/:id/imap/test` -> {ok} or 400 {ok:false, error}.
 
 ## Mail (account-scoped)

@@ -106,6 +106,16 @@ than your account password once two-factor auth is enabled.
 Because mail is sent through your provider's own SMTP server, **they** sign DKIM for you —
 deliverability is theirs, not something heyflare has to solve.
 
+### Changing the password or the servers
+
+Settings → Accounts → **Server settings** on the mailbox. Both servers are checked before anything
+is saved, and your synced mail is kept — you never have to delete and re-add a mailbox to rotate an
+app password. Leave the password blank to change only a host or port.
+
+If the credentials stop working, the mailbox is marked **disconnected** rather than being retried
+every minute, so a wrong password costs one failure rather than a write per minute forever. Saving
+working credentials brings it straight back.
+
 ---
 
 ## Domain mailboxes

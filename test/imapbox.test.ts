@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import { migrate, resetData, seedUser, testEnv, rawMime } from "./helpers";
-import { passwordHint, encryptPassword, loadImapRow, configFor, syncImapAccount } from "../src/worker/imapbox";
+import { passwordHint, PASSWORD_PLACEHOLDER, encryptPassword, loadImapRow, configFor, syncImapAccount } from "../src/worker/imapbox";
 import type { AccountRow } from "../src/worker/db";
 
 vi.mock("../src/worker/imap", async (orig) => {
@@ -47,13 +47,17 @@ describe("migration 0016", () => {
 });
 
 describe("passwordHint", () => {
-  it("reveals only the last couple of characters", () => {
-    expect(passwordHint("app-password-1234")).toMatch(/34$/);
-    expect(passwordHint("app-password-1234")).not.toContain("app-password");
+  it("reveals nothing at all about the password", () => {
+    // A mailbox password is a credential to someone else's system; the tail of it is worth more to
+    // an attacker than a recognisable hint is worth to the owner.
+    const hint = passwordHint("app-password-1234");
+    expect(hint).toBe(PASSWORD_PLACEHOLDER);
+    expect(hint).not.toContain("1234");
+    expect(hint).not.toContain("app");
   });
 
-  it("does not leak length for very short secrets", () => {
-    expect(passwordHint("abc")).toBe("••••");
+  it("does not vary with the password, so it leaks no length either", () => {
+    expect(passwordHint("abc")).toBe(passwordHint("a-very-much-longer-password"));
   });
 });
 

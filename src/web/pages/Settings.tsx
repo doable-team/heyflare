@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import type { Account, Domain, UserSettings } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { useAccount } from "../context/AccountContext";
-import { DomainMxError, domainErrorMessage, useAccountMutations, useDomainMutations, useDomains, useMeMutations, useTwoFactor, useTwoFactorMutations, useImapMutations, useOAuthCredentials, useOAuthMutations, type OAuthCredentialStatus } from "../api";
+import { DomainMxError, domainErrorMessage, useAccountMutations, useDomainMutations, useDomains, useMeMutations, useTwoFactor, useTwoFactorMutations, useImapMutations, api, useOAuthCredentials, useOAuthMutations, type OAuthCredentialStatus } from "../api";
 import QRCode from "qrcode";
 import { Avatar, AccountGlyph } from "../components/Avatar";
 import { PageHeader } from "../components/EmptyState";
@@ -174,6 +174,7 @@ function AccountBlock({ a }: { a: Account }) {
   const [displayName, setDisplayName] = useState(a.display_name);
   const [confirm, setConfirm] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [editImap, setEditImap] = useState(false);
   useEffect(() => { setSignature(a.signature); setDisplayName(a.display_name); }, [a.signature, a.display_name]);
   const dirty = signature !== a.signature || displayName !== a.display_name;
   const st = statusOf(a);
@@ -185,6 +186,7 @@ function AccountBlock({ a }: { a: Account }) {
     );
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="border-b border-border last:border-b-0">
+      {a.provider === "imap" ? <EditImapDialog account={a} open={editImap} onOpenChange={setEditImap} /> : null}
       <div className="flex items-center gap-3 px-2 h-12">
         <Avatar email={a.email} name={a.display_name} src={a.avatar_url} size={24} />
         <div className="flex-1 min-w-0">
@@ -234,6 +236,11 @@ function AccountBlock({ a }: { a: Account }) {
             <Button size="sm" onClick={save} disabled={!dirty || update.isPending}>Save</Button>
             <SavedMark show={saved && !dirty} />
             <span className="flex-1" />
+            {a.provider === "imap" && (
+              <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => setEditImap(true)}>
+                <SlidersHorizontal /> Server settings
+              </Button>
+            )}
             {isGmail && (
               <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={reset.isPending} onClick={() => setConfirmReset(true)}>
                 <RefreshCw /> Start fresh
@@ -668,6 +675,87 @@ export function PreferencesSection({ compact }: { compact?: boolean }) {
         </Row>
       </Section>
     </>
+  );
+}
+
+/** Change an IMAP mailbox's server settings or password without losing its synced mail. */
+export function EditImapDialog({ account, open, onOpenChange, variant = "dialog" }: { account: Account; open: boolean; onOpenChange: (o: boolean) => void; variant?: "dialog" | "drawer" }) {
+  const { update, test } = useImapMutations();
+  const [imapHost, setImapHost] = useState("");
+  const [smtpHost, setSmtpHost] = useState("");
+  const [imapPort, setImapPort] = useState(993);
+  const [smtpPort, setSmtpPort] = useState(465);
+  const [password, setPassword] = useState("");
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!open || loaded) return;
+    void (async () => {
+      try {
+        const r = await api.get<{ imap_host: string; imap_port: number; smtp_host: string; smtp_port: number }>(`/api/accounts/${account.id}/imap`);
+        setImapHost(r.imap_host); setImapPort(r.imap_port); setSmtpHost(r.smtp_host); setSmtpPort(r.smtp_port);
+        setLoaded(true);
+      } catch (e) { toast.error((e as Error).message); }
+    })();
+  }, [open, loaded, account.id]);
+
+  const close = () => { onOpenChange(false); setPassword(""); setLoaded(false); };
+  const submit = () =>
+    update.mutate(
+      { id: account.id, imap_host: imapHost.trim(), imap_port: imapPort, smtp_host: smtpHost.trim(), smtp_port: smtpPort,
+        smtp_security: smtpPort === 587 ? "starttls" : "tls", ...(password.trim() ? { password: password.trim() } : {}) },
+      { onSuccess: () => { toast(`${account.email} updated`); close(); },
+        onError: (e: unknown) => toast.error("Couldn't connect", { description: (e as Error).message, duration: 12000 }) }
+    );
+
+  const mobile = variant === "drawer";
+  return (
+    <FormShell
+      open={open}
+      onClose={close}
+      variant={variant}
+      title={`Edit ${account.email}`}
+      description="Checked against both servers before anything is saved. Your mail is kept."
+      footer={
+        <>
+          <Button type="button" variant="ghost" size={mobile ? "lg" : "default"} onClick={close}>Cancel</Button>
+          <Button type="button" size={mobile ? "lg" : "default"} disabled={!loaded || update.isPending} onClick={submit}>
+            {update.isPending ? <Loader2 className="animate-spin" /> : null} Save
+          </Button>
+        </>
+      }
+    >
+      <FieldGroup>
+        <Field>
+          <FieldLabel htmlFor="e-pass">Password</FieldLabel>
+          <Input id="e-pass" type="password" autoComplete="off" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Leave blank to keep the current one" className={cn(mobile && "h-11 text-[16px]")} />
+          <FieldDescription>Set this when your provider's app password has been rotated.</FieldDescription>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="e-imap">IMAP server</FieldLabel>
+          <div className="flex gap-2">
+            <Input id="e-imap" value={imapHost} onChange={(e) => setImapHost(e.target.value)} className={cn("flex-1", mobile && "h-11 text-[16px]")} />
+            <Input aria-label="IMAP port" type="number" value={imapPort} onChange={(e) => setImapPort(Number(e.target.value))} className={cn("w-24", mobile && "h-11 text-[16px]")} />
+          </div>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="e-smtp">SMTP server</FieldLabel>
+          <div className="flex gap-2">
+            <Input id="e-smtp" value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} className={cn("flex-1", mobile && "h-11 text-[16px]")} />
+            <Input aria-label="SMTP port" type="number" value={smtpPort} onChange={(e) => setSmtpPort(Number(e.target.value))} className={cn("w-24", mobile && "h-11 text-[16px]")} />
+          </div>
+          <FieldDescription>465 for implicit TLS, 587 for STARTTLS. Port 25 is blocked by Cloudflare.</FieldDescription>
+        </Field>
+        <div>
+          <Button size="sm" variant="outline" disabled={test.isPending} onClick={() => test.mutate(account.id, {
+            onSuccess: (r: { ok: boolean; error?: string }) => (r.ok ? toast("Both servers answered") : toast.error(r.error ?? "Failed")),
+            onError: (e: unknown) => toast.error((e as Error).message),
+          })}>
+            {test.isPending ? <Loader2 className="animate-spin" /> : null} Test stored credentials
+          </Button>
+        </div>
+      </FieldGroup>
+    </FormShell>
   );
 }
 

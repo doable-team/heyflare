@@ -32,9 +32,12 @@ export interface SmtpMessage {
 
 export class SmtpError extends Error {
   code: number;
-  constructor(code: number, message: string) {
+  /** True when the server rejected the credentials, which retrying cannot fix. */
+  auth: boolean;
+  constructor(code: number, message: string, opts: { auth?: boolean } = {}) {
     super(message);
     this.code = code;
+    this.auth = opts.auth ?? false;
   }
 }
 
@@ -157,7 +160,13 @@ async function connectAndAuth(cfg: SmtpConfig): Promise<Session> {
       await expect(334, "auth_user");
       await send(b64(cfg.password));
     }
-    await expect(235, "auth");
+    try {
+      await expect(235, "auth");
+    } catch (e) {
+      // 535 and friends mean the credentials are wrong; polling again will not help.
+      if (e instanceof SmtpError && e.code >= 500) throw new SmtpError(e.code, e.message, { auth: true });
+      throw e;
+    }
   } catch (e) {
     await close();
     throw e;

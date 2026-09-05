@@ -65,6 +65,29 @@ export async function isConfigured(env: Env, provider: OAuthProvider): Promise<b
   return (await resolveCreds(env, provider)).source !== "none";
 }
 
+/**
+ * Whether each provider is usable, in a single query. `/api/me` reports both on every call —
+ * including the unauthenticated one the login screen makes — so asking per provider doubles the
+ * reads on the app's most-hit endpoint for no benefit.
+ */
+export async function configuredProviders(env: Env): Promise<{ google: boolean; microsoft: boolean }> {
+  const envReady = (p: OAuthProvider) => {
+    const n = envNames(p);
+    return !!((env[n.id] as string | undefined) && (env[n.secret] as string | undefined));
+  };
+  const out = { google: envReady("google"), microsoft: envReady("microsoft") };
+  if (out.google && out.microsoft) return out;
+
+  const rows = await env.DB.prepare(
+    `SELECT provider, client_id, secret_enc, override_env FROM oauth_credentials WHERE provider IN ('google', 'microsoft')`
+  ).all<Pick<CredRow, "provider" | "client_id" | "secret_enc" | "override_env">>();
+  for (const row of rows.results ?? []) {
+    const p = row.provider === "microsoft" ? "microsoft" : "google";
+    if (row.client_id && row.secret_enc) out[p] = true;
+  }
+  return out;
+}
+
 /** Mask a secret for display; the plaintext is never returned by the API. */
 export function secretHint(secret: string): string {
   return secret.length > 8 ? `${secret.slice(0, 3)}…${secret.slice(-3)}` : "••••";

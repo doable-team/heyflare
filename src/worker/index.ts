@@ -23,7 +23,7 @@ import calendarRoutes from "./routes/calendar";
 import { runCalendarSync } from "./calendar/sync";
 import { MAIL_SCOPE_SQL } from "./google";
 import { MS_MAIL_SCOPE_SQL } from "./microsoft";
-import { isConfigured } from "./oauth";
+import { configuredProviders } from "./oauth";
 import { handleInboundEmail } from "./inbound";
 import { ensureMigrations } from "./migrations";
 import { VERSION, COMMIT, BUILT_AT } from "@shared/version";
@@ -43,7 +43,8 @@ api.get("/me", async (c, next) => {
   const user = await getSessionUser(c);
   if (user) return next();
   const n = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM users`).first<{ n: number }>();
-  return c.json({ user: null, accounts: [], setup_required: (n?.n ?? 0) === 0, google_configured: await isConfigured(c.env, "google"), microsoft_configured: await isConfigured(c.env, "microsoft") });
+  const cfg = await configuredProviders(c.env);
+  return c.json({ user: null, accounts: [], setup_required: (n?.n ?? 0) === 0, google_configured: cfg.google, microsoft_configured: cfg.microsoft });
 });
 // What this deployment is running (used by the update check).
 api.get("/version", (c) => c.json({ version: VERSION, commit: COMMIT, built_at: BUILT_AT, latest: null }));

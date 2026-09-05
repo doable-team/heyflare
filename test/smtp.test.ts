@@ -52,3 +52,20 @@ describe("smtpSend guards", () => {
     await expect(smtpSend(cfg, { from: "a@b.c", recipients: [], raw: "x" })).rejects.toBeInstanceOf(SmtpError);
   });
 });
+
+describe("SmtpError", () => {
+  it("marks credential rejections as permanent", () => {
+    expect(new SmtpError(535, "smtp_auth_failed", { auth: true }).auth).toBe(true);
+  });
+
+  it("defaults to transient", () => {
+    expect(new SmtpError(0, "smtp_timeout: greeting").auth).toBe(false);
+  });
+});
+
+describe("port guards", () => {
+  const cfg = { host: "h", port: 465, security: "tls" as const, username: "u", password: "p" };
+  it("still refuses port 25 with an explanation", async () => {
+    await expect(smtpSend({ ...cfg, port: 25 }, { from: "a@b.c", recipients: ["d@e.f"], raw: "x" })).rejects.toThrow(/port_25/);
+  });
+});

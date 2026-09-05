@@ -67,7 +67,8 @@ function applyTheme(theme: "light" | "dark" | "system") {
 function useSyncOnFocus(accounts: Account[], qc: ReturnType<typeof useQueryClient>) {
   const last = useRef(0);
   useEffect(() => {
-    const gmail = accounts.filter((a) => (a.provider === "gmail" || a.provider === "outlook") && a.sync_status !== "disconnected");
+    // Every polled provider, i.e. everything except a domain mailbox, which is pushed to instantly.
+    const gmail = accounts.filter((a) => a.provider !== "domain" && a.sync_status !== "disconnected");
     if (gmail.length === 0) return;
     const run = () => {
       if (document.visibilityState !== "visible") return;

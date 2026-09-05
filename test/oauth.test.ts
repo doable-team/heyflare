@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { migrate, testEnv } from "./helpers";
-import { resolveCreds, saveCreds, isConfigured, credentialsStatus, secretHint } from "../src/worker/oauth";
+import { resolveCreds, saveCreds, isConfigured, credentialsStatus, secretHint, configuredProviders } from "../src/worker/oauth";
 import type { Env } from "../src/worker/env";
 
 /** The real test env has no OAuth vars set, so `db` and `none` are its natural states. */
@@ -132,5 +132,28 @@ describe("credentialsStatus", () => {
     const row = await testEnv.DB.prepare(`SELECT secret_enc FROM oauth_credentials WHERE provider='microsoft'`).first<{ secret_enc: string }>();
     expect(row!.secret_enc).not.toContain("super-secret-value");
     expect(row!.secret_enc.length).toBeGreaterThan(20);
+  });
+});
+
+describe("configuredProviders", () => {
+  it("answers for both providers in one query", async () => {
+    // /api/me reports both on every call, including the unauthenticated one the login screen
+    // makes, so asking per provider doubled the reads on the app's most-hit endpoint.
+    const before = await configuredProviders(dbOnly);
+    expect(before).toEqual({ google: false, microsoft: false });
+
+    await saveCreds(dbOnly, "google", { client_id: "g", client_secret: "google-secret-value" });
+    expect(await configuredProviders(dbOnly)).toEqual({ google: true, microsoft: false });
+  });
+
+  it("counts a Worker secret without needing the database", async () => {
+    expect(await configuredProviders(withEnv)).toMatchObject({ microsoft: true });
+  });
+
+  it("agrees with isConfigured", async () => {
+    await saveCreds(dbOnly, "microsoft", { client_id: "m", client_secret: "ms-secret-value" });
+    const batch = await configuredProviders(dbOnly);
+    expect(batch.microsoft).toBe(await isConfigured(dbOnly, "microsoft"));
+    expect(batch.google).toBe(await isConfigured(dbOnly, "google"));
   });
 });
