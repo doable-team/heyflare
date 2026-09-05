@@ -39,7 +39,7 @@ beforeEach(async () => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-describe("migration 0016", () => {
+describe("migration 0017_imap", () => {
   it("creates the credentials table", async () => {
     const r = await testEnv.DB.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='imap_accounts'`).first();
     expect(r).toBeTruthy();

@@ -38,8 +38,11 @@ oauth.put("/:provider", async (c) => {
   };
 
   if (patch.override_env === true) {
-    const willHaveSecret = (typeof b.client_secret === "string" && !!b.client_secret.trim()) || !!status.secret_hint;
-    const willHaveId = (typeof b.client_id === "string" && !!b.client_id.trim()) || !!status.client_id;
+    // Against the stored row specifically: under a Worker secret the resolved fields are always
+    // populated, so checking those would let an override be set with nothing behind it — leaving a
+    // row that breaks the moment the Worker secret is removed.
+    const willHaveSecret = (typeof b.client_secret === "string" && !!b.client_secret.trim()) || status.has_stored_secret;
+    const willHaveId = (typeof b.client_id === "string" && !!b.client_id.trim()) || !!status.stored_client_id;
     if (!willHaveSecret || !willHaveId) {
       return c.json({ error: "incomplete_credentials", message: "Enter both a client ID and a secret before overriding the Worker secret." }, 400);
     }

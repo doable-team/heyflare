@@ -702,8 +702,9 @@ export function EditImapDialog({ account, open, onOpenChange, variant = "dialog"
   const close = () => { onOpenChange(false); setPassword(""); setLoaded(false); };
   const submit = () =>
     update.mutate(
-      { id: account.id, imap_host: imapHost.trim(), imap_port: imapPort, smtp_host: smtpHost.trim(), smtp_port: smtpPort,
-        smtp_security: smtpPort === 587 ? "starttls" : "tls", ...(password.trim() ? { password: password.trim() } : {}) },
+      { id: account.id, imap_host: imapHost.trim(), imap_port: imapPort, imap_security: imapPort === 143 ? "starttls" : "tls",
+        smtp_host: smtpHost.trim(), smtp_port: smtpPort, smtp_security: smtpPort === 587 ? "starttls" : "tls",
+        ...(password.trim() ? { password: password.trim() } : {}) },
       { onSuccess: () => { toast(`${account.email} updated`); close(); },
         onError: (e: unknown) => toast.error("Couldn't connect", { description: (e as Error).message, duration: 12000 }) }
     );
@@ -737,6 +738,7 @@ export function EditImapDialog({ account, open, onOpenChange, variant = "dialog"
             <Input id="e-imap" value={imapHost} onChange={(e) => setImapHost(e.target.value)} className={cn("flex-1", mobile && "h-11 text-[16px]")} />
             <Input aria-label="IMAP port" type="number" value={imapPort} onChange={(e) => setImapPort(Number(e.target.value))} className={cn("w-24", mobile && "h-11 text-[16px]")} />
           </div>
+          <FieldDescription>993 for implicit TLS, or 143 for STARTTLS.</FieldDescription>
         </Field>
         <Field>
           <FieldLabel htmlFor="e-smtp">SMTP server</FieldLabel>
@@ -781,6 +783,7 @@ export function AddImapDialog({ open, onOpenChange, variant = "dialog" }: { open
   const [smtpHost, setSmtpHost] = useState("smtp.zoho.com");
   const [imapPort, setImapPort] = useState(993);
   const [smtpPort, setSmtpPort] = useState(465);
+  const [imapSecurity, setImapSecurity] = useState<"tls" | "starttls">("tls");
   const [smtpSecurity, setSmtpSecurity] = useState<"tls" | "starttls">("tls");
   const [advanced, setAdvanced] = useState(false);
 
@@ -791,6 +794,7 @@ export function AddImapDialog({ open, onOpenChange, variant = "dialog" }: { open
     setSmtpHost(pr.smtp_host);
     setImapPort(993);
     setSmtpPort(465);
+    setImapSecurity("tls");
     setSmtpSecurity("tls");
   };
 
@@ -806,7 +810,7 @@ export function AddImapDialog({ open, onOpenChange, variant = "dialog" }: { open
         display_name: name.trim(),
         imap_host: imapHost.trim(),
         imap_port: imapPort,
-        imap_security: "tls",
+        imap_security: imapSecurity,
         smtp_host: smtpHost.trim(),
         smtp_port: smtpPort,
         smtp_security: smtpSecurity,
@@ -875,9 +879,9 @@ export function AddImapDialog({ open, onOpenChange, variant = "dialog" }: { open
                 <FieldLabel htmlFor="imap-host">IMAP server</FieldLabel>
                 <div className="flex gap-2">
                   <Input id="imap-host" value={imapHost} onChange={(e) => setImapHost(e.target.value)} placeholder="imap.example.com" className={cn("flex-1", mobile && "h-11 text-[16px]")} />
-                  <Input aria-label="IMAP port" type="number" value={imapPort} onChange={(e) => setImapPort(Number(e.target.value))} className={cn("w-24", mobile && "h-11 text-[16px]")} />
+                  <Input aria-label="IMAP port" type="number" value={imapPort} onChange={(e) => { const v = Number(e.target.value); setImapPort(v); setImapSecurity(v === 143 ? "starttls" : "tls"); }} className={cn("w-24", mobile && "h-11 text-[16px]")} />
                 </div>
-                <FieldDescription>993 with implicit TLS.</FieldDescription>
+                <FieldDescription>993 for implicit TLS, or 143 for STARTTLS.</FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="smtp-host">SMTP server</FieldLabel>

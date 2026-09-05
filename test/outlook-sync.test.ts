@@ -28,7 +28,7 @@ async function reload(id = "acc1"): Promise<AccountRow> {
   return (await testEnv.DB.prepare(`SELECT * FROM accounts WHERE id = ?`).bind(id).first<AccountRow>())!;
 }
 
-describe("migration 0015", () => {
+describe("migration 0016_outlook", () => {
   it("adds the delta_link cursor column", async () => {
     const info = await testEnv.DB.prepare(`PRAGMA table_info(accounts)`).all<{ name: string }>();
     expect(info.results.map((r) => r.name)).toContain("delta_link");

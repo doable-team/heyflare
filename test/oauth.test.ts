@@ -157,3 +157,23 @@ describe("configuredProviders", () => {
     expect(batch.google).toBe(await isConfigured(dbOnly, "google"));
   });
 });
+
+describe("credentialsStatus reports the stored row separately", () => {
+  it("distinguishes stored credentials from the resolved ones", async () => {
+    // Under a Worker secret the resolved fields are always populated, so anything deciding whether
+    // an override has something behind it has to look at the stored row instead.
+    const st = await credentialsStatus(withEnv, "microsoft");
+    expect(st.source).toBe("env");
+    expect(st.secret_hint).toMatch(/Worker secret/i);
+    expect(st.has_stored_secret).toBe(false);
+    expect(st.stored_client_id).toBe("");
+  });
+
+  it("reports a stored secret once one exists, without revealing it", async () => {
+    await saveCreds(dbOnly, "microsoft", { client_id: "db-id", client_secret: "db-secret-value" });
+    const st = await credentialsStatus(withEnv, "microsoft");
+    expect(st.has_stored_secret).toBe(true);
+    expect(st.stored_client_id).toBe("db-id");
+    expect(JSON.stringify(st)).not.toContain("db-secret-value");
+  });
+});

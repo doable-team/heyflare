@@ -104,6 +104,13 @@ export interface CredentialStatus {
   overriding: boolean;
   client_id: string;
   secret_hint: string;
+  /**
+   * What is actually in the database, regardless of which source is in use. `client_id` and
+   * `secret_hint` above describe the *resolved* credentials, so under a Worker secret they say
+   * nothing about whether a stored value exists — which is exactly what deciding an override needs.
+   */
+  stored_client_id: string;
+  has_stored_secret: boolean;
 }
 
 export async function credentialsStatus(env: Env, provider: OAuthProvider): Promise<CredentialStatus> {
@@ -119,6 +126,8 @@ export async function credentialsStatus(env: Env, provider: OAuthProvider): Prom
     overriding: resolved.source === "db" && envAvailable,
     client_id: resolved.source === "env" ? resolved.clientId : (row?.client_id ?? ""),
     secret_hint: resolved.source === "env" ? "set by a Worker secret" : (row?.secret_hint ?? ""),
+    stored_client_id: row?.client_id ?? "",
+    has_stored_secret: !!row?.secret_enc,
   };
 }
 
