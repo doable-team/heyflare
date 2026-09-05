@@ -156,7 +156,9 @@ export interface MeResponse {
   setup_required: boolean;
 }
 export function useMe(enabled = true) {
-  return useQuery({ queryKey: keys.me, queryFn: () => api.get<MeResponse>("/api/me"), retry: false, enabled, staleTime: 30_000 });
+  // The one query that still refetches on focus: connecting an account in another tab (or, in the
+  // apps, in the system browser) has to show up when you come back, and nothing else refreshes `me`.
+  return useQuery({ queryKey: keys.me, queryFn: () => api.get<MeResponse>("/api/me"), retry: false, enabled, staleTime: 30_000, refetchOnWindowFocus: true });
 }
 
 // ---------- Mail ----------

@@ -9,8 +9,8 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
-    // The app already needs matchMedia, ES modules and dvh units; there is nothing to downlevel for.
-    target: "es2022",
+    // Vite's default target (Safari 14 and up) stays: the Mac app runs on macOS 12's WebKit, which
+    // is Safari 15 and has no class static blocks — a newer target would break it for no measured gain.
     modulePreload: { polyfill: false },
     rollupOptions: {
       output: {
