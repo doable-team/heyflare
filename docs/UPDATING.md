@@ -8,9 +8,11 @@ and how to go back if something looks wrong.
 **Replaced:** the Worker code (API, sync, AI, inbound mail) and the static assets of the web app.
 
 **Never touched:** your D1 database — mail, threads, contacts, screener decisions, labels, collections,
-clips, notes, drafts, bundles, settings, two-factor secrets, AI provider keys and AI memory. Your Worker
-secrets (Google OAuth, `CF_API_TOKEN`, `RESEND_API_KEY`, the session secret) live in Cloudflare and
-survive deploys too, so nobody gets logged out and no account needs reconnecting.
+clips, notes, drafts, bundles, settings, two-factor secrets, AI provider keys and AI memory, plus the
+encrypted IMAP mailbox passwords and any OAuth client credentials stored from Settings. Your Worker
+secrets (Google and Microsoft OAuth, `CF_API_TOKEN`, `RESEND_API_KEY`, the session secret) live in
+Cloudflare and survive deploys too, so nobody gets logged out and no account needs reconnecting —
+Gmail, Outlook and IMAP mailboxes all keep syncing across an update.
 
 Database changes ship as migrations that run themselves on the first request after a deploy — there is no
 manual `db:migrate` step. Migrations only add tables and columns, so existing rows are kept as they are.
@@ -55,6 +57,11 @@ and drag it over the old app.
 
 The Mac app and the server update independently: the app is only a native window around your server, so
 either can be newer than the other.
+
+That also means **new mailbox types need no app update**. The apps carry no provider-specific code —
+they load the web app from your server — so Outlook and IMAP mailboxes appear in the Mac and iPhone
+apps as soon as the server is deployed. Rebuild the app only for changes to the native shell itself:
+the title bar, menus, notifications, dock badge or auto-updates.
 
 ## Which version am I running?
 

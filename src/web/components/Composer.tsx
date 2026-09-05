@@ -434,7 +434,7 @@ export const Composer = forwardRef<ComposerHandle, { initial?: ComposerInitial; 
                     <span className="inline-flex items-center gap-2 min-w-0">
                       <Avatar email={a.email} name={fromLabel(a)} src={a.avatar_url} size={16} />
                       <span className="truncate">{a.email}</span>
-                      <span className="text-xs text-muted-foreground">{a.provider === "domain" ? "Domain" : "Gmail"}</span>
+                      <span className="text-xs text-muted-foreground">{a.provider === "domain" ? "Domain" : a.provider === "outlook" ? "Outlook" : a.provider === "imap" ? "IMAP" : "Gmail"}</span>
                       {multi && <AccountGlyph glyph={glyphFor(a.id)} />}
                     </span>
                   </SelectItem>

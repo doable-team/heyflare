@@ -531,7 +531,7 @@ calendar.post("/sources/:id/sync", async (c) => {
  */
 calendar.post("/google/connect-link", async (c) => {
   const user = c.get("user");
-  if (!googleConfigured(c.env)) return c.json({ error: "google_not_configured", message: "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET secrets." }, 500);
+  if (!(await googleConfigured(c.env))) return c.json({ error: "google_not_configured", message: "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET secrets." }, 500);
   const b = await body<{ account_id: string; calendar_only: boolean }>(c);
   let hint = "";
   if (typeof b.account_id === "string" && b.account_id) {

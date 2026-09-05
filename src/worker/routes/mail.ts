@@ -621,7 +621,7 @@ mail.get("/messages/:id/attachments/:attId", async (c) => {
     "cache-control": "private, max-age=3600",
     "x-content-type-options": "nosniff",
   });
-  if (acc.provider === "domain") {
+  if (acc.provider !== "gmail") {
     const blob = await db.prepare(`SELECT data FROM attachment_blobs WHERE attachment_id = ?`).bind(att.id).first<{ data: unknown }>();
     const raw = blob?.data;
     // D1 hands BLOBs back as ArrayBuffer (remote) or number[] (local); normalize.

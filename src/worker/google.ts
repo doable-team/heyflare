@@ -1,6 +1,7 @@
 import type { Env } from "./env";
 import type { AccountRow } from "./db";
 import { now } from "./db";
+import { resolveCreds } from "./oauth";
 
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me/";
 const BATCH_URL = "https://www.googleapis.com/batch/gmail/v1";
@@ -41,8 +42,8 @@ export class GmailError extends Error {
   }
 }
 
-export function googleConfigured(env: Env): boolean {
-  return !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
+export async function googleConfigured(env: Env): Promise<boolean> {
+  return (await resolveCreds(env, "google")).source !== "none";
 }
 
 /** True when this account's refresh token already carries the Calendar scope. */
@@ -66,9 +67,10 @@ export function hasMailScope(scopes: string | null | undefined): boolean {
  */
 export const MAIL_SCOPE_SQL = `(scopes IS NULL OR scopes = '' OR scopes LIKE '%gmail.modify%')`;
 
-export function googleAuthUrl(env: Env, state: string, redirectUri: string, loginHint?: string, mode: GoogleScopeMode = "mail"): string {
+export async function googleAuthUrl(env: Env, state: string, redirectUri: string, loginHint?: string, mode: GoogleScopeMode = "mail"): Promise<string> {
+  const { clientId } = await resolveCreds(env, "google");
   const u = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-  u.searchParams.set("client_id", env.GOOGLE_CLIENT_ID!);
+  u.searchParams.set("client_id", clientId);
   u.searchParams.set("redirect_uri", redirectUri);
   u.searchParams.set("response_type", "code");
   u.searchParams.set("scope", scopesFor(mode).join(" "));
@@ -90,13 +92,14 @@ export interface TokenResponse {
 }
 
 export async function exchangeCode(env: Env, code: string, redirectUri: string): Promise<TokenResponse> {
+  const creds = await resolveCreds(env, "google");
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       code,
-      client_id: env.GOOGLE_CLIENT_ID!,
-      client_secret: env.GOOGLE_CLIENT_SECRET!,
+      client_id: creds.clientId,
+      client_secret: creds.clientSecret,
       redirect_uri: redirectUri,
       grant_type: "authorization_code",
     }),
@@ -121,17 +124,18 @@ export function googleFetch(env: Env, account: AccountRow, url: string, init: Re
 }
 
 async function refreshAccessToken(env: Env, account: AccountRow): Promise<string> {
-  if (account.provider === "domain") throw new GmailError(400, "not_gmail", "Not a Gmail account");
+  if (account.provider !== "gmail") throw new GmailError(400, "not_gmail", "Not a Gmail account");
   if (!account.refresh_token) {
     await markDisconnected(env, account, "No refresh token; please reconnect the account.");
     throw new GmailError(401, "no_refresh_token", "Account disconnected: no refresh token");
   }
+  const creds = await resolveCreds(env, "google");
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: env.GOOGLE_CLIENT_ID ?? "",
-      client_secret: env.GOOGLE_CLIENT_SECRET ?? "",
+      client_id: creds.clientId,
+      client_secret: creds.clientSecret,
       refresh_token: account.refresh_token,
       grant_type: "refresh_token",
     }),
@@ -167,7 +171,7 @@ export async function getAccessToken(env: Env, account: AccountRow, force = fals
 
 /** Fetch against the Gmail API. `path` is relative to users/me/ (or absolute). */
 export async function gmailFetch(env: Env, account: AccountRow, path: string, init: RequestInit = {}): Promise<Response> {
-  if (account.provider === "domain") throw new GmailError(400, "not_gmail", "Not a Gmail account");
+  if (account.provider !== "gmail") throw new GmailError(400, "not_gmail", "Not a Gmail account");
   const url = /^https?:/i.test(path) ? path : GMAIL_BASE + path;
   let token = await getAccessToken(env, account);
   const doFetch = (t: string) =>

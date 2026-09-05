@@ -8,6 +8,9 @@ export interface Env {
   APP_NAME: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
+  /** Microsoft Entra app registration (`/common` authority): Outlook.com and Microsoft 365 mailboxes. */
+  MS_CLIENT_ID?: string;
+  MS_CLIENT_SECRET?: string;
   SESSION_SECRET?: string;
   /** Cloudflare API token (Zone:Read, Email Routing Settings:Edit, Email Routing Rules:Edit) for automatic domain setup. */
   CF_API_TOKEN?: string;

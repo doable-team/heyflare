@@ -246,6 +246,9 @@ export async function deleteAccountData(db: D1Database, accountId: string, opts:
       ? []
       : [
           db.prepare(`UPDATE domains SET catch_all_account_id = NULL WHERE catch_all_account_id = ?`).bind(accountId),
+          // Explicit, not relying on the FK cascade: D1 does not enforce foreign keys everywhere,
+          // and leaving this row behind would strand an encrypted password.
+          db.prepare(`DELETE FROM imap_accounts WHERE account_id = ?`).bind(accountId),
           db.prepare(`DELETE FROM accounts WHERE id = ?`).bind(accountId),
         ]),
   ]);

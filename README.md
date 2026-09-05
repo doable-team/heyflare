@@ -47,6 +47,10 @@ lives in a resizable side panel and can see the thread you're reading.
   next three days shown at the top of the Imbox. `0` flips between mail and calendar.
 - **Unified inbox** across every connected account, with per-account glyphs and a From picker in compose.
 - **Gmail** via OAuth (incremental history sync every minute plus sync-on-focus; sending through Gmail).
+- **Outlook** via Microsoft OAuth — Outlook.com, Hotmail, Live and Microsoft 365 work accounts, over Microsoft Graph
+  (delta sync every minute plus sync-on-focus; sending through Graph, so it lands in Outlook's Sent Items too).
+- **Any IMAP/SMTP mailbox** — Zoho, Fastmail, Migadu, cPanel webmail or your own server, with an app password.
+  Polled every minute over IMAP; sending goes through the provider's own SMTP, so they sign DKIM for you.
 - **Custom domain mailboxes** — inbound through Cloudflare Email Routing, outbound through Cloudflare Email Sending or Resend.
 - Contacts with Google profile photos, BIMI brand logos, address-book autocomplete, clips, collections, labels, files,
   notes, merge and rename threads, spy-pixel blocking, keyboard shortcuts, command palette, dark mode, two-factor auth.
@@ -104,6 +108,28 @@ Prerequisites: a Cloudflare account, Node 20+, and a Google Cloud project.
 4. **Credentials → OAuth client ID → Web application**:
    - Authorized JavaScript origins: `https://YOUR_HOST`
    - Authorized redirect URIs: `https://YOUR_HOST/auth/google/callback` and `http://localhost:8787/auth/google/callback`
+
+### 1b. Microsoft app registration (optional — only to connect Outlook)
+
+Microsoft has retired Basic authentication for IMAP/POP/SMTP, so an Outlook mailbox can only be
+connected over OAuth. heyflare talks to Microsoft Graph rather than IMAP: plain HTTPS, and a delta
+cursor that works the same way Gmail's history id does.
+
+1. https://portal.azure.com → **Microsoft Entra ID → App registrations → New registration**.
+2. **Supported account types**: *Accounts in any organizational directory and personal Microsoft accounts*
+   — this is what lets both `@outlook.com` addresses and Microsoft 365 work accounts sign in.
+3. **Redirect URI** (platform: Web): `https://YOUR_HOST/auth/microsoft/callback`, and
+   `http://localhost:8787/auth/microsoft/callback` for local development.
+4. **Certificates & secrets → New client secret**; copy the value.
+5. **API permissions → Microsoft Graph → Delegated**: `Mail.ReadWrite`, `Mail.Send`, `User.Read`, `offline_access`.
+6. Set the two secrets:
+   ```sh
+   npx wrangler secret put MS_CLIENT_ID     -c wrangler.local.jsonc
+   npx wrangler secret put MS_CLIENT_SECRET -c wrangler.local.jsonc
+   ```
+
+Then **Connect Outlook** from the sidebar. As with Gmail, connecting imports nothing: it records where
+your inbox is now and syncs only what arrives afterwards.
 
 ### 2. Cloudflare
 ```sh
@@ -167,8 +193,10 @@ new database migrations apply themselves on the first request after a deploy. Fu
 
 ## How mail flows
 - Connecting Gmail imports **nothing**. It records Gmail's history cursor and only mail that arrives afterwards syncs.
+- Connecting Outlook imports **nothing** either — it records a Graph delta cursor and watches from there.
+- Adding an IMAP mailbox imports **nothing** either — it records the folder's UIDVALIDITY and highest UID, and watches from there.
 - Every first-time sender waits in the **Screener**. Decisions are per person and apply across all your accounts.
-- Gmail is polled every minute (Cloudflare cron) and whenever the app is opened or regains focus (throttled). Custom-domain
+- Gmail and Outlook are polled every minute (Cloudflare cron) and whenever the app is opened or regains focus (throttled). Custom-domain
   mail is pushed in instantly by Email Routing.
 - Sending uses your Gmail account (it appears in Gmail's Sent too), with undo-send and send-later.
 - Contact photos come from the People API (profile + directory) and BIMI logos from DNS; otherwise initials.
@@ -202,11 +230,37 @@ npm run dev                       # vite on :5173 (proxies /api and /auth)
 ```
 Inbound mail can be simulated against the local worker: `POST http://localhost:8787/cdn-cgi/handler/email?from=a@b.co&to=you@yourdomain` with a raw RFC 822 body.
 
+## Other mailboxes (Fastmail, Migadu, webmail…)
+
+Settings → Accounts → **Add mailbox**. Any server that speaks IMAP and SMTP works: pick a provider
+preset or type the host names yourself, then give it an app-specific password. heyflare logs in to
+both servers before saving, so a typo never leaves a half-connected account behind. Passwords are
+encrypted at rest and never returned by the API.
+
+**Port 25 cannot work** — Cloudflare blocks outbound connections to it. Use 465 or 587.
+
+Note that **Zoho's free plan cannot be connected at all**: it excludes IMAP, POP3 and forwarding, and
+is browser-only. A paid plan is required.
+
+[`docs/MAILBOXES.md`](docs/MAILBOXES.md) covers all four mailbox types, the setup each one needs, and
+what to do when a connection is refused.
+
+## Tests
+
+```sh
+npm test          # vitest, inside workerd with a real D1 (migrations, ingest, send routing)
+npm run check     # typecheck web, worker and tests
+```
+
+`scripts/ai-openai-mock.test.ts` is a separate standalone script (it spins a real Node HTTP server)
+and is not part of `npm test`.
+
 ## Two-factor authentication
 TOTP (Google Authenticator, 1Password, Authy…) with 10 single-use recovery codes. Settings → Security.
 
 ## Docs
 - `API.md` — the worker/web API contract.
+- [`docs/MAILBOXES.md`](docs/MAILBOXES.md) — connecting Gmail, Outlook, IMAP/SMTP and domain mailboxes, with troubleshooting.
 - `DESIGN.md` — the design system (Notion-minimal, shadcn, mobile spec).
 - [`docs/CALENDAR.md`](docs/CALENDAR.md) — how the calendar is put together: sources, views, schema, API, sync.
 - [`docs/UPDATING.md`](docs/UPDATING.md) — what an update changes, how to update, how to roll back.

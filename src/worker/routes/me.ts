@@ -3,6 +3,7 @@ import type { AppEnv } from "../env";
 import type { AccountRow, UserRow } from "../db";
 import { now, toAccount, toUser, safeJson } from "../db";
 import { hashPassword, verifyPassword } from "../auth";
+import { configuredProviders } from "../oauth";
 import { generateSecret, otpauthUrl, verifyTotp, generateRecoveryCodes, hashRecoveryCode, matchRecoveryCode } from "../totp";
 import type { UserSettings } from "@shared/types";
 
@@ -11,11 +12,13 @@ const me = new Hono<AppEnv>();
 me.get("/", async (c) => {
   const user = c.get("user");
   const accounts = await c.env.DB.prepare(`SELECT * FROM accounts WHERE user_id = ? ORDER BY created_at ASC`).bind(user.id).all<AccountRow>();
+  const cfg = await configuredProviders(c.env);
   return c.json({
     user: toUser(user),
     accounts: accounts.results.map(toAccount),
     setup_required: false,
-    google_configured: !!(c.env.GOOGLE_CLIENT_ID && c.env.GOOGLE_CLIENT_SECRET),
+    google_configured: cfg.google,
+    microsoft_configured: cfg.microsoft,
   });
 });
 
