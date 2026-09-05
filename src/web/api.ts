@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type * as T from "@shared/types";
 import { markDraftSent } from "./lib/sentDrafts";
@@ -95,7 +96,13 @@ export const keys = {
   imbox: ["imbox"] as const,
   threads: (bucket: string, q?: string, label?: string) => ["threads", bucket, q ?? "", label ?? ""] as const,
   feed: ["feed"] as const,
-  thread: (id: string) => ["thread", id] as const,
+  /**
+   * A peek and a real open are two different queries. A peek (`?peek=1`) leaves the thread unread on
+   * the server; an open marks it read. They shared one key, and the assistant panel peeks whatever
+   * thread is on screen — so opening a thread raced its own peek, the peek usually won, and the
+   * thread stayed unread until something else happened to refetch it. That was the lag.
+   */
+  thread: (id: string, peek = false) => (peek ? (["thread", id, "peek"] as const) : (["thread", id] as const)),
   screener: ["screener"] as const,
   screenedOut: ["screened-out"] as const,
   contacts: (q: string) => ["contacts", q] as const,
@@ -131,21 +138,91 @@ export function invalidateCalendar(qc: QueryClient) {
   qc.invalidateQueries({ queryKey: ["cal"] });
 }
 
+/**
+ * The list caches come in two shapes: infinite queries (`pages[].threads`) and flat ones such as a
+ * label's threads (`{ threads }`). Anything that rewrites "the lists" has to cope with both — the
+ * `["threads"]` prefix matches both kinds.
+ */
+type ThreadLists = { pages: { threads: T.ThreadSummary[]; next_page: number | null }[]; pageParams: unknown[] } | { threads: T.ThreadSummary[] };
+function mapLists(qc: QueryClient, fn: (arr: T.ThreadSummary[]) => T.ThreadSummary[]) {
+  for (const key of [["threads"], ["feed"], ["search"]]) {
+    qc.setQueriesData<ThreadLists>({ queryKey: key }, (old) => {
+      if (!old) return old;
+      if ("pages" in old) return { ...old, pages: old.pages.map((p) => ({ ...p, threads: fn(p.threads) })) };
+      if ("threads" in old) return { ...old, threads: fn(old.threads) };
+      return old;
+    });
+  }
+}
+
 /** Optimistically drop threads from list caches (imbox + paged lists). */
 export function removeThreadsFromLists(qc: QueryClient, ids: string[]) {
   const set = new Set(ids);
+  const f = (arr: T.ThreadSummary[]) => arr.filter((t) => !set.has(t.id));
+  qc.setQueriesData<T.ImboxResponse>({ queryKey: keys.imbox }, (old) =>
+    old ? { ...old, new_threads: f(old.new_threads), seen_threads: f(old.seen_threads), reply_later: f(old.reply_later), set_aside: f(old.set_aside) } : old,
+  );
+  mapLists(qc, f);
+}
+
+/**
+ * Mark threads read or unread everywhere they are cached, now, before the server has answered.
+ *
+ * A read/unread flip used to reach the screen only after the round trip *and* the full refetch of
+ * every list — the better part of a second in which the dot stayed put and the row sat in the wrong
+ * section. Every cache gets a fresh object for the thread (the rows are memoised on identity), the
+ * Imbox moves it between "New for you" and "Previously seen", the open thread's own messages follow,
+ * and the sidebar counts shift by exactly the threads whose state actually changed.
+ */
+export function markThreadsSeen(qc: QueryClient, ids: string[], seen: boolean) {
+  const set = new Set(ids);
+  const flipped = new Map<string, T.Bucket>();
+  const patch = (t: T.ThreadSummary): T.ThreadSummary => {
+    if (!set.has(t.id)) return t;
+    if (t.seen !== seen && !t.reply_later && !t.set_aside) flipped.set(t.id, t.bucket);
+    return t.seen === seen && t.unread === !seen ? t : { ...t, seen, unread: !seen };
+  };
+  const byRecency = (a: T.ThreadSummary, b: T.ThreadSummary) => b.last_message_at - a.last_message_at;
+
   qc.setQueriesData<T.ImboxResponse>({ queryKey: keys.imbox }, (old) => {
     if (!old) return old;
-    const f = (arr: T.ThreadSummary[]) => arr.filter((t) => !set.has(t.id));
-    return { ...old, new_threads: f(old.new_threads), seen_threads: f(old.seen_threads), reply_later: f(old.reply_later), set_aside: f(old.set_aside) };
+    const pool = [...old.new_threads, ...old.seen_threads].map(patch);
+    return {
+      ...old,
+      new_threads: pool.filter((t) => !t.seen).sort(byRecency),
+      seen_threads: pool.filter((t) => t.seen).sort(byRecency),
+      reply_later: old.reply_later.map(patch),
+      set_aside: old.set_aside.map(patch),
+    };
   });
-  type Paged = { pages: { threads: T.ThreadSummary[]; next_page: number | null }[]; pageParams: unknown[] };
-  for (const key of [["threads"], ["feed"], ["search"]]) {
-    qc.setQueriesData<Paged>({ queryKey: key }, (old) => {
+  mapLists(qc, (arr) => arr.map(patch));
+
+  for (const id of ids) {
+    for (const key of [keys.thread(id), keys.thread(id, true)]) {
+      qc.setQueryData<T.ThreadDetail>(key, (old) =>
+        old ? { ...old, seen, unread: !seen, messages: seen ? old.messages.map((m) => (m.unread ? { ...m, unread: false } : m)) : old.messages } : old,
+      );
+    }
+  }
+
+  if (flipped.size) {
+    const delta = seen ? -1 : 1;
+    qc.setQueryData<T.Counts>(keys.counts, (old) => {
       if (!old) return old;
-      return { ...old, pages: old.pages.map((p) => ({ ...p, threads: p.threads.filter((t) => !set.has(t.id)) })) };
+      const next = { ...old };
+      for (const bucket of flipped.values()) {
+        if (bucket === "imbox") next.imbox_new = Math.max(0, next.imbox_new + delta);
+        else if (bucket === "feed") next.feed_new = Math.max(0, next.feed_new + delta);
+        else if (bucket === "paper_trail") next.paper_trail_new = Math.max(0, next.paper_trail_new + delta);
+      }
+      return next;
     });
   }
+}
+
+/** The optimistic half of a read/unread action, if the action is one. */
+function seenFromAction(a: ThreadAction): boolean | null {
+  return a.action === "mark_unread" ? false : a.action === "mark_read" || a.action === "seen" ? true : null;
 }
 
 // ---------- Auth / me ----------
@@ -209,11 +286,22 @@ export function useSearch(q: string) {
   });
 }
 export function useThread(id: string | undefined, peek = false) {
-  return useQuery({
-    queryKey: keys.thread(id ?? ""),
+  const qc = useQueryClient();
+  const q = useQuery({
+    queryKey: keys.thread(id ?? "", peek),
     queryFn: () => api.get<T.ThreadDetail>(`/api/threads/${id}${peek ? "?peek=1" : ""}`),
     enabled: !!id,
+    // A thread that was peeked at (the assistant panel, the Reply Later page) paints from that copy
+    // at once; the real fetch behind it is what marks it read.
+    placeholderData: peek ? undefined : () => qc.getQueryData<T.ThreadDetail>(keys.thread(id ?? "", true)),
   });
+  // Fetching a thread (not peeking at it) is what marks it read on the server. Going back to the
+  // list should show that immediately, not whenever the list next happens to refetch.
+  const seenId = !peek && q.data?.seen ? q.data.id : null;
+  useEffect(() => {
+    if (seenId) markThreadsSeen(qc, [seenId], true);
+  }, [qc, seenId]);
+  return q;
 }
 
 export type ThreadAction =
@@ -233,8 +321,13 @@ export function useThreadAction(id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (a: ThreadAction) => api.post<T.ThreadDetail>(`/api/threads/${id}/actions`, a),
+    onMutate: (a) => {
+      const seen = seenFromAction(a);
+      if (seen !== null) markThreadsSeen(qc, [id], seen);
+    },
     onSuccess: (data) => {
       qc.setQueryData(keys.thread(id), data);
+      qc.setQueryData(keys.thread(id, true), data);
       invalidateMail(qc);
     },
   });
@@ -248,6 +341,8 @@ export function useBulkAction() {
       // Optimistic: actions that remove the thread from the current list
       const removing = ["reply_later", "set_aside", "bubble_up", "move", "delete"].includes(a.action) && !("on" in a && a.on === false) && !("at" in a && a.at === null);
       if (removing) removeThreadsFromLists(qc, thread_ids);
+      const seen = seenFromAction(a as ThreadAction);
+      if (seen !== null) markThreadsSeen(qc, thread_ids, seen);
     },
     onSettled: () => invalidateMail(qc),
   });
