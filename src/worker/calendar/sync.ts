@@ -116,11 +116,14 @@ export async function runCalendarSync(env: Env): Promise<void> {
     return;
   }
 
+  // At most one full pull per tick — it is pages of Google requests and a page of reads each.
+  let fullUsed = false;
   for (const cal of due) {
     // One unreachable feed must not take the rest of them down with it; syncCalendarNow has already
     // recorded sync_error and a sync_log row by the time it throws.
     try {
-      await syncCalendarNow(env, cal);
+      const r = await syncCalendarNow(env, cal, { allowFull: !fullUsed });
+      if (r.full) fullUsed = true;
     } catch (e) {
       console.error("calendar sync failed", cal.name, e);
     }

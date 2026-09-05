@@ -19,6 +19,8 @@ export interface CalendarRow {
   sync_token: string | null;
   etag: string | null;
   last_synced_at: number | null;
+  /** When the calendar was last pulled from scratch rather than through its sync token. */
+  full_synced_at: number | null;
   sync_status: "idle" | "syncing" | "error";
   sync_error: string | null;
   created_at: number;

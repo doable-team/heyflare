@@ -128,18 +128,30 @@ async function mirrorGoogleCalendars(env: Env, userId: string, account: AccountR
     .bind(userId, account.id)
     .all<{ id: string; remote_id: string | null; color: string }>();
   const seen = new Set(remote.map((r) => r.remote_id));
+  // The same shared calendar — a holidays feed, a team's calendar — reaches the user through every
+  // account it is shared with, and used to land once per account: five copies of every holiday,
+  // five polls a minute, five rows written for every change. A copy that already exists under
+  // another account now arrives hidden. Hidden calendars poll every six hours and draw nothing;
+  // the user can still turn one on if that is the copy they want.
+  const mine = new Set(existing.results.map((r) => r.remote_id));
+  const elsewhere = new Set(
+    (await db.prepare(`SELECT remote_id FROM calendars WHERE user_id = ? AND source = 'google' AND account_id <> ?`).bind(userId, account.id).all<{ remote_id: string }>()).results.map(
+      (r) => r.remote_id
+    )
+  );
   const t = now();
   let position = await nextPosition(db, userId);
   const stmts: D1PreparedStatement[] = [];
   for (const rc of remote) {
     if (!rc.remote_id) continue;
+    const visible = mine.has(rc.remote_id) || !elsewhere.has(rc.remote_id) ? 1 : 0;
     stmts.push(
       db
         .prepare(
           // Only the columns Google owns are refreshed: name, colour and visibility are the user's
           // once heyflare has them, so they are filled in on insert and never overwritten after.
           `INSERT INTO calendars (id, user_id, account_id, source, remote_id, url, name, description, color, timezone, visible, writable, is_default, position, created_at, updated_at)
-           VALUES (?, ?, ?, 'google', ?, NULL, ?, ?, ?, ?, 1, ?, 0, ?, ?, ?)
+           VALUES (?, ?, ?, 'google', ?, NULL, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
            ON CONFLICT(account_id, remote_id) DO UPDATE SET
              description = excluded.description,
              timezone = excluded.timezone,
@@ -155,6 +167,7 @@ async function mirrorGoogleCalendars(env: Env, userId: string, account: AccountR
           rc.description ?? "",
           muteHex(rc.color) ?? "#3d3d3d",
           rc.timezone ?? "",
+          visible,
           rc.writable ? 1 : 0,
           position++,
           t,
@@ -477,7 +490,7 @@ export async function importIcs(env: Env, userId: string, calendarId: string, te
 }
 
 /** Sync one calendar of any source. A `local` calendar is a no-op. */
-export async function syncCalendarNow(env: Env, cal: CalendarRow): Promise<{ changed: number }> {
+export async function syncCalendarNow(env: Env, cal: CalendarRow, opts: { allowFull?: boolean } = {}): Promise<{ changed: number; full?: boolean }> {
   const db = env.DB;
   if (cal.source === "local") return { changed: 0 };
   if (cal.source === "ics") return refreshIcsCalendar(env, cal);
@@ -490,8 +503,8 @@ export async function syncCalendarNow(env: Env, cal: CalendarRow): Promise<{ cha
   // syncGoogleCalendar owns every status transition on the row — 'syncing' going in, and 'idle' or
   // 'error' coming out. Writing them here as well doubled the cost of a sync that found nothing.
   try {
-    const r = await syncGoogleCalendar(env, cal, account);
-    return { changed: r.changed + r.deleted };
+    const r = await syncGoogleCalendar(env, cal, account, opts);
+    return { changed: r.changed + r.deleted, full: r.full };
   } catch (e) {
     const msg = (e as Error).message ?? String(e);
     await logSync(db, cal.account_id, "error", `Calendar sync failed for "${cal.name}": ${msg}`);

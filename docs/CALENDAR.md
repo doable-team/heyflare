@@ -139,6 +139,30 @@ An `:id` may be `<row>@<YYYY-MM-DD>`, addressing one occurrence of a recurring m
 The cron trigger refreshes every Google calendar (incremental, by `syncToken`) and re-fetches ICS
 feeds older than an hour. A calendar that errors keeps its last events and surfaces `sync_error`.
 
+### The write budget
+
+D1's free tier allows 100,000 row writes a day, and a write to a row is billed again for every
+index on it. Calendar events are the only table here with thousands of rows, so they decide whether
+the app fits:
+
+- An `events` row carries two full indexes plus three **partial** ones (`master_id`, `thread_id`,
+  and the recurring masters — all `WHERE … IS NOT NULL`). A Google instance has none of those
+  columns set, so it costs four writes, not seven. Every lookup on those columns names them with `=`
+  or `IN`, which is what lets SQLite use a partial index.
+- A pull never rewrites a row whose Google **etag** we already hold. Token polls only carry changes
+  anyway; this is what makes a *full* pull — the first sync, an expired token, the monthly refresh —
+  cost reads instead of writes.
+- The first pull is bounded (120 days back, 540 forward), and Google's sync token keeps that window
+  for life, so an event drifting into range later is never reported through it. Each calendar is
+  therefore pulled from scratch **once a month** (`full_synced_at`), one calendar per cron tick.
+  Instances beyond the window are not stored until they come within reach.
+- A calendar shared with several of the user's accounts is stored once per account, but only the
+  first copy is visible; the rest arrive hidden, which polls them every six hours instead of every
+  minute and draws nothing twice.
+
+To see what the database is doing: `wrangler d1 execute … --remote --json` reports `rows_read` and
+`rows_written` per statement, and the `sync_log` table records when a limit was hit.
+
 ## Client
 
 `src/web/lib/caldate.ts` holds the date helpers (`todayKey`, `addDays`, `weekDays`, `monthGrid`,

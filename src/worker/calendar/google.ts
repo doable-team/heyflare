@@ -7,7 +7,7 @@
 
 import type { Env } from "../env";
 import type { AccountRow } from "../db";
-import { uid, now, chunk, safeJson, runBatch, logSync } from "../db";
+import { chunk, logSync, now, placeholders, runBatch, safeJson, uid } from "../db";
 import { googleFetch, GmailError, hasCalendarScope } from "../google";
 import type { CalendarRow, EventRow } from "./types";
 import { dateKey } from "./dates";
@@ -289,21 +289,47 @@ ON CONFLICT(calendar_id, remote_id) DO UPDATE SET
   updated_at = excluded.updated_at`;
 
 /** Write one page of instances: upsert the live ones, delete the cancelled ones. */
+/** The etag we hold for each of these remote ids — what a page would rewrite if nobody looked. */
+async function existingEtags(db: D1Database, calendarId: string, remoteIds: string[]): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  for (const part of chunk(remoteIds, 90)) {
+    const rows = await db
+      .prepare(`SELECT remote_id, etag FROM events WHERE calendar_id = ? AND remote_id IN (${placeholders(part.length)})`)
+      .bind(calendarId, ...part)
+      .all<{ remote_id: string; etag: string | null }>();
+    for (const r of rows.results) out.set(r.remote_id, r.etag);
+  }
+  return out;
+}
+
 async function applyPage(env: Env, cal: CalendarRow, items: GEvent[]): Promise<{ changed: number; deleted: number }> {
   const db = env.DB;
   const stmts: D1PreparedStatement[] = [];
   let changed = 0;
   let deleted = 0;
+  const ids = items.map((g) => g.id).filter((id): id is string => !!id);
+  const existing = await existingEtags(db, cal.id, ids);
+  const horizon = now() + WINDOW_FWD_DAYS * DAY;
 
   for (const g of items) {
     if (!g.id) continue;
-    // In an incremental response a cancelled instance means the occurrence is gone.
+    // In an incremental response a cancelled instance means the occurrence is gone. One we never
+    // stored has nothing to delete.
     if (g.status === "cancelled") {
+      if (!existing.has(g.id)) continue;
       stmts.push(db.prepare(`DELETE FROM events WHERE calendar_id = ? AND remote_id = ?`).bind(cal.id, g.id));
       deleted++;
       continue;
     }
+    // A token poll only carries what changed, but a full pull — the first sync, an expired token,
+    // the periodic refresh — carries everything, and every row it carries would be rewritten along
+    // with each of its indexes whether or not a byte differed. Google's etag says whether one did.
+    // This is what makes a full pull affordable: an unchanged calendar costs reads, not writes.
+    if (g.etag && existing.get(g.id) === g.etag) continue;
     const r = mapEvent(cal, g);
+    // A token minted before the window existed keeps reporting instances years out. They are not
+    // worth a row each until the calendar can reach them; the periodic refresh brings them in then.
+    if (r.starts_at > horizon && !existing.has(g.id)) continue;
     stmts.push(
       db
         .prepare(UPSERT_SQL)
@@ -389,12 +415,29 @@ async function pull(
 
 /** How stale a quiet calendar's `last_synced_at` may get before it is written for its own sake. */
 const HEARTBEAT_MS = 10 * 60_000;
+/**
+ * How often a calendar is pulled from scratch. The first pull is bounded to a window, and the sync
+ * token Google hands back keeps that window for life — an event that drifts into range later is
+ * never reported through it. A monthly full pull picks those up; with the etag check in applyPage
+ * an unchanged calendar pays for it in reads, which are fifty times cheaper than writes.
+ */
+const FULL_RESYNC_MS = 30 * DAY;
 
 /** Pull this calendar's events into the `events` table. Incremental when `sync_token` is set. */
-export async function syncGoogleCalendar(env: Env, cal: CalendarRow, account: AccountRow): Promise<{ changed: number; deleted: number }> {
+export async function syncGoogleCalendar(
+  env: Env,
+  cal: CalendarRow,
+  account: AccountRow,
+  opts: { allowFull?: boolean } = {}
+): Promise<{ changed: number; deleted: number; full: boolean }> {
   requireScope(account);
   const db = env.DB;
   remoteCalendarId(cal);
+  // A calendar with no token has to be pulled whole. One whose last full pull is a month old is
+  // pulled whole only when the cron says so — it hands that out once per tick, so twenty calendars
+  // coming due together do not all do it in the same minute.
+  const overdue = now() - (cal.full_synced_at ?? 0) > FULL_RESYNC_MS;
+  let full = !cal.sync_token || (overdue && !!opts.allowFull);
 
   // No 'syncing' marker on the way in: a token-based poll answers in well under a second, and the
   // cron is the only caller that runs often enough to care. Marking it would cost a row a minute
@@ -402,12 +445,13 @@ export async function syncGoogleCalendar(env: Env, cal: CalendarRow, account: Ac
   try {
     let res: { changed: number; deleted: number; nextSyncToken: string | null };
     try {
-      res = await pull(env, cal, account, cal.sync_token);
+      res = await pull(env, cal, account, full ? null : cal.sync_token);
     } catch (e) {
       // 410 Gone: the sync token expired. Drop it and do one full sync — once, never in a loop.
       if (cal.sync_token && e instanceof GmailError && e.status === 410) {
         await logSync(db, cal.account_id, "warn", `Calendar "${cal.name}": sync token expired, doing a full sync`);
         cal.sync_token = null;
+        full = true;
         await db.prepare(`UPDATE calendars SET sync_token = NULL WHERE id = ?`).bind(cal.id).run();
         res = await pull(env, cal, account, null);
       } else {
@@ -428,15 +472,16 @@ export async function syncGoogleCalendar(env: Env, cal: CalendarRow, account: Ac
     const recovering = cal.sync_status !== "idle" || !!cal.sync_error;
     cal.sync_status = "idle";
     cal.sync_error = null;
-    if (!quiet || stale || recovering) {
+    if (!quiet || stale || recovering || full) {
       cal.sync_token = token;
       cal.last_synced_at = t;
+      if (full) cal.full_synced_at = t;
       await db
-        .prepare(`UPDATE calendars SET sync_token = ?, sync_status = 'idle', sync_error = NULL, last_synced_at = ?, updated_at = ? WHERE id = ?`)
-        .bind(cal.sync_token, t, t, cal.id)
+        .prepare(`UPDATE calendars SET sync_token = ?, sync_status = 'idle', sync_error = NULL, last_synced_at = ?, full_synced_at = ?, updated_at = ? WHERE id = ?`)
+        .bind(cal.sync_token, t, cal.full_synced_at, t, cal.id)
         .run();
     }
-    return { changed: res.changed, deleted: res.deleted };
+    return { changed: res.changed, deleted: res.deleted, full };
   } catch (e) {
     const msg = (e as Error).message ?? String(e);
     const t = now();
