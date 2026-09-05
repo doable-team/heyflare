@@ -348,8 +348,11 @@ export async function rangeFor(env: Env, userId: string, from: string, to: strin
     for (const part of chunk(masterIds, 90)) {
       const oc = inClause(part);
       const ov = await db
-        .prepare(`SELECT master_id, occurrence_date FROM events WHERE user_id = ? AND master_id IS NOT NULL AND master_id IN ${oc.sql} AND occurrence_date IS NOT NULL`)
-        .bind(userId, ...oc.params)
+        // No `user_id = ?` here on purpose: the masters are the user's own rows, so the filter adds
+        // nothing — and its presence made SQLite walk every event of the user's on the user_id index
+        // instead of probing the partial master_id index it was written for.
+        .prepare(`SELECT master_id, occurrence_date FROM events WHERE master_id IN ${oc.sql} AND occurrence_date IS NOT NULL`)
+        .bind(...oc.params)
         .all<{ master_id: string; occurrence_date: string }>();
       for (const o of ov.results ?? []) overridden.add(`${o.master_id}|${o.occurrence_date}`);
       const cp = await db
