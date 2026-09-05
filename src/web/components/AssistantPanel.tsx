@@ -32,12 +32,14 @@ function groupByDate(list: AiConversation[]): { label: string; items: AiConversa
 }
 
 /** Adds the thread on the current page (`/t/:id` or `/bundle/:id`) as a context chip. Returns whether one was found. */
-function useCurrentThreadChip(): ContextChip | null {
+function useCurrentThreadChip(open: boolean): ContextChip | null {
   const loc = useLocation();
   const tMatch = /^\/t\/([^/]+)/.exec(loc.pathname);
   const bMatch = /^\/bundle\/([^/]+)/.exec(loc.pathname);
-  const thread = useThread(tMatch?.[1], true);
-  const bundle = useBundle(bMatch?.[1]);
+  // Only while the panel is showing: a closed panel was still peeking at every thread you opened,
+  // which was a second request (and a second set of reads) per thread for a chip nobody could see.
+  const thread = useThread(open ? tMatch?.[1] : undefined, true);
+  const bundle = useBundle(open ? bMatch?.[1] : undefined);
   return useMemo(() => {
     if (thread.data) return { id: thread.data.id, subject: thread.data.subject, from: thread.data.last_from.name || thread.data.last_from.email };
     const latest = bundle.data?.bundle.latest;
@@ -53,7 +55,7 @@ export function AssistantPanel() {
   const convs = useAiConversations();
   const m = useAiMutations();
   const loc = useLocation();
-  const current = useCurrentThreadChip();
+  const current = useCurrentThreadChip(st.open);
   const [pickerOpen, setPickerOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const openedFrom = useRef<string | null>(null);

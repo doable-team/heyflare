@@ -14,7 +14,7 @@ import { CollectionPicker, LabelChip, LabelPicker, ThreadPicker } from "../compo
 import { bucketName } from "../components/BulkBar";
 import { Avatar, AvatarStack, AccountGlyph } from "../components/Avatar";
 import { ErrorState } from "../components/EmptyState";
-import { replyInitial, type ReplyMode } from "../pages/Thread";
+import { replyInitial, type ReplyMode } from "../lib/reply";
 import { fmtRelative, fmtSize, fmtTime } from "../lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

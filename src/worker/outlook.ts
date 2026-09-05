@@ -136,7 +136,14 @@ export async function syncOutlookAccount(env: Env, account: AccountRow): Promise
 
   // Only now, with every message safely ingested, does the cursor move. A throw above leaves it
   // where it was and the next tick replays — which is safe, because ingest is idempotent.
-  if (walked.cursor) {
+  //
+  // Graph mints a new deltaLink on every call, changes or not, but the previous one stays valid
+  // until it expires (and expiry is handled above). A poll that found nothing therefore has
+  // nothing worth persisting — storing the fresh link anyway would be a row write a minute per
+  // mailbox for an answer that cannot differ. The cursor is written when it carried mail, when a
+  // capped walk still has pages to go, or while the first walk is still levelling.
+  const worthWriting = walked.ids.length > 0 || !walked.done || priming;
+  if (walked.cursor && worthWriting) {
     const initialDone = priming && walked.done ? 1 : account.initial_sync_done;
     await db
       .prepare(`UPDATE accounts SET delta_link = ?, initial_sync_done = ?, last_synced_at = ? WHERE id = ?`)

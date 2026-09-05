@@ -112,11 +112,21 @@ export async function syncImapAccount(env: Env, account: AccountRow): Promise<{ 
 
   // Only now, with every message safely ingested, does the cursor move. A throw above leaves it
   // where it was and the next tick replays — which is safe, because ingest is idempotent.
-  await db
-    .prepare(`UPDATE imap_accounts SET uid_validity = ?, last_uid = ?, updated_at = ? WHERE account_id = ?`)
-    .bind(result.uidValidity, result.lastUid, now(), account.id)
-    .run();
-  await db.prepare(`UPDATE accounts SET initial_sync_done = 1, last_synced_at = ? WHERE id = ?`).bind(now(), account.id).run();
+  //
+  // And only when it actually moved: a poll that found nothing has nothing to record, and writing
+  // the same cursor back every minute is 1,440 row writes a day per mailbox against a free-tier
+  // budget of 100,000. `last_synced_at` is syncAccount's to keep, on its own heartbeat.
+  const moved = result.uidValidity !== row.uid_validity || result.lastUid !== row.last_uid;
+  if (moved) {
+    await db
+      .prepare(`UPDATE imap_accounts SET uid_validity = ?, last_uid = ?, updated_at = ? WHERE account_id = ?`)
+      .bind(result.uidValidity, result.lastUid, now(), account.id)
+      .run();
+  }
+  if (!account.initial_sync_done) {
+    await db.prepare(`UPDATE accounts SET initial_sync_done = 1 WHERE id = ?`).bind(account.id).run();
+    account.initial_sync_done = 1;
+  }
   return { added };
 }
 

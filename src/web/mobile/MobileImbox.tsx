@@ -6,7 +6,7 @@ import { useAccount } from "../context/AccountContext";
 import { useBulkAction, useImbox } from "../api";
 import { startGoogleConnect } from "../lib/connect";
 import { Avatar } from "../components/Avatar";
-import { SyncPill } from "../pages/Imbox";
+import { SyncPill } from "../components/SyncPill";
 import { fmtTime } from "../lib/format";
 import { Button } from "@/components/ui/button";
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
