@@ -10,10 +10,15 @@ import { bucketName } from "../components/BulkBar";
 import { useSwipe } from "./useSwipe";
 
 export interface RowAction {
-  label: string;
-  icon: ReactNode;
+  label: string | ((t: ThreadSummary) => string);
+  icon: ReactNode | ((t: ThreadSummary) => ReactNode);
+  /** True when the action leaves the row in the list, so it settles back on release. */
+  keeps?: boolean;
   run: (t: ThreadSummary) => void;
 }
+
+const actionLabel = (a: RowAction, t: ThreadSummary) => (typeof a.label === "function" ? a.label(t) : a.label);
+const actionIcon = (a: RowAction, t: ThreadSummary) => (typeof a.icon === "function" ? a.icon(t) : a.icon);
 
 /** 64px (56px dense) mobile row with swipe-to-act, tap-to-open and long-press-to-select. */
 export function MobileThreadRow({
@@ -43,11 +48,15 @@ export function MobileThreadRow({
 }) {
   const { multi, glyphFor, accountFor } = useAccount();
   const others = t.participants.filter((p) => p.email.toLowerCase() !== (accountFor(t.account_id)?.email ?? "").toLowerCase());
+  // Swipes stay attached while a selection is open. Both of them keep their row now —
+  // ticking a box and turning read state over move a thread nowhere — so there is no
+  // half-open row left behind, and gathering several threads is one pass of swipes.
   const swipe = useSwipe({
-    disabled: selectionMode,
     onRight: rightAction ? () => rightAction.run(t) : undefined,
     onLeft: leftAction ? () => leftAction.run(t) : undefined,
-    onLongPress: onLongPress ? () => onLongPress(t.id) : undefined,
+    keepsRight: rightAction?.keeps,
+    keepsLeft: leftAction?.keeps,
+    onLongPress: onLongPress && !selectionMode ? () => onLongPress(t.id) : undefined,
   });
   const h = dense ? 64 : 80;
   const unread = t.unread;
@@ -68,7 +77,7 @@ export function MobileThreadRow({
         <div className="absolute inset-0 bg-muted text-foreground">
           <div className="absolute inset-y-0 left-0 flex items-center justify-end overflow-hidden pr-4" style={{ width: swipe.dx }}>
             <span className={cn("flex items-center gap-2 whitespace-nowrap text-[13px] font-medium transition-transform duration-100 [&>svg]:size-5", swipe.past && "scale-110")}>
-              {rightAction.icon} {rightAction.label}
+              {actionIcon(rightAction, t)} {actionLabel(rightAction, t)}
             </span>
           </div>
         </div>
@@ -77,7 +86,7 @@ export function MobileThreadRow({
         <div className="absolute inset-0 bg-muted text-foreground">
           <div className="absolute inset-y-0 right-0 flex items-center justify-start overflow-hidden pl-4" style={{ width: -swipe.dx }}>
             <span className={cn("flex items-center gap-2 whitespace-nowrap text-[13px] font-medium transition-transform duration-100 [&>svg]:size-5", swipe.past && "scale-110")}>
-              {leftAction.label} {leftAction.icon}
+              {actionLabel(leftAction, t)} {actionIcon(leftAction, t)}
             </span>
           </div>
         </div>

@@ -114,6 +114,8 @@ export default function MobileFeed() {
     <Screen
       title="The Feed"
       largeTitle
+      back="/more"
+      backLabel="More"
       subtitle={accounts.length ? "Newsletters and long reads. Scroll, don't sort." : undefined}
       fab={accounts.length > 0}
       titleRight={

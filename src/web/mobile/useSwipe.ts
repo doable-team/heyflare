@@ -12,6 +12,8 @@ export function useSwipe({
   disabled,
   onLongPress,
   longPressMs = 450,
+  keepsLeft,
+  keepsRight,
 }: {
   onLeft?: () => void;
   onRight?: () => void;
@@ -19,6 +21,13 @@ export function useSwipe({
   disabled?: boolean;
   onLongPress?: () => void;
   longPressMs?: number;
+  /**
+   * True when the action leaves the row in the list — ticking a box, turning read state
+   * over. Such a row settles straight back instead of flying off the screen, because
+   * nothing is going to remove it from under the finger.
+   */
+  keepsLeft?: boolean;
+  keepsRight?: boolean;
 }) {
   const [dx, setDx] = useState(0);
   const [dragging, setDragging] = useState(false);
@@ -102,23 +111,30 @@ export function useSwipe({
       suppress.current = true;
       setDragging(false);
       const v = dxRef.current;
+      const buzz = () => {
+        try {
+          navigator.vibrate?.(6);
+        } catch {}
+      };
       if (!cancelled && v >= threshold && onRight) {
-        set(window.innerWidth);
-        try {
-          navigator.vibrate?.(6);
-        } catch {}
+        buzz();
+        if (keepsRight) set(0);
+        else {
+          set(window.innerWidth);
+          window.setTimeout(() => set(0), 260);
+        }
         onRight();
-        window.setTimeout(() => set(0), 260);
       } else if (!cancelled && v <= -threshold && onLeft) {
-        set(-window.innerWidth);
-        try {
-          navigator.vibrate?.(6);
-        } catch {}
+        buzz();
+        if (keepsLeft) set(0);
+        else {
+          set(-window.innerWidth);
+          window.setTimeout(() => set(0), 260);
+        }
         onLeft();
-        window.setTimeout(() => set(0), 260);
       } else set(0);
     },
-    [threshold, onLeft, onRight],
+    [threshold, onLeft, onRight, keepsLeft, keepsRight],
   );
 
   const handlers = {

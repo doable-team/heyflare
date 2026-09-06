@@ -1,0 +1,86 @@
+name: Heyflare
+options:
+  bundleIdPrefix: com.doable.heyflare
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    SWIFT_STRICT_CONCURRENCY: minimal
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_PREVIEWS: YES
+    CLANG_ENABLE_MODULES: YES
+  configs:
+    Debug:
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+    Release:
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+      SWIFT_COMPILATION_MODE: wholemodule
+      VALIDATE_PRODUCT: YES
+
+targets:
+  Heyflare:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Resources
+        buildPhase: resources
+        # INFOPLIST_FILE already processes this; leaving it in the copy phase
+        # would install it a second time and fail the build.
+        excludes:
+          - "Info.plist"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.doable.heyflare
+        PRODUCT_NAME: heyflare
+        MARKETING_VERSION: "0.4.0"
+        CURRENT_PROJECT_VERSION: "1"
+        INFOPLIST_FILE: Resources/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+
+  # Drives the app through the simulator the way a finger would — taps, swipes, typing —
+  # which is the only reliable way to exercise gestures from the command line. Screenshots
+  # are attached to the result bundle; see UITests/README.md.
+  HeyflareUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+        excludes:
+          - "README.md"
+    dependencies:
+      - target: Heyflare
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.doable.heyflare.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Heyflare
+
+schemes:
+  Heyflare:
+    build:
+      targets:
+        Heyflare: all
+        HeyflareUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - HeyflareUITests
+    profile:
+      config: Release
+    archive:
+      config: Release

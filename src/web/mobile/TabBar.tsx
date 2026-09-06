@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { CalendarDays, Inbox, Menu, Rss, Shield } from "lucide-react";
+import { CalendarDays, Inbox, Menu, Shield, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAccount } from "../context/AccountContext";
 import { useCounts } from "../api";
@@ -7,11 +7,14 @@ import { useCounts } from "../api";
 /**
  * Five slots, and no more: a sixth would put every label under 54px on a small phone. Calendar
  * takes the slot Paper Trail had — the Paper Trail is an archive you go looking for, the calendar
- * is a surface you glance at daily — and Paper Trail moves to More, one tap away.
+ * is a surface you glance at daily. The Assistant takes the slot the Feed had, for the same
+ * reason in reverse: the Feed is a place you visit when you have time to read, while the
+ * assistant is something you reach for mid-task and should never be two taps away. Both the
+ * Feed and the Paper Trail live in More, one tap away.
  */
 const TABS = [
   { to: "/", label: "Imbox", icon: Inbox, end: true },
-  { to: "/feed", label: "Feed", icon: Rss },
+  { to: "/assistant", label: "Assistant", icon: Sparkles },
   { to: "/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/screener", label: "Screener", icon: Shield },
   { to: "/more", label: "More", icon: Menu },

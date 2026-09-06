@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowUpCircle, Bookmark, Clock, FileText, Inbox, Rss, Trash2, FolderInput, Mail } from "lucide-react";
+import { ArrowUpCircle, Bookmark, CheckCircle2, Clock, FileText, Inbox, Mail, MailOpen, Rss, Trash2, FolderInput } from "lucide-react";
 import { toast } from "sonner";
 import type { Bundle, ThreadSummary } from "@shared/types";
 import { cn } from "@/lib/utils";
@@ -112,7 +112,7 @@ export function MobileList({
   }, [all]);
 
   const act = useCallback(
-    (ids: string[], a: ThreadAction, msg?: string, removes = true) => {
+    (ids: string[], a: ThreadAction, msg?: string, removes = true, keepSelection = false) => {
       if (!ids.length) return;
       const fire = () =>
         bulk.mutate(
@@ -128,8 +128,12 @@ export function MobileList({
               }),
           },
         );
-      setSelected(new Set());
-      setSelectionMode(false);
+      // A row action taken while a selection is being gathered — marking one thread read
+      // with a swipe — must not throw that selection away.
+      if (!keepSelection) {
+        setSelected(new Set());
+        setSelectionMode(false);
+      }
       if (removes) {
         setLeaving((l) => new Set([...l, ...ids]));
         window.setTimeout(fire, OUT_MS);
@@ -138,8 +142,22 @@ export function MobileList({
     [bulk],
   );
 
-  const defaultRight: RowAction = { label: "Reply later", icon: <Clock />, run: (t) => act([t.id], { action: "reply_later", on: !t.reply_later }, t.reply_later ? "Removed from Reply Later" : "Added to Reply Later", !t.reply_later) };
-  const defaultLeft: RowAction = { label: "Set aside", icon: <Bookmark />, run: (t) => act([t.id], { action: "set_aside", on: !t.set_aside }, t.set_aside ? "Back in the Imbox" : "Set aside", !t.set_aside) };
+  // Dragging right picks the row out; dragging left turns its read state over. Neither
+  // moves a thread anywhere, so both keep their row. Filing — reply later, set aside,
+  // bubble up, move, trash — is one swipe and then the bar below.
+  const defaultRight: RowAction = {
+    label: "Select",
+    icon: <CheckCircle2 />,
+    keeps: true,
+    run: (t) => (selectionMode ? toggle(t.id) : startSelect(t.id)),
+  };
+  const defaultLeft: RowAction = {
+    label: (t) => (t.unread ? "Read" : "Unread"),
+    icon: (t) => (t.unread ? <MailOpen /> : <Mail />),
+    keeps: true,
+    run: (t) =>
+      act([t.id], t.unread ? { action: "mark_read" } : { action: "mark_unread" }, t.unread ? "Marked read" : "Marked unread", false, true),
+  };
   const rA = rightAction === null ? undefined : rightAction ?? defaultRight;
   const lA = leftAction === null ? undefined : leftAction ?? defaultLeft;
 
@@ -159,6 +177,11 @@ export function MobileList({
     setSelected(new Set());
   };
   const ids = [...selected];
+  const picked = all.filter((t) => selected.has(t.id));
+  const allReplyLater = picked.length > 0 && picked.every((t) => t.reply_later);
+  const allSetAside = picked.length > 0 && picked.every((t) => t.set_aside);
+  /// Cancelling a bubble up is only offered when there is one to cancel.
+  const anyBubbled = picked.some((t) => t.bubble_up_at);
 
   if (error) return <ErrorState error={error} onRetry={onRetry} />;
   if (loading && all.length === 0) return <RowSkeleton dense={dense} />;
@@ -247,8 +270,11 @@ export function MobileList({
           <div className="fixed inset-x-0 bottom-0 z-50 bg-background border-t border-border pb-safe">
             <div className="grid grid-cols-5" style={{ height: TAB_BAR_H }}>
               {[
-                { label: "Reply later", icon: <Clock size={20} />, run: () => act(ids, { action: "reply_later", on: true }, "Added to Reply Later") },
-                { label: "Set aside", icon: <Bookmark size={20} />, run: () => act(ids, { action: "set_aside", on: true }, "Set aside") },
+                // The two tray buttons invert once every thread picked is already on that
+                // pile — "Reply later" on the Reply Later list would be a button that does
+                // nothing, and taking a thread off the pile is what is wanted there.
+                { label: allReplyLater ? "Not later" : "Reply later", icon: <Clock size={20} />, run: () => act(ids, { action: "reply_later", on: !allReplyLater }, allReplyLater ? "Removed from Reply Later" : "Added to Reply Later") },
+                { label: allSetAside ? "Put back" : "Set aside", icon: <Bookmark size={20} />, run: () => act(ids, { action: "set_aside", on: !allSetAside }, allSetAside ? "Back in the Imbox" : "Set aside") },
                 { label: "Bubble up", icon: <ArrowUpCircle size={20} />, run: () => setBubbleFor(ids) },
                 { label: "Move", icon: <FolderInput size={20} />, run: () => setMoveFor(ids) },
                 { label: "Trash", icon: <Trash2 size={20} />, run: () => act(ids, { action: "move", bucket: "trash" }, "Moved to trash") },
@@ -292,6 +318,9 @@ export function MobileList({
           { icon: <Rss />, label: "The Feed", onSelect: () => act(moveFor ?? [], { action: "move", bucket: "feed" }, "Moved to The Feed") },
           { icon: <FileText />, label: "Paper Trail", onSelect: () => act(moveFor ?? [], { action: "move", bucket: "paper_trail" }, "Moved to Paper Trail") },
           { icon: <Mail />, label: "Mark unread", onSelect: () => act(moveFor ?? [], { action: "mark_unread" }, "Marked unread", false) },
+          // Only reachable while something bubbled up is picked, which is the one place
+          // it means anything now that the swipe no longer carries it.
+          ...(anyBubbled ? [{ icon: <ArrowUpCircle />, label: "Cancel bubble up", onSelect: () => act(moveFor ?? [], { action: "bubble_up", at: null }, "Bubble up cancelled", false) }] : []),
           { icon: <Trash2 />, label: "Trash", onSelect: () => act(moveFor ?? [], { action: "move", bucket: "trash" }, "Moved to trash"), destructive: true },
         ]}
       />
