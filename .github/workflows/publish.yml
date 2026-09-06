@@ -32,5 +32,3 @@ jobs:
         working-directory: packages/create-heyflare
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
