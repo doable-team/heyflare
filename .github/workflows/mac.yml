@@ -122,3 +122,66 @@ jobs:
             heyflare-mac-universal.app.tar.gz
             latest.json
           if-no-files-found: error
+
+  # The native Mac app (apps/mac-native): SwiftUI on the shared iOS core. Ad-hoc signed when no
+  # Apple certificate is configured; people then right-click → Open the first time.
+  native:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Build
+        working-directory: apps/mac-native
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          xcodebuild -project HeyflareMac.xcodeproj -scheme HeyflareMac -configuration Release \
+            -destination 'platform=macOS' -derivedDataPath build \
+            CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO DEVELOPMENT_TEAM="" \
+            build | tail -20
+          ditto -c -k --keepParent build/Build/Products/Release/heyflare.app ../../heyflare-mac-native.zip
+      - name: Upload to release
+        if: github.event_name == 'release' || inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: gh release upload "$TAG" heyflare-mac-native.zip --clobber
+      - uses: actions/upload-artifact@v4
+        with:
+          name: heyflare-mac-native
+          path: heyflare-mac-native.zip
+          if-no-files-found: error
+
+  # The native iPhone app (apps/ios-native), built unsigned. It cannot be installed as is —
+  # sign it with your own Apple ID (Sideloadly, AltStore) or build from source with
+  # apps/ios-native/install-device.sh.
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Build
+        working-directory: apps/ios-native
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          xcodebuild -project Heyflare.xcodeproj -scheme Heyflare -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            build | tail -20
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/heyflare.app Payload/
+          ditto -c -k Payload ../../heyflare-ios-unsigned.ipa
+      - name: Upload to release
+        if: github.event_name == 'release' || inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: gh release upload "$TAG" heyflare-ios-unsigned.ipa --clobber
+      - uses: actions/upload-artifact@v4
+        with:
+          name: heyflare-ios-unsigned
+          path: heyflare-ios-unsigned.ipa
+          if-no-files-found: error
