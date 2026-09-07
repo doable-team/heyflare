@@ -11,6 +11,12 @@ struct AppShell: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
+            // The window height, published so `vh` lengths resolve as they do on the web.
+            GeometryReader { g in
+                Color.clear
+                    .onAppear { ui.viewportHeight = g.size.height }
+                    .onChange(of: g.size.height) { _, h in ui.viewportHeight = h }
+            }
             HStack(spacing: 0) {
                 Sidebar()
                     .frame(width: ui.sidebarOpen ? 256 : 48)

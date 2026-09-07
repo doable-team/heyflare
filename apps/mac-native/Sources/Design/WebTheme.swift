@@ -38,8 +38,8 @@ enum W {
     static let ring = dyn(rgba(55, 53, 47, 0.3), rgba(255, 255, 255, 0.3))
     static let sidebar = dyn(hex("#f7f7f5"), hex("#202020"))
     static let sidebarAccent = accent
-    /// `bg-black/50`, the dialog and sheet overlay.
-    static let overlay = Color.black.opacity(0.5)
+    /// `bg-black/10`, the dialog and sheet overlay (`DialogOverlay` in ui/dialog.tsx).
+    static let overlay = Color.black.opacity(0.10)
     /// `ring-foreground/10`, the popover edge.
     static let popoverRing = dyn(rgba(55, 53, 47, 0.10), rgba(212, 212, 212, 0.10))
     /// `text-foreground/80` and `/90`.

@@ -148,6 +148,8 @@ final class UIState {
     func setDock(_ view: AnyView?, owner: String) { dock = view; dockOwner = owner }
     func clearDock(owner: String) { if dockOwner == owner { dock = nil; dockOwner = "" } }
     /// An event prefilled from a thread, consumed by the calendar when it opens.
+    /// The window height, so `vh` units resolve exactly as they do on the web.
+    var viewportHeight: CGFloat = 900
     var pendingEvent: EventDraft?
 
     enum Region { case sidebar, content, assistant }

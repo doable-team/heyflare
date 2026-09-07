@@ -41,7 +41,7 @@ struct ImboxPage: View {
                                             Text("Mail from people you've screened in shows up here.").font(W.s13).foregroundStyle(W.mutedForeground)
                                         }
                                         .padding(.horizontal, 8).padding(.top, 8)
-                                        .frame(maxWidth: .infinity, minHeight: 160, alignment: .topLeading)
+                                        .frame(maxWidth: .infinity, minHeight: ui.viewportHeight * 0.2, alignment: .topLeading)
                                     ),
                                     actions: newCount > 0 ? AnyView(WButton("Power through new", icon: "zap", variant: .ghost, size: .sm, muted: true, kbd: "o") { router.go(.powerThrough) }) : nil),
                         ListSection(title: "Previously seen", threads: store.data.seenThreads, bundles: store.data.bundles.filter { !$0.isOpen }, emptyTitle: "Nothing here yet.", emptyBody: "Once you open something, it settles down here."),

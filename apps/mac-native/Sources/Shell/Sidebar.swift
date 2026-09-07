@@ -157,7 +157,7 @@ struct Sidebar: View {
             }
             .popAnchor("scope-menu")
 
-            VStack(spacing: 2) {
+            VStack(spacing: 0) {
                 SidebarButton(height: 28, collapsed: collapsed, active: false) {
                     HStack(spacing: 8) {
                         Icon("penSquare", size: 16).foregroundStyle(W.mutedForeground)
@@ -210,10 +210,10 @@ struct Sidebar: View {
 
     @ViewBuilder
     private func group(_ label: String?, _ items: [NavItem]) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 0) {
             if let label, !collapsed {
                 Text(label).font(W.font(12, 500)).foregroundStyle(W.mutedForeground)
-                    .padding(.horizontal, 8).frame(height: 32)
+                    .padding(.horizontal, 8).frame(height: 28)
             }
             ForEach(items) { item in navRow(item) }
         }
@@ -221,7 +221,7 @@ struct Sidebar: View {
     }
 
     private var moreGroup: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 0) {
             if !collapsed {
                 Button {
                     ui.moreOpen.toggle()
@@ -231,7 +231,7 @@ struct Sidebar: View {
                         Spacer()
                         Icon("chevronRight", size: 12).foregroundStyle(W.mutedForeground).rotationEffect(.degrees(moreExpanded ? 90 : 0))
                     }
-                    .padding(.horizontal, 8).frame(height: 32).contentShape(Rectangle())
+                    .padding(.horizontal, 8).frame(height: 28).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
@@ -266,7 +266,7 @@ struct Sidebar: View {
     // MARK: Footer
 
     private var footer: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 0) {
             SidebarButton(height: 28, collapsed: collapsed, active: router.route.navKey == "/settings") {
                 HStack(spacing: 8) {
                     Icon("settings", size: 16).foregroundStyle(router.route.navKey == "/settings" ? W.foreground : W.mutedForeground)

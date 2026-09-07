@@ -119,7 +119,8 @@ struct StatusSelect: View {
                 }
                 .foregroundStyle(hovering || pops.isOpen(id) ? W.foreground : W.mutedForeground)
                 .padding(.horizontal, 6).frame(height: 28)
-                .background(hovering || pops.isOpen(id) ? W.muted : Color.clear)
+                // The web's trigger keeps a `bg-input/30` wash at rest, not a clear one.
+                .background(hovering || pops.isOpen(id) ? W.muted : W.input.opacity(0.3))
                 .rounded(W.radiusMd)
                 .contentShape(Rectangle())
             }

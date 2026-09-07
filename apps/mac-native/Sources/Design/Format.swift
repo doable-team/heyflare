@@ -23,7 +23,8 @@ enum Fmt {
         return monthDayYear.string(from: d)
     }
 
-    static func full(_ ms: Double) -> String { full.string(from: toDate(ms)) }
+    /// `toLocaleString(month, day, year, hour, minute)`: "Sep 6, 2026, 2:54 PM".
+    static func full(_ ms: Double) -> String { let d = toDate(ms); return "\(monthDayYear.string(from: d)), \(time.string(from: d))" }
     static func date(_ ms: Double) -> String { monthDayYear.string(from: toDate(ms)) }
     static func monthKey(_ ms: Double) -> String { monthYear.string(from: toDate(ms)) }
     static func clock(_ d: Date) -> String { time.string(from: d) }
