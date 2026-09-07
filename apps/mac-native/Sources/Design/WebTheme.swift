@@ -114,6 +114,58 @@ enum Geist {
     static func font(size: CGFloat, weight: CGFloat, mono: Bool = false) -> Font {
         Font(nsFont(size: size, weight: weight, mono: mono))
     }
+
+    /// The line box SwiftUI gives this font by default, which is not the web's.
+    static func naturalLine(size: CGFloat, weight: CGFloat = 400, mono: Bool = false) -> CGFloat {
+        let f = nsFont(size: size, weight: weight, mono: mono)
+        return f.ascender - f.descender + f.leading
+    }
+}
+
+/// CSS puts the glyphs in a box of exactly `line-height`, splitting the difference above and
+/// below. SwiftUI uses the font's own metrics, which for Geist run from 4.8pt short to 3pt
+/// tall depending on size. `.webLine` restores the web's box.
+///
+/// Only worth applying where the line box drives layout — text that wraps, or that stacks in
+/// a column. Inside a fixed-height row the container already fixes the height, and adding
+/// half-leading there just pushes the text off centre.
+struct WebLine: ViewModifier {
+    let size: CGFloat
+    let weight: CGFloat
+    let lineHeight: CGFloat
+
+    func body(content: Content) -> some View {
+        let extra = lineHeight - Geist.naturalLine(size: size, weight: weight)
+        return content
+            .lineSpacing(max(0, extra))
+            .padding(.vertical, extra / 2)
+    }
+}
+
+extension View {
+    /// `line-height` for a run of text; the default per size is the one the web uses most.
+    func webLine(_ size: CGFloat, _ lineHeight: CGFloat? = nil, weight: CGFloat = 400) -> some View {
+        modifier(WebLine(size: size, weight: weight, lineHeight: lineHeight ?? W.lineHeight(size)))
+    }
+}
+
+extension W {
+    /// The line-height the web pairs with each size, counted across every page.
+    static func lineHeight(_ size: CGFloat) -> CGFloat {
+        switch size {
+        case 9.5: return 9.5
+        case 10.5: return 10.5
+        case 11: return 11
+        case 12: return 16
+        case 13: return 16.25
+        case 14: return 20
+        case 15: return 22.5
+        case 16: return 16
+        case 24: return 30
+        case 28: return 34
+        default: return size * 1.25
+        }
+    }
 }
 
 // MARK: - Small modifiers the web's utility classes map onto

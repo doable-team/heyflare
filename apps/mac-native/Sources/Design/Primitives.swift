@@ -392,10 +392,10 @@ struct PageHeader<Actions: View>: View {
                         .font(W.font(28, 700))
                         .tracking(-0.56)
                         .foregroundStyle(W.foreground)
-                        .lineSpacing(6)
+                        .webLine(28, weight: 700)
                 }
                 if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle).font(W.sm).foregroundStyle(W.mutedForeground).padding(.top, 4)
+                    Text(subtitle).font(W.sm).webLine(14).foregroundStyle(W.mutedForeground).padding(.top, 4)
                 }
             }
             Spacer(minLength: 0)
