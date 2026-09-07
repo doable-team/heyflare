@@ -73,7 +73,7 @@ struct ThreadRowView: View {
                     } else {
                         HStack(spacing: 6) {
                             if unread { Circle().fill(W.foreground).frame(width: 6, height: 6) }
-                            Text(thread.displaySubject).font(W.font(13, unread ? 600 : 500)).foregroundStyle(unread ? W.foreground : W.foreground90).lineLimit(1)
+                            Text(thread.displaySubject).font(W.font(13, unread ? 600 : 500)).webLine(13, weight: unread ? 600 : 500).foregroundStyle(unread ? W.foreground : W.foreground90).lineLimit(1)
                             if let stack { WAvatarStack(people: stack, size: 14, max: 6) }
                             if thread.messageCount > 1 { Text("\(thread.messageCount)").font(W.xs).monospacedDigit().foregroundStyle(W.tertiary) }
                             AccountGlyph(glyph: glyph)
@@ -81,9 +81,9 @@ struct ThreadRowView: View {
                             if showBucket && thread.bucket != .imbox { WBadge(thread.bucket.title, variant: .outline, muted: true, small: true) }
                         }
                         HStack(spacing: 6) {
-                            Text(senderLine(thread)).font(W.s13).foregroundStyle(unread ? W.foreground : W.mutedForeground).lineLimit(1).layoutPriority(1)
+                            Text(senderLine(thread)).font(W.s13).webLine(13).foregroundStyle(unread ? W.foreground : W.mutedForeground).lineLimit(1).layoutPriority(1)
                             if !thread.snippet.isEmpty {
-                                Text("— \(thread.snippet)").font(W.xs).foregroundStyle(unread ? W.foreground : W.mutedForeground).lineLimit(1)
+                                Text("— \(thread.snippet)").font(W.xs).webLine(12).foregroundStyle(unread ? W.foreground : W.mutedForeground).lineLimit(1)
                             }
                         }
                     }
@@ -102,7 +102,7 @@ struct ThreadRowView: View {
                     if !thread.note.isEmpty { Icon("stickyNote", size: 13).help("Has a note") }
                     if thread.trackersBlocked > 0 { Icon("shieldCheck", size: 13).help("Blocked \(thread.trackersBlocked) spy tracker\(thread.trackersBlocked == 1 ? "" : "s")") }
                     if thread.hasAttachments { Icon("paperclip", size: 13) }
-                    Text(Fmt.time(thread.lastMessageAt)).font(W.xs).monospacedDigit().foregroundStyle(unread ? W.foreground : W.mutedForeground).help(Fmt.full(thread.lastMessageAt))
+                    Text(Fmt.time(thread.lastMessageAt)).font(W.xs).webLine(12).monospacedDigit().foregroundStyle(unread ? W.foreground : W.mutedForeground).help(Fmt.full(thread.lastMessageAt))
                 }
                 .foregroundStyle(W.mutedForeground)
                 .opacity(showQuick && hovering ? 0 : 1)

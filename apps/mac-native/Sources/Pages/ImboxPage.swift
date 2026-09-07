@@ -16,9 +16,9 @@ struct ImboxPage: View {
         } else {
             PageColumn {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("Imbox").font(W.font(28, 700)).tracking(-0.56).foregroundStyle(W.foreground)
+                    Text("Imbox").font(W.font(28, 700)).webLine(28, weight: 700).tracking(-0.56).foregroundStyle(W.foreground)
                     HStack(spacing: 12) {
-                        Text(scopeLabel).font(W.xs).foregroundStyle(W.mutedForeground)
+                        Text(scopeLabel).font(W.xs).webLine(12).foregroundStyle(W.mutedForeground)
                         SyncPill()
                     }
                     .frame(minHeight: 20)
@@ -37,8 +37,8 @@ struct ImboxPage: View {
                         ListSection(title: "New for you", threads: store.data.newThreads, bundles: store.data.bundles.filter(\.isOpen),
                                     emptyView: AnyView(
                                         VStack(alignment: .leading, spacing: 4) {
-                                            Text("Nothing new. Go enjoy your day.").font(W.font(14)).foregroundStyle(W.foreground)
-                                            Text("Mail from people you've screened in shows up here.").font(W.s13).foregroundStyle(W.mutedForeground)
+                                            Text("Nothing new. Go enjoy your day.").font(W.font(14)).webLine(14).foregroundStyle(W.foreground)
+                                            Text("Mail from people you've screened in shows up here.").font(W.s13).webLine(13).foregroundStyle(W.mutedForeground)
                                         }
                                         .padding(.horizontal, 8).padding(.top, 8)
                                         .frame(maxWidth: .infinity, minHeight: ui.viewportHeight * 0.2, alignment: .topLeading)
