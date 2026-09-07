@@ -85,7 +85,7 @@ struct HtmlBodyView: View {
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: http: data: cid:; style-src 'unsafe-inline'; font-src data:">
         <style>
         \(GeistWeb.fontFace)
-        html{color-scheme:\(scheme);}
+        html{color-scheme:\(scheme);\(dark && !ownBackground ? "--hey-page:\(colors.bg);--hey-ink:\(fg);" : "")}
         html,body{margin:0;padding:0;background:transparent;}
         body{display:flow-root;font-family:"Geist Variable",Geist,system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.6;color:\(fg);word-wrap:break-word;overflow-wrap:anywhere;}
         img{max-width:100% !important;height:auto;}
@@ -164,6 +164,34 @@ struct MessageWebView: NSViewRepresentable {
       try { new ResizeObserver(measure).observe(document.body); } catch(e){}
       document.querySelectorAll("img").forEach(i => i.addEventListener("load", measure));
       setTimeout(measure, 300); setTimeout(measure, 1500);
+      // Senders write for a white page: `color:#000` on a paragraph, a `<font color>`, lands on
+      // our dark one still wearing black and disappears. Anything that cannot be read against
+      // the page gives up its colour and takes ours; legible colour is left as the sender set it.
+      const page = getComputedStyle(document.documentElement).getPropertyValue("--hey-page").trim();
+      const ink = getComputedStyle(document.documentElement).getPropertyValue("--hey-ink").trim();
+      if (page && ink) {
+        const parse = (c, over) => {
+          const h = c.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+          if (h) { const x = h[1].length === 3 ? h[1].replace(/./g, d => d + d) : h[1];
+            return [parseInt(x.slice(0,2),16), parseInt(x.slice(2,4),16), parseInt(x.slice(4,6),16)]; }
+          const n = c.match(/-?\\d*\\.?\\d+/g); if (!n || n.length < 3) return null;
+          const v = n.slice(0,3).map(Number), a = n.length > 3 ? Number(n[3]) : 1;
+          return (a >= 1 || !over) ? v : v.map((x,i) => x*a + over[i]*(1-a));
+        };
+        const lum = (c) => { const f = (v) => { const x = v/255; return x <= 0.03928 ? x/12.92 : Math.pow((x+0.055)/1.055, 2.4); };
+          return 0.2126*f(c[0]) + 0.7152*f(c[1]) + 0.0722*f(c[2]); };
+        const bg = parse(page);
+        const ratio = (c) => { const f = parse(c, bg); if (!f || !bg) return 21;
+          const a = lum(f), b = lum(bg); return (Math.max(a,b)+0.05)/(Math.min(a,b)+0.05); };
+        for (const el of document.body.querySelectorAll("*")) {
+          const own = getComputedStyle(el).color; if (!own) continue;
+          const parent = el.parentElement;
+          if (parent && getComputedStyle(parent).color === own) continue;
+          if (ratio(own) >= 3) continue;
+          el.style.setProperty("color", ink, "important");
+        }
+        measure();
+      }
       const sel = () => { const s = document.getSelection(); const txt = s ? s.toString().trim() : ""; if(!txt || !s || s.rangeCount===0){ post({type:"sel", text:""}); return; } const r = s.getRangeAt(0).getBoundingClientRect(); post({type:"sel", text: txt, x: r.left + r.width/2, y: r.top}); };
       document.addEventListener("selectionchange", sel); document.addEventListener("mouseup", sel);
     })();
