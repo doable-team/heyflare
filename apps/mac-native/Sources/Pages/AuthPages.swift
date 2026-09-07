@@ -80,6 +80,26 @@ struct ServerSetupPage: View {
     }
 }
 
+/// The server this window points at, and the way back to the server screen.
+private struct ServerFooter: View {
+    @Environment(AppState.self) private var app
+    @State private var hovering = false
+
+    var body: some View {
+        Button { Task { await app.clearServer() } } label: {
+            Text(app.serverHost.isEmpty ? "Change server" : app.serverHost)
+                .font(W.xs).webLine(12)
+                .foregroundStyle(hovering ? W.foreground : W.mutedForeground)
+                .underline(hovering)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Point this app at a different heyflare server")
+        .onHover { hovering = $0 }
+        .padding(.bottom, 20)
+    }
+}
+
 /// `Login.tsx`, with the two-factor step.
 struct LoginPage: View {
     let initialMessage: String?
@@ -93,36 +113,41 @@ struct LoginPage: View {
     @State private var recoveryMode = false
 
     var body: some View {
-        if let ticket {
-            AuthLayout(title: "Two-factor code", subtitle: recoveryMode ? "Enter one of your recovery codes." : "Enter the 6-digit code from your authenticator app.") {
-                VStack(alignment: .leading, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        FieldLabel(recoveryMode ? "Recovery code" : "Code")
-                        WTextField(placeholder: recoveryMode ? "xxxx-xxxx" : "123456", text: $code, mono: true, fontSize: recoveryMode ? 14 : 18, onSubmit: { Task { await verify(ticket) } }, autofocus: true)
-                        if !error.isEmpty { Text(error).font(W.xs) }
+        Group {
+            if let ticket {
+                AuthLayout(title: "Two-factor code", subtitle: recoveryMode ? "Enter one of your recovery codes." : "Enter the 6-digit code from your authenticator app.") {
+                    VStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            FieldLabel(recoveryMode ? "Recovery code" : "Code")
+                            WTextField(placeholder: recoveryMode ? "xxxx-xxxx" : "123456", text: $code, mono: true, fontSize: recoveryMode ? 14 : 18, onSubmit: { Task { await verify(ticket) } }, autofocus: true)
+                            if !error.isEmpty { Text(error).font(W.xs) }
+                        }
+                        WButton(busy ? "Checking…" : "Continue", fullWidth: true) { Task { await verify(ticket) } }.disabled(busy || code.trimmingCharacters(in: .whitespaces).isEmpty)
+                        HStack {
+                            Button(recoveryMode ? "Use authenticator code" : "Use a recovery code") { recoveryMode.toggle(); code = ""; error = "" }.buttonStyle(.plain).underline()
+                            Spacer()
+                            Button("← Back") { self.ticket = nil; code = ""; error = "" }.buttonStyle(.plain)
+                        }
+                        .font(W.xs).foregroundStyle(W.mutedForeground)
                     }
-                    WButton(busy ? "Checking…" : "Continue", fullWidth: true) { Task { await verify(ticket) } }.disabled(busy || code.trimmingCharacters(in: .whitespaces).isEmpty)
-                    HStack {
-                        Button(recoveryMode ? "Use authenticator code" : "Use a recovery code") { recoveryMode.toggle(); code = ""; error = "" }.buttonStyle(.plain).underline()
-                        Spacer()
-                        Button("← Back") { self.ticket = nil; code = ""; error = "" }.buttonStyle(.plain)
-                    }
-                    .font(W.xs).foregroundStyle(W.mutedForeground)
                 }
-            }
-        } else {
-            AuthLayout(title: "Log in", subtitle: "Welcome back to your Imbox.") {
-                VStack(alignment: .leading, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 6) { FieldLabel("Email"); WTextField(placeholder: "you@example.com", text: $email, onSubmit: { Task { await signIn() } }, autofocus: true) }
-                    VStack(alignment: .leading, spacing: 6) {
-                        FieldLabel("Password"); WTextField(placeholder: "••••••••", text: $password, secure: true, onSubmit: { Task { await signIn() } })
-                        if !error.isEmpty { Text(error).font(W.xs) }
+            } else {
+                AuthLayout(title: "Log in", subtitle: "Welcome back to your Imbox.") {
+                    VStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 6) { FieldLabel("Email"); WTextField(placeholder: "you@example.com", text: $email, onSubmit: { Task { await signIn() } }, autofocus: true) }
+                        VStack(alignment: .leading, spacing: 6) {
+                            FieldLabel("Password"); WTextField(placeholder: "••••••••", text: $password, secure: true, onSubmit: { Task { await signIn() } })
+                            if !error.isEmpty { Text(error).font(W.xs) }
+                        }
+                        WButton(busy ? "Signing in…" : "Continue", fullWidth: true) { Task { await signIn() } }.disabled(busy)
                     }
-                    WButton(busy ? "Signing in…" : "Continue", fullWidth: true) { Task { await signIn() } }.disabled(busy)
                 }
+                .onAppear { error = initialMessage ?? "" }
             }
-            .onAppear { error = initialMessage ?? "" }
         }
+        // The web is served by the server it talks to, so it needs no such control.
+        // A native window does: it sits in the floor, leaving the form the web's.
+        .overlay(alignment: .bottom) { ServerFooter() }
     }
 
     private func signIn() async {
