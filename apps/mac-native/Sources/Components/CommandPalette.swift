@@ -114,7 +114,6 @@ struct CommandPalette: View {
                 .background(W.popover)
                 .overlay(RoundedRectangle(cornerRadius: W.radiusXl, style: .continuous).strokeBorder(W.popoverRing, lineWidth: 1))
                 .rounded(W.radiusXl)
-                .shadow(color: .black.opacity(0.25), radius: 24, y: 8)
             }
             .onAppear { q = ""; selected = 0; store.clear() }
             .onChange(of: q) { _, _ in selected = 0 }
@@ -167,10 +166,11 @@ struct ShortcutsOverlay: View {
             ZStack {
                 W.overlay.ignoresSafeArea().onTapGesture { ui.shortcutsOpen = false }
                 VStack(alignment: .leading, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 8) {
                         Text("Keyboard shortcuts").font(W.font(16, 600)).foregroundStyle(W.foreground)
                         Text("The whole app works without a mouse.").font(W.sm).foregroundStyle(W.mutedForeground)
                     }
+// `pt-1` on the grid, over the dialog's `gap-4`.
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 32), GridItem(.flexible(), spacing: 32)], alignment: .leading, spacing: 24) {
                         ForEach(groups, id: \.0) { g in
                             VStack(alignment: .leading, spacing: 6) {
@@ -187,7 +187,6 @@ struct ShortcutsOverlay: View {
                 .background(W.popover)
                 .overlay(RoundedRectangle(cornerRadius: W.radiusXl, style: .continuous).strokeBorder(W.popoverRing, lineWidth: 1))
                 .rounded(W.radiusXl)
-                .shadow(color: .black.opacity(0.25), radius: 24, y: 8)
                 .overlay(alignment: .topTrailing) {
                     WButton(icon: "x", variant: .ghost, size: .iconSm, muted: true) { ui.shortcutsOpen = false }.padding(8)
                 }
