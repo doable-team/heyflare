@@ -20,6 +20,10 @@ enum DebugTour {
             await app.setServer(url)
             await app.loadSession()
         }
+        if case .signedOut = app.phase {
+            await pause(1.5)
+            await snap("01b-login", dir)
+        }
         if case .signedOut = app.phase, let email = env["HEY_TOUR_EMAIL"], let password = env["HEY_TOUR_PASSWORD"] {
             if let user = try? await APIClient.shared.login(email: email, password: password).user { await app.adopt(user: user) }
         }

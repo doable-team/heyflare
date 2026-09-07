@@ -7,14 +7,27 @@ struct AuthLayout<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) { Mark(size: 22); Text("heyflare").font(W.font(14, 600)) }.padding(.bottom, 24)
-            Text(title).font(W.font(22, 600)).tracking(-0.22)
-            if let subtitle { Text(subtitle).font(W.sm).foregroundStyle(W.mutedForeground).padding(.top, 6) }
-            content().padding(.top, 28)
+        VStack(spacing: 0) {
+            // `min-h-12` on the Mac: the strip that clears the traffic lights.
+            Color.clear.frame(height: 48)
+            // `flex-1 items-center justify-center px-5 pb-16` around a `max-w-[360px]` block.
+            ZStack {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 8) {
+                        Mark(size: 22)
+                        Text("heyflare").font(W.font(14, 600)).webLine(14, weight: 600)
+                    }
+                    .padding(.bottom, 24)
+                    Text(title).font(W.font(22, 600)).webLine(22, 28, weight: 600).tracking(-0.22)
+                    if let subtitle { Text(subtitle).font(W.sm).webLine(14).foregroundStyle(W.mutedForeground).padding(.top, 6) }
+                    content().padding(.top, 28)
+                }
+                .frame(width: 360)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 64)
         }
-        .frame(width: 360)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(W.background)
     }
 }
@@ -34,8 +47,7 @@ struct ServerSetupPage: View {
                     WTextField(placeholder: "mail.example.com", text: $address, onSubmit: { Task { await connect() } }, autofocus: true)
                     if let error { Text(error).font(W.xs) }
                 }
-                WButton(checking ? "Connecting…" : "Continue") { Task { await connect() } }
-                    .frame(maxWidth: .infinity)
+                WButton(checking ? "Connecting…" : "Continue", fullWidth: true) { Task { await connect() } }
                     .disabled(checking || address.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
@@ -89,7 +101,7 @@ struct LoginPage: View {
                         WTextField(placeholder: recoveryMode ? "xxxx-xxxx" : "123456", text: $code, mono: true, fontSize: recoveryMode ? 14 : 18, onSubmit: { Task { await verify(ticket) } }, autofocus: true)
                         if !error.isEmpty { Text(error).font(W.xs) }
                     }
-                    WButton(busy ? "Checking…" : "Continue") { Task { await verify(ticket) } }.frame(maxWidth: .infinity).disabled(busy || code.trimmingCharacters(in: .whitespaces).isEmpty)
+                    WButton(busy ? "Checking…" : "Continue", fullWidth: true) { Task { await verify(ticket) } }.disabled(busy || code.trimmingCharacters(in: .whitespaces).isEmpty)
                     HStack {
                         Button(recoveryMode ? "Use authenticator code" : "Use a recovery code") { recoveryMode.toggle(); code = ""; error = "" }.buttonStyle(.plain).underline()
                         Spacer()
@@ -106,8 +118,7 @@ struct LoginPage: View {
                         FieldLabel("Password"); WTextField(placeholder: "••••••••", text: $password, secure: true, onSubmit: { Task { await signIn() } })
                         if !error.isEmpty { Text(error).font(W.xs) }
                     }
-                    WButton(busy ? "Signing in…" : "Continue") { Task { await signIn() } }.frame(maxWidth: .infinity).disabled(busy)
-                    Text(app.serverHost).font(W.xs).foregroundStyle(W.mutedForeground).padding(.top, 8)
+                    WButton(busy ? "Signing in…" : "Continue", fullWidth: true) { Task { await signIn() } }.disabled(busy)
                 }
             }
             .onAppear { error = initialMessage ?? "" }

@@ -133,13 +133,14 @@ struct WButton: View {
     var size: WSize = .default
     var muted = false
     var expanded = false
+    var fullWidth = false
     var kbd: String?
     var help: String?
     var action: () -> Void
 
-    init(_ label: String? = nil, icon: String? = nil, trailingIcon: String? = nil, variant: WVariant = .default, size: WSize = .default, muted: Bool = false, expanded: Bool = false, kbd: String? = nil, help: String? = nil, action: @escaping () -> Void) {
+    init(_ label: String? = nil, icon: String? = nil, trailingIcon: String? = nil, variant: WVariant = .default, size: WSize = .default, muted: Bool = false, expanded: Bool = false, fullWidth: Bool = false, kbd: String? = nil, help: String? = nil, action: @escaping () -> Void) {
         self.label = label; self.icon = icon; self.trailingIcon = trailingIcon; self.variant = variant; self.size = size
-        self.muted = muted; self.expanded = expanded; self.kbd = kbd; self.help = help; self.action = action
+        self.muted = muted; self.expanded = expanded; self.fullWidth = fullWidth; self.kbd = kbd; self.help = help; self.action = action
     }
 
     var body: some View {
@@ -150,6 +151,8 @@ struct WButton: View {
                 if let kbd { Kbd(kbd) }
                 if let trailingIcon { Icon(trailingIcon, size: size.iconSize) }
             }
+            // `w-full`: the plate has to grow, not just the space around it.
+            .frame(maxWidth: fullWidth ? .infinity : nil)
         }
         .buttonStyle(.web(variant, size, muted: muted, expanded: expanded))
         .help(help ?? label ?? "")
@@ -287,7 +290,8 @@ struct WTextArea: View {
 struct FieldLabel: View {
     let text: String
     init(_ text: String) { self.text = text }
-    var body: some View { Text(text).font(W.font(14, 500)).foregroundStyle(W.foreground) }
+    // `text-sm leading-none font-medium`: a 14pt box, not Geist's natural 18.2.
+    var body: some View { Text(text).font(W.font(14, 500)).webLine(14, 14, weight: 500).foregroundStyle(W.foreground) }
 }
 
 // MARK: - Avatar
