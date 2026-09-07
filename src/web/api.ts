@@ -729,6 +729,15 @@ export function useBundleMutations() {
 export function useAiSettings() {
   return useQuery({ queryKey: ["ai", "settings"], queryFn: () => api.get<T.AiSettings>("/api/ai/settings"), staleTime: 30_000 });
 }
+export function useAiModels(enabled: boolean, preset: string, baseUrl: string, apiKey: string) {
+  return useQuery({
+    queryKey: ["ai", "models", preset, baseUrl, apiKey ? "k" : ""],
+    queryFn: () => api.post<{ models: string[]; error?: string }>("/api/ai/models", { preset, base_url: baseUrl, api_key: apiKey }),
+    enabled,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+}
 export function useAiMemory() {
   return useQuery({ queryKey: ["ai", "memory"], queryFn: () => api.get<T.AiMemoryEntry[]>("/api/ai/memory"), staleTime: 15_000 });
 }
