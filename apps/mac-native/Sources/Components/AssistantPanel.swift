@@ -172,20 +172,24 @@ struct AssistantChat: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         if store.turns.isEmpty && !store.loading {
-                            VStack(spacing: 8) {
-                                Icon("sparkles", size: 24).foregroundStyle(W.mutedForeground).padding(.bottom, 4)
-                                Text("What can I do for you?").font(W.font(16, 500)).webLine(16, weight: 500).foregroundStyle(W.foreground)
-                                Text("I can read, search and organise your mail, screen senders, and write drafts for you to send.").font(W.sm).foregroundStyle(W.mutedForeground).multilineTextAlignment(.center)
+                            // `pt-10 pb-6 text-center`, with the margins the web sets on each line.
+                            VStack(spacing: 0) {
+                                Icon("sparkles", size: 24).foregroundStyle(W.mutedForeground)
+                                Text("What can I do for you?").font(W.font(15, 500)).webLine(15, 22.5, weight: 500).foregroundStyle(W.foreground)
+                                    .padding(.top, 12)
+                                Text("I can read, search and organise your mail, screen senders, and write drafts for you to send.").font(W.s13).webLine(13, 19.5).foregroundStyle(W.mutedForeground).multilineTextAlignment(.center)
+                                    .padding(.top, 4)
                                 if notConfigured {
                                     HStack(spacing: 4) {
-                                        Button { router.go(.settings("ai")) } label: { Text("Add your Anthropic API key").font(W.sm).underline().foregroundStyle(W.foreground) }.buttonStyle(.plain)
-                                        Text("to get started.").font(W.sm).foregroundStyle(W.foreground)
+                                        Button { router.go(.settings("ai")) } label: { Text("Add your Anthropic API key").font(W.s13).webLine(13, 19.5).underline().foregroundStyle(W.foreground) }.buttonStyle(.plain)
+                                        Text("to get started.").font(W.s13).webLine(13, 19.5).foregroundStyle(W.foreground)
                                     }
-                                    .padding(.top, 8)
+                                    .padding(.top, 16)
                                 }
                             }
                             .frame(maxWidth: .infinity)
-                            .padding(.top, 32)
+                            .padding(.top, 40)
+                            .padding(.bottom, 24)
                         }
                         ForEach(store.turns) { turn in turnView(turn).id(turn.id) }
                         if let error = store.error {
@@ -193,7 +197,7 @@ struct AssistantChat: View {
                         }
                         Color.clear.frame(height: 1).id("bottom")
                     }
-                    .padding(16)
+                    .padding(.horizontal, 8)
                 }
                 .onChange(of: store.turns.last?.text) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
                 .onChange(of: store.turns.count) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
