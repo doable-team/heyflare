@@ -112,6 +112,8 @@ struct WeekStack: View {
                 }
                 .padding(.vertical, 8)
             }
+            // Overlay scrollers, like the browser's: the grid keeps the full width.
+            .scrollIndicators(.never)
             .onAppear { proxy.scrollTo(0, anchor: .top) }
             .onChange(of: cursor) { _, _ in proxy.scrollTo(0, anchor: .top) }
         }
@@ -136,26 +138,32 @@ struct WeekView: View {
     var onCreate: (String, Int, Int, EventDraft?) -> Void
 
     private var cal: Calendar { store.calendar }
-    private let hourHeight: CGFloat = 19  // 24h ≈ 456pt, the web's scale
+    private let hourHeight: CGFloat = 57.5 / 3  // three hours measure 57.5pt on the web
     private var days: [Date] { (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: start) } }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 0) {
-                // Hour gutter
+                // `w-6` rail: the month once, on its side, taking no width from the days.
+                Text(monthLabel)
+                    .font(W.font(15)).tracking(0.9).foregroundStyle(W.foreground.opacity(0.25))
+                    .fixedSize()
+                    .rotationEffect(.degrees(90))
+                    .frame(width: 24)
+                    .frame(maxHeight: .infinity)
+                    .clipped()
+                // Hour gutter: `text-[9.5px] text-tertiary`, `right-1`, centred on its line.
                 VStack(alignment: .trailing, spacing: 0) {
                     Color.clear.frame(height: 40)
                     ZStack(alignment: .topTrailing) {
                         ForEach([0, 3, 6, 9, 12, 15, 18, 21], id: \.self) { h in
-                            Text(hourLabel(h)).font(W.font(11)).foregroundStyle(W.mutedForeground).offset(y: CGFloat(h) * hourHeight - 6)
+                            Text(hourLabel(h)).font(W.font(9.5)).foregroundStyle(W.tertiary).offset(y: CGFloat(h) * hourHeight - 4.75)
                         }
                     }
                     .frame(height: 24 * hourHeight, alignment: .top)
+                    .padding(.trailing, 4)
                 }
-                .frame(width: 44)
-                .overlay(alignment: .leading) {
-                    Text(monthLabel).font(W.font(12)).tracking(2).foregroundStyle(W.mutedForeground).rotationEffect(.degrees(90)).fixedSize().frame(width: 20).offset(x: -18, y: 200)
-                }
+                .frame(width: 36)
                 ForEach(days, id: \.self) { day in
                     let key = CalDate.key(day, in: cal)
                     let events = store.events(onKey: key)
@@ -184,7 +192,7 @@ struct WeekView: View {
                             if cal.isDateInToday(day) {
                                 let now = CGFloat(cal.component(.hour, from: Date()) * 60 + cal.component(.minute, from: Date())) / 60 * hourHeight
                                 HStack(spacing: 4) {
-                                    Text(Fmt.clock(Date())).font(W.font(10)).foregroundStyle(.red)
+                                    Text(heyTime(Date())).font(W.font(10)).foregroundStyle(.red)
                                     Rectangle().fill(.red).frame(height: 1).overlay(Rectangle().stroke(style: StrokeStyle(lineWidth: 1, dash: [2])).foregroundStyle(.red))
                                 }
                                 .offset(y: now - 6)
@@ -212,14 +220,13 @@ struct WeekView: View {
                 }
             }
             HStack(spacing: 8) {
-                Text("SOMETIME THIS WEEK:").font(W.font(11)).tracking(1).foregroundStyle(W.mutedForeground)
+                Text("SOMETIME THIS WEEK:").font(W.font(10.5)).tracking(1.155).foregroundStyle(W.tertiary)
                 WButton(icon: "plus", variant: .outline, size: .iconXs, muted: true) { onCreate(CalDate.key(start, in: cal), 9 * 60, 10 * 60, nil) }
                 Spacer()
             }
             .padding(.leading, 4).padding(.vertical, 8)
         }
-        .padding(.horizontal, 4)
-        .background(current ? W.muted40 : Color.clear)
+        .padding(.horizontal, 1)
         .overlay { if current { RoundedRectangle(cornerRadius: W.radiusLg, style: .continuous).strokeBorder(W.border, lineWidth: 1) } }
         .rounded(W.radiusLg)
     }
@@ -231,6 +238,14 @@ struct WeekView: View {
     private func weekdayLabel(_ d: Date) -> String {
         let f = DateFormatter(); f.calendar = cal; f.setLocalizedDateFormatFromTemplate("EEE")
         return f.string(from: d).uppercased()
+    }
+    /// `heyTime` in calendar/scale.ts: "11:34AM", "11AM", or "23:34" — never a space.
+    private func heyTime(_ d: Date) -> String {
+        let h = cal.component(.hour, from: d), m = cal.component(.minute, from: d)
+        if store.prefs.timeFormat == "24h" { return String(format: "%02d:%02d", h, m) }
+        let hh = h % 12 == 0 ? 12 : h % 12
+        let ap = h < 12 ? "AM" : "PM"
+        return m == 0 ? "\(hh)\(ap)" : "\(hh):\(String(format: "%02d", m))\(ap)"
     }
     private func hourLabel(_ h: Int) -> String {
         if store.prefs.timeFormat == "24h" { return String(format: "%02d", h) }

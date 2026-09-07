@@ -127,7 +127,8 @@ struct PageHost: View {
         Group {
             if router.route.fullHeight {
                 page
-                    .padding(.horizontal, 32)
+                    // Full-height pages run edge to edge: the web's card lands at x=292.
+                    .padding(.horizontal, 36)
                     .padding(.top, 16)
                     .padding(.bottom, 12)
             } else {
@@ -138,7 +139,9 @@ struct PageHost: View {
                         .padding(.top, 16)
                         .padding(.bottom, 96)
                 }
-                .scrollIndicators(.automatic)
+                // Browsers overlay their scrollbar; a reserved gutter would shift the
+                // centred column left by half its width.
+                .scrollIndicators(.never)
             }
         }
         .id(router.route)
