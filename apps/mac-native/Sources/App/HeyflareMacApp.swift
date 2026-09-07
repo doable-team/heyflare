@@ -15,6 +15,14 @@ enum Services {
 /// on some Macs, for good. So the window is hosted here, by hand, when the scene has not
 /// produced one; the SwiftUI scene still provides the menu bar.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    override init() {
+        // Browsers draw text without macOS font smoothing, which is why the same weight of
+        // Geist looks heavier in an AppKit window than in the web app. Registering it off
+        // here (rather than writing it) keeps our text the weight the web draws.
+        UserDefaults.standard.register(defaults: ["AppleFontSmoothing": 0])
+        super.init()
+    }
+
     private var hosted: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {

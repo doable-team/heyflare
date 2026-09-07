@@ -259,7 +259,7 @@ struct AlertDialogView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(W.font(16, 600)).foregroundStyle(W.foreground)
+            Text(title).font(W.font(16, 500)).webLine(16, weight: 500).foregroundStyle(W.foreground)
             if let description { Text(description).font(W.sm).foregroundStyle(W.mutedForeground).fixedSize(horizontal: false, vertical: true) }
             HStack(spacing: 8) {
                 Spacer()
@@ -291,7 +291,7 @@ struct FormDialog<Content: View, Footer: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(title).font(W.font(16, 600)).foregroundStyle(W.foreground)
+            Text(title).font(W.font(16, 500)).webLine(16, weight: 500).foregroundStyle(W.foreground)
             if let description { Text(description).font(W.sm).foregroundStyle(W.mutedForeground).padding(.top, 4).fixedSize(horizontal: false, vertical: true) }
             content().padding(.vertical, 20)
             HStack(spacing: 8) { Spacer(); footer() }

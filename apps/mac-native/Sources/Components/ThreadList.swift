@@ -433,7 +433,7 @@ struct ThreadListView: View {
         dialogs.present("bubble", width: 340) {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Bubble up").font(W.font(16, 600)).foregroundStyle(W.foreground)
+                    Text("Bubble up").font(W.font(16, 500)).webLine(16, weight: 500).foregroundStyle(W.foreground)
                     Text("Out of sight until the moment you pick.").font(W.sm).foregroundStyle(W.mutedForeground)
                 }
                 .padding(16).padding(.bottom, 0)

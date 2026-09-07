@@ -174,7 +174,7 @@ struct AssistantChat: View {
                         if store.turns.isEmpty && !store.loading {
                             VStack(spacing: 8) {
                                 Icon("sparkles", size: 24).foregroundStyle(W.mutedForeground).padding(.bottom, 4)
-                                Text("What can I do for you?").font(W.font(16, 500)).foregroundStyle(W.foreground)
+                                Text("What can I do for you?").font(W.font(16, 500)).webLine(16, weight: 500).foregroundStyle(W.foreground)
                                 Text("I can read, search and organise your mail, screen senders, and write drafts for you to send.").font(W.sm).foregroundStyle(W.mutedForeground).multilineTextAlignment(.center)
                                 if notConfigured {
                                     HStack(spacing: 4) {

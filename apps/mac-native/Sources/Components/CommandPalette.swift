@@ -167,8 +167,8 @@ struct ShortcutsOverlay: View {
                 W.overlay.ignoresSafeArea().onTapGesture { ui.shortcutsOpen = false }
                 VStack(alignment: .leading, spacing: 16) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Keyboard shortcuts").font(W.font(16, 600)).foregroundStyle(W.foreground)
-                        Text("The whole app works without a mouse.").font(W.sm).foregroundStyle(W.mutedForeground)
+                        Text("Keyboard shortcuts").font(W.font(16, 500)).webLine(16, weight: 500).foregroundStyle(W.foreground)
+                        Text("The whole app works without a mouse.").font(W.sm).webLine(14).foregroundStyle(W.mutedForeground)
                     }
 // `pt-1` on the grid, over the dialog's `gap-4`.
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 32), GridItem(.flexible(), spacing: 32)], alignment: .leading, spacing: 24) {

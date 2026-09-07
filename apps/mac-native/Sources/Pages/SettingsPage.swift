@@ -55,7 +55,7 @@ struct SettingsSection<Content: View, Actions: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(W.font(16, 600))
+                    Text(title).font(W.font(16, 600)).webLine(16, 24, weight: 600)
                     if let description { Text(description).font(W.s13).foregroundStyle(W.mutedForeground) }
                 }
                 Spacer()
