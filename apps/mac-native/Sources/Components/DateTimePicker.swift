@@ -91,7 +91,7 @@ struct DateTimePicker: View {
 struct TimeSelect: View {
     @Binding var minutes: Int
     @Environment(PopLayerState.self) private var pops
-    private let id = "time-select-\(UUID().uuidString)"
+    @State private var id = "time-select-\(UUID().uuidString)"
 
     var body: some View {
         Button {

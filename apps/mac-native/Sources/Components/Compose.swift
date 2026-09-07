@@ -15,6 +15,11 @@ struct ComposerInitial {
     var bodyHTML = ""
     var quotedHTML = ""
     var title: String? = nil
+    /// Files carried over from an unsent message, so undo/edit keeps them.
+    var attachments: [ComposeAttachmentFile] = []
+    /// A reopened message already carries its signature (the HTML round-trip drops the
+    /// marker class), so it must not get another.
+    var skipSignature = false
 }
 
 /// `ComposeContext`: opens the composer in the right-hand sheet, and runs the undo-send
@@ -26,6 +31,8 @@ enum Compose {
 
     static func open(_ initial: ComposerInitial = ComposerInitial()) {
         let model = ComposerModel(initial: initial)
+        model.onDone = { close() }
+        model.onCancel = { close() }
         current = model
         let title = initial.title ?? (initial.threadID != nil ? "Reply" : "New message")
         SheetState.shared.present(title: title, width: 600, onRequestClose: { Task { await model.saveAndClose() } }) {
@@ -43,7 +50,11 @@ enum Compose {
     }
 
     static func queueSend(_ payload: [String: Any], undoSeconds: Int) {
-        pending?.task.cancel()
+        // A second send inside the undo window fires the first one now; nothing is dropped.
+        if let p = pending {
+            p.task.cancel(); Toasts.shared.dismiss(p.toast); pending = nil
+            Task { await fire(p.payload) }
+        }
         let secs = max(0, undoSeconds)
         if secs <= 0 { Task { await fire(payload) }; return }
         let toastID = Toasts.shared.show("Sending…", description: "Press q to undo within \(secs)s.", duration: Double(secs), action: ("Undo", { undoSend() }))
@@ -79,8 +90,13 @@ enum Compose {
         func addresses(_ v: Any?) -> [Address] {
             (v as? [[String: Any]])?.compactMap { d in (d["email"] as? String).map { Address(email: $0, name: d["name"] as? String ?? "") } } ?? []
         }
+        let files = (payload["attachments"] as? [[String: Any]])?.compactMap { d -> ComposeAttachmentFile? in
+            guard let name = d["filename"] as? String, let b64 = d["data_base64"] as? String, let data = Data(base64Encoded: b64) else { return nil }
+            return ComposeAttachmentFile(filename: name, mimeType: d["mime_type"] as? String ?? "application/octet-stream", data: data)
+        } ?? []
         return ComposerInitial(draftID: payload["draft_id"] as? String, accountID: payload["account_id"] as? String, threadID: payload["thread_id"] as? String, replyToMessageID: payload["reply_to_message_id"] as? String,
-                               to: addresses(payload["to"]), cc: addresses(payload["cc"]), bcc: addresses(payload["bcc"]), subject: payload["subject"] as? String ?? "", bodyHTML: payload["body_html"] as? String ?? "", title: title)
+                               to: addresses(payload["to"]), cc: addresses(payload["cc"]), bcc: addresses(payload["bcc"]), subject: payload["subject"] as? String ?? "", bodyHTML: payload["body_html"] as? String ?? "", title: title,
+                               attachments: files, skipSignature: true)
     }
 }
 
@@ -128,6 +144,7 @@ final class ComposerModel {
         showCc = !initial.cc.isEmpty; showBcc = !initial.bcc.isEmpty
         subject = initial.subject
         draftID = initial.draftID
+        attachments = initial.attachments
     }
 
     var isReply: Bool { initial.threadID != nil }
@@ -140,13 +157,24 @@ final class ComposerModel {
     func prepare(app: AppState) {
         if accountID.isEmpty, let a = app.scopedAccount ?? app.accounts.first { accountID = a.id }
         guard !signatureApplied else { return }
-        signatureApplied = true
+        let wantsSignature = initial.draftID == nil && !initial.skipSignature
+        let acct = account(in: app)
+        if acct != nil || !wantsSignature { signatureApplied = true }
+        // The body goes in straight away; if accounts are still loading the signature
+        // follows once they arrive, unless typing has started by then.
+        if bodySeeded && (dirty || !signatureApplied) { return }
         var html = initial.bodyHTML
-        if initial.draftID == nil, let sig = account(in: app)?.signature, !sig.isEmpty, !html.contains("hey-signature") {
+        if wantsSignature, let sig = acct?.signature, !sig.isEmpty, !html.contains("hey-signature") {
             html += "<br><br><div class=\"hey-signature\">\(sig)</div>"
         }
+        bodySeeded = true
         editor.setHTML(html)
+        // Seeding is not an edit: nothing gets autosaved until the person types.
+        dirty = false
+        autosave?.cancel()
     }
+    private var bodySeeded = false
+    private var resaveNeeded = false
 
     func markDirty() {
         dirty = true
@@ -154,8 +182,16 @@ final class ComposerModel {
         autosave = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.8))
             guard !Task.isCancelled, let self, self.dirty, !self.busy else { return }
+            // From here the save must finish even if typing resumes; a cancelled request
+            // can leave a draft on the server the client never hears about.
+            self.autosave = nil
             _ = await self.saveDraft()
         }
+    }
+
+    /// Lets a save that is already on the wire finish before the payload is read.
+    private func settleSave() async {
+        while saveState == .saving { try? await Task.sleep(for: .milliseconds(50)) }
     }
 
     func isEmpty(app: AppState) -> Bool {
@@ -191,7 +227,11 @@ final class ComposerModel {
     @discardableResult
     func saveDraft(quiet: Bool = true) async -> String? {
         guard let app = Mail.app, !isEmpty(app: app) else { return nil }
+        // One request at a time: a save landing while another is out re-runs afterwards
+        // instead of racing it (which is how duplicate drafts appear).
+        if saveState == .saving { resaveNeeded = true; await settleSave(); return draftID }
         saveState = .saving
+        var result: String?
         do {
             if let id = draftID {
                 _ = try await APIClient.shared.updateDraft(id, body: draftBody())
@@ -201,13 +241,14 @@ final class ComposerModel {
             dirty = false
             saveState = .saved(Date())
             if !quiet { Toasts.shared.success("Draft saved") }
-            return draftID
+            result = draftID
         } catch {
             let msg = (error as? APIError)?.errorDescription ?? error.localizedDescription
             saveState = .error(msg)
             if !quiet { Toasts.shared.error(msg) }
-            return nil
         }
+        if resaveNeeded { resaveNeeded = false; return await saveDraft(quiet: quiet) }
+        return result
     }
 
     private func validate(app: AppState) -> Bool {
@@ -229,7 +270,14 @@ final class ComposerModel {
         let undo = app.user?.settings.undoSendSeconds ?? 10
         dirty = false
         autosave?.cancel()
-        Compose.queueSend(payload(), undoSeconds: undo)
+        // The body is read now, while the editor is still on screen; a draft save still on
+        // the wire only has to land before the send so it carries the draft's id.
+        var p = payload()
+        Task {
+            await settleSave()
+            p["draft_id"] = draftID as Any
+            Compose.queueSend(p, undoSeconds: undo)
+        }
         onDone?()
     }
 
@@ -237,6 +285,7 @@ final class ComposerModel {
         guard let app = Mail.app, validate(app: app) else { return }
         busy = true
         defer { busy = false }
+        await settleSave()
         do {
             _ = try await APIClient.shared.send(payload(sendAt: at.timeIntervalSince1970 * 1000))
             dirty = false
@@ -283,6 +332,8 @@ final class ComposerModel {
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             guard let data = try? Data(contentsOf: url) else { continue }
+            // The worker keeps the first ten silently; say so here instead.
+            if attachments.count >= 10 { Toasts.shared.error("Up to 10 attachments per message."); break }
             if total + data.count > cap { Toasts.shared.error("Attachments are capped at 20 MB total."); break }
             total += data.count
             let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
@@ -342,7 +393,7 @@ struct ComposerView: View {
                     .padding(.vertical, 6)
                     .edgeLine(.bottom)
 
-                    RichTextEditor(controller: model.editor, height: $editorHeight, placeholder: "Write something…", onEdit: { model.markDirty() })
+                    RichTextEditor(controller: model.editor, height: $editorHeight, placeholder: "Write something…", autoFocus: model.isReply, onEdit: { model.markDirty() })
                         .frame(minHeight: inline ? 120 : 200)
                         .frame(height: max(editorHeight, inline ? 120 : 200))
                         .padding(.top, 12)
@@ -413,7 +464,7 @@ struct ComposerView: View {
         .task {
             while !Task.isCancelled { try? await Task.sleep(for: .seconds(5)); tick += 1 }
         }
-        .onKeys(["Escape": { model.onCancel?() }], enabled: inline, priority: 20)
+        .onKeys(["Escape": { Task { await model.saveAndClose() } }], enabled: inline, priority: 20)
     }
 
     private func rowLabel(_ t: String) -> some View {
@@ -744,9 +795,19 @@ final class RichTextController {
     func setHTML(_ html: String) {
         guard let tv = textView else { pendingHTML = html; return }
         tv.textStorage?.setAttributedString(attributed(from: html))
-        tv.didChangeText()
+        // Not `didChangeText()`: seeding the body is not an edit and must not autosave.
+        tv.needsDisplay = true
+        onContentSet?()
     }
     var pendingHTML: String?
+    /// The editor re-measures its height after the content is replaced programmatically.
+    var onContentSet: (() -> Void)?
+
+    func focus() {
+        guard let tv = textView else { return }
+        tv.window?.makeFirstResponder(tv)
+        tv.setSelectedRange(NSRange(location: 0, length: 0))
+    }
 
     func attributed(from html: String) -> NSAttributedString {
         let out = NSMutableAttributedString()
@@ -891,6 +952,7 @@ struct RichTextEditor: NSViewRepresentable {
     let controller: RichTextController
     @Binding var height: CGFloat
     var placeholder = ""
+    var autoFocus = false
     var onEdit: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -921,8 +983,17 @@ struct RichTextEditor: NSViewRepresentable {
         tv.typingAttributes = [.font: controller.baseFont, .foregroundColor: NSColor(W.foreground)]
         scroll.documentView = tv
         controller.textView = tv
+        let coordinator = context.coordinator
+        controller.onContentSet = { [weak tv] in
+            guard let tv else { return }
+            DispatchQueue.main.async { coordinator.measure(tv) }
+        }
         if let pending = controller.pendingHTML { controller.pendingHTML = nil; controller.setHTML(pending) }
-        DispatchQueue.main.async { context.coordinator.measure(tv) }
+        DispatchQueue.main.async {
+            coordinator.measure(tv)
+            // Replies land in the body, as on the web; a new message starts in "To".
+            if autoFocus { controller.focus() }
+        }
         return scroll
     }
 

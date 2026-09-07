@@ -46,6 +46,8 @@ struct Sidebar: View {
     @Environment(UIState.self) private var ui
     @Environment(PopLayerState.self) private var pops
     @Environment(Toasts.self) private var toasts
+    @Environment(SheetState.self) private var sheet
+    @Environment(DialogState.self) private var dialogs
 
     private var collapsed: Bool { !ui.sidebarOpen }
 
@@ -106,7 +108,7 @@ struct Sidebar: View {
         .onKeys([
             "ArrowLeft": { if ui.region == .content && !ui.assistantOpen { focusSidebar() } else if ui.assistantOpen && ui.region != .sidebar { ui.closeAssistant() } },
             "ArrowRight": { if ui.region == .sidebar { activateFocused() } else { ui.openAssistant() } },
-        ], priority: -5)
+        ], enabled: !sheet.isOpen && !dialogs.isOpen, priority: -5)
         .onKeys([
             "ArrowDown": { ui.sidebarFocusIndex = (ui.sidebarFocusIndex + 1) % max(flatNav.count, 1) },
             "ArrowUp": { ui.sidebarFocusIndex = (ui.sidebarFocusIndex - 1 + flatNav.count) % max(flatNav.count, 1) },

@@ -27,6 +27,9 @@ struct AssistantPanel: View {
     @Environment(Router.self) private var router
     @Environment(PopLayerState.self) private var pops
     @State private var list = AssistantListStore()
+    /// Changes only when a person picks another conversation or starts a new chat — not when
+    /// the server names a fresh one, which would throw away the stream in progress.
+    @State private var chatKey = 0
 
     private var title: String {
         if let id = ui.assistantConversationID { return list.conversations.first { $0.id == id }?.displayTitle ?? "Untitled" }
@@ -51,17 +54,20 @@ struct AssistantPanel: View {
                 .buttonStyle(.plain)
                 .popAnchor("assistant-convs")
                 Spacer()
-                WButton(icon: "squarePen", variant: .ghost, size: .iconSm, muted: true, help: "New chat") { ui.newChat() }
+                WButton(icon: "squarePen", variant: .ghost, size: .iconSm, muted: true, help: "New chat") { ui.newChat(); chatKey += 1 }
                 WButton(icon: "x", variant: .ghost, size: .iconSm, muted: true, help: "Close  ⌘J") { ui.closeAssistant() }
             }
             .padding(.leading, 8).padding(.trailing, 6)
             .frame(height: 44)
             .edgeLine(.bottom)
             AssistantChat(conversationID: ui.assistantConversationID, configured: list.settings?.configured, autoSend: list.settings?.autoSend ?? false)
-                .id(ui.assistantConversationID ?? "new")
+                .id(chatKey)
         }
         .background(W.background)
         .task { await list.load() }
+        // A chat started here gets its id from the stream; the switcher must learn about it.
+        .onChange(of: ui.assistantConversationID) { _, id in if id != nil { Task { await list.refresh() } } }
+        .onChange(of: pops.isOpen("assistant-convs")) { _, open in if open { Task { await list.refresh() } } }
         .onAppear {
             if case .thread(let id, _) = router.route, let chip = ui.currentThread, chip.id == id { ui.addContext(chip) }
         }
@@ -79,11 +85,11 @@ struct AssistantPanel: View {
                         if gi > 0 { MenuSeparator() }
                         MenuLabel(g.label)
                         ForEach(g.items) { c in
-                            ConversationRow(conversation: c, current: c.id == ui.assistantConversationID, onPick: { pops.closeAll(); ui.assistantConversationID = c.id }, onDelete: {
+                            ConversationRow(conversation: c, current: c.id == ui.assistantConversationID, onPick: { pops.closeAll(); if ui.assistantConversationID != c.id { ui.assistantConversationID = c.id; chatKey += 1 } }, onDelete: {
                                 Task {
                                     await list.delete(c.id)
                                     Toasts.shared.show("Deleted")
-                                    if ui.assistantConversationID == c.id { ui.newChat() }
+                                    if ui.assistantConversationID == c.id { ui.newChat(); chatKey += 1 }
                                 }
                             })
                         }

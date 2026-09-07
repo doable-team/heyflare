@@ -38,6 +38,7 @@ struct ContactsPage: View {
             }
         }
         .task { await store.load() }
+        .syncsWithMail { await store.load() }
         .onChange(of: store.query) { _, _ in store.scheduleSearch() }
     }
 }
@@ -252,6 +253,7 @@ struct ContactDetailPage: View {
                 }
             }
             .onKeys(["Escape": { router.back() }])
+            .syncsWithMail { await store.load(id: contactID) }
         } else {
             PageColumn { SkeletonBlock(width: 80, height: 24).padding(.bottom, 24); HStack(spacing: 16) { SkeletonBlock(width: 40, height: 40, radius: 4); VStack(alignment: .leading, spacing: 12) { SkeletonBlock(width: 280, height: 28); SkeletonBlock(width: 200, height: 16) } } }
                 .task { await store.load(id: contactID) }
@@ -513,6 +515,7 @@ struct CollectionDetailPage: View {
                 if d.files.isEmpty { Text("No attachments in these threads.").font(W.s13).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 12) }
                 else { FileGrid(files: d.files, cursor: -1) }
             }
+            .syncsWithMail { await store.load(id: collectionID) }
         } else {
             PageColumn { SkeletonBlock(width: 96, height: 24).padding(.bottom, 24); SkeletonBlock(width: 320, height: 32).padding(.bottom, 12); SkeletonBlock(width: 200, height: 16) }
                 .task { await store.load(id: collectionID) }
@@ -761,7 +764,7 @@ struct LabelThreadsPage: View {
             }
             ThreadListView(sections: [ListSection(threads: store.threads, emptyTitle: "Nothing wears this label yet.", emptyBody: "Select a thread and press b to tag it.")], loading: store.loading && store.threads.isEmpty, error: store.error, onRetry: { Task { await store.load(id: labelID) } }, showBucket: true, emptyIcon: "tag")
         }
-        .task { await labels.load(); await store.load(id: labelID) }
+        .task { async let a: () = labels.load(); async let b: () = store.load(id: labelID); _ = await (a, b) }
         .syncsWithMail { await store.load(id: labelID) }
     }
 }

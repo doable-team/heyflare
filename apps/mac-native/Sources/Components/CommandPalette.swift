@@ -130,7 +130,7 @@ struct CommandPalette: View {
                 "ArrowDown": { selected = min(selected + 1, max(items.count - 1, 0)) },
                 "ArrowUp": { selected = max(selected - 1, 0) },
                 "Enter": { if items.indices.contains(selected) { let i = items[selected]; close(); i.run() } else if !q.isEmpty { close(); router.go(.search(q)) } },
-            ], priority: 60)
+            ], priority: 60, whileTyping: true)
             .blockKeys()
         }
     }

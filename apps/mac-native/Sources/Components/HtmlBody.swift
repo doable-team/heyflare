@@ -34,6 +34,8 @@ struct HtmlBodyView: View {
             }
             ZStack(alignment: .topLeading) {
                 MessageWebView(document: document, controller: controller, height: $height, ready: $ready, quoteCount: $quoteCount, selection: $selection, onLink: { NSWorkspace.shared.open($0) })
+                    // A theme switch reloads the document, and the script collapses quotes again.
+                    .onChange(of: scheme) { _, _ in quotesShown = false }
                     .frame(height: max(height, ready ? 0 : 48))
                     .padding(slab ? 8 : 0)
                     .background(slab ? Color.white : Color.clear)

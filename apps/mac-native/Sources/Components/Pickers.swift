@@ -92,6 +92,7 @@ struct TogglePicker: View {
         }
         .frame(width: 256)
         .onAppear { if !seeded { local = current; seeded = true } }
+        .onChange(of: current) { _, c in local = c }
     }
 }
 

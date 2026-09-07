@@ -126,8 +126,8 @@ final class Router {
 @MainActor
 @Observable
 final class UIState {
-    var sidebarOpen = true
-    var moreOpen = false
+    var sidebarOpen = UserDefaults.standard.object(forKey: "hey.rail") as? Bool ?? true { didSet { UserDefaults.standard.set(sidebarOpen, forKey: "hey.rail") } }
+    var moreOpen = UserDefaults.standard.bool(forKey: "hey.more") { didSet { UserDefaults.standard.set(moreOpen, forKey: "hey.more") } }
     var paletteOpen = false
     var shortcutsOpen = false
     /// Keyboard focus region: the sidebar owns ↑↓↵ while it is focused.
@@ -141,7 +141,12 @@ final class UIState {
     /// The thread on screen, for the assistant's context chip.
     var currentThread: ContextChip?
     /// A view the page pins to the bottom of the content area (piles, the thread's action bar).
-    var dock: AnyView?
+    private(set) var dock: AnyView?
+    private var dockOwner = ""
+
+    /// Pages appear and disappear in no fixed order, so a page clears only what it set.
+    func setDock(_ view: AnyView?, owner: String) { dock = view; dockOwner = owner }
+    func clearDock(owner: String) { if dockOwner == owner { dock = nil; dockOwner = "" } }
     /// An event prefilled from a thread, consumed by the calendar when it opens.
     var pendingEvent: EventDraft?
 

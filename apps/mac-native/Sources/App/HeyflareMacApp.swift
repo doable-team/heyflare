@@ -24,7 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { openHostedWindow() }
+        // Opening the hosted window is the whole reopen; letting SwiftUI add a WindowGroup
+        // window too would run a second RootHost.
+        if !flag { openHostedWindow(); return false }
         return true
     }
 
@@ -40,6 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
         window.isRestorable = false
+        window.isReleasedWhenClosed = false
+        window.setFrameAutosaveName("heyflare.main")
         window.minSize = NSSize(width: 960, height: 600)
         window.title = "heyflare"
         window.contentView = NSHostingView(rootView: RootHost(app: Services.app, router: Services.router, ui: Services.ui))

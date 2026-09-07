@@ -101,8 +101,9 @@ struct BubbleUpPage: View {
     private func cancel(_ t: ThreadSummary) {
         leaving.insert(t.id)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            Mail.bulk([t.id], .bubbleUp(nil), toast: "Back in the Imbox now") { _ = store.remove(t.id) }
+            _ = store.remove(t.id)
             leaving.remove(t.id)
+            Mail.bulk([t.id], .bubbleUp(nil), toast: "Back in the Imbox now")
         }
     }
 }

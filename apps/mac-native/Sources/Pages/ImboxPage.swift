@@ -55,11 +55,11 @@ struct ImboxPage: View {
             .task { await store.load() }
             .syncsWithMail { await store.refresh() }
             .onKeys(["o": { if newCount > 0 { router.go(.powerThrough) } }], enabled: ui.region == .content, priority: -1)
-            .onAppear { ui.dock = AnyView(Piles(replyLater: store.data.replyLater, setAside: store.data.setAside)) }
+            .onAppear { ui.setDock(AnyView(Piles(replyLater: store.data.replyLater, setAside: store.data.setAside)), owner: "imbox") }
             .onChange(of: store.data.replyLater.map(\.id) + store.data.setAside.map(\.id)) { _, _ in
-                ui.dock = AnyView(Piles(replyLater: store.data.replyLater, setAside: store.data.setAside))
+                ui.setDock(AnyView(Piles(replyLater: store.data.replyLater, setAside: store.data.setAside)), owner: "imbox")
             }
-            .onDisappear { ui.dock = nil }
+            .onDisappear { ui.clearDock(owner: "imbox") }
         }
     }
 

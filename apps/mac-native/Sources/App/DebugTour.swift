@@ -24,24 +24,80 @@ enum DebugTour {
             if let user = try? await APIClient.shared.login(email: email, password: password).user { await app.adopt(user: user) }
         }
         guard case .signedIn = app.phase else { return }
+        // Typed keys only reach a field when the window is key; the launch from a shell
+        // does not always bring the app forward.
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.first { $0.isVisible }?.makeKeyAndOrderFront(nil)
         await pause(3)
+        check("window is key", NSApp.keyWindow != nil, dir)
         await snap("02-imbox", dir)
+
+        // Keyboard cursor over the list.
+        KeyBus.shared.simulate("j"); KeyBus.shared.simulate("j")
+        await pause(0.5)
+        await snap("02b-cursor", dir)
 
         if let thread = (try? await APIClient.shared.imbox()).flatMap({ $0.seenThreads.first ?? $0.newThreads.first }) {
             router.go(.thread(thread.id, peek: false))
             await pause(3)
             await snap("03-thread", dir)
+            // Reply later and back, checking the toast and the thread's state follow.
+            KeyBus.shared.simulate("l")
+            await pause(1.5)
+            await snap("03b-reply-later", dir)
+            check("reply-later toast", Toasts.shared.items.contains { $0.title.contains("Reply Later") }, dir)
+            if let d = try? await APIClient.shared.thread(thread.id, peek: true) { check("reply-later applied", d.summary.replyLater, dir) }
+            KeyBus.shared.simulate("l")
+            await pause(1.5)
+            let draftsBefore = (try? await APIClient.shared.drafts())?.count ?? -1
             KeyBus.shared.simulate("r")
-            await pause(2)
+            await pause(2.5)
             await snap("04-reply", dir)
+            // Opening a reply is not an edit: nothing may be autosaved yet.
+            check("reply open saves nothing", (try? await APIClient.shared.drafts())?.count == draftsBefore, dir)
+            check("reply focuses body", KeyBus.isTyping(), dir)
+            // Type into the inline reply's body (the reply focuses it) and let it autosave.
+            type("Thanks, will do.")
+            await pause(2.5)
+            await snap("04b-reply-typed", dir)
+            check("inline reply model", Compose.current != nil, dir)
+            check("inline reply typed", Compose.current?.editor.plainText().contains("Thanks, will do.") == true, dir)
+            KeyBus.shared.simulate("Escape")
+            await pause(1.5)
+            check("reply escape closes", Compose.current == nil, dir)
+            let replyDrafts = (try? await APIClient.shared.drafts()) ?? []
+            check("reply draft saved on escape", replyDrafts.count == draftsBefore + 1, dir)
+            for d in replyDrafts where d.subject.hasPrefix("Re: ") && d.threadID == thread.id { try? await APIClient.shared.deleteDraft(d.id) }
             router.go(.imbox)
             await pause(1)
         }
         Compose.open()
         await pause(2)
         await snap("05-compose", dir)
-        Compose.close()
-        await pause(1)
+        // Recipient autocomplete → chip → subject → body → autosave → close saves a draft.
+        type("marc")
+        await pause(1.5)
+        await snap("05b-suggest", dir)
+        key(36) // return: takes the suggestion
+        await pause(0.5)
+        check("recipient chip", Compose.current?.to.first?.email.contains("marcus") == true, dir)
+        key(48) // tab → subject
+        await pause(0.3)
+        type("Tour draft")
+        key(48) // tab → body
+        await pause(0.3)
+        type("Written by the tour.")
+        await pause(2.5)
+        await snap("05c-filled", dir)
+        check("subject typed", Compose.current?.subject == "Tour draft", dir)
+        check("body typed", Compose.current?.editor.plainText().contains("Written by the tour") == true, dir)
+        check("draft autosaved", Compose.current?.draftID != nil, dir)
+        KeyBus.shared.simulate("Escape")
+        await pause(2)
+        check("sheet closed", !SheetState.shared.isOpen, dir)
+        let drafts = (try? await APIClient.shared.drafts()) ?? []
+        check("draft on server", drafts.contains { $0.subject == "Tour draft" }, dir)
+        for d in drafts where d.subject == "Tour draft" { try? await APIClient.shared.deleteDraft(d.id) }
         for (name, route) in [("06-feed", AppRoute.feed), ("07-paper-trail", .paperTrail), ("08-screener", .screener), ("09-reply-later", .replyLater), ("10-set-aside", .setAside), ("11-calendar", .calendar), ("12-contacts", .contacts), ("13-files", .files), ("14-settings", .settings("profile")), ("15-drafts", .drafts)] {
             router.go(route)
             await pause(2)
@@ -52,7 +108,15 @@ enum DebugTour {
         ui.paletteOpen = true
         await pause(1.5)
         await snap("16-palette", dir)
+        type("feed")
+        await pause(0.8)
+        await snap("16b-palette-typed", dir)
+        KeyBus.shared.simulate("Enter")
+        await pause(1)
+        check("palette enter navigates", router.route == .feed, dir)
         ui.paletteOpen = false
+        router.go(.imbox)
+        await pause(1)
         ui.openAssistant()
         await pause(2)
         await snap("17-assistant", dir)
@@ -66,6 +130,28 @@ enum DebugTour {
     }
 
     private static func pause(_ seconds: Double) async { try? await Task.sleep(for: .seconds(seconds)) }
+
+    /// Real key presses through the event queue, so text fields and text views receive them.
+    private static func type(_ text: String) {
+        for ch in text { key(0, String(ch)) }
+    }
+
+    private static func key(_ code: UInt16, _ chars: String = "") {
+        guard let window = NSApp.keyWindow ?? NSApp.windows.first else { return }
+        for kind in [NSEvent.EventType.keyDown, .keyUp] {
+            if let e = NSEvent.keyEvent(with: kind, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code) {
+                NSApp.postEvent(e, atStart: false)
+            }
+        }
+    }
+
+    /// Appends a pass/fail line to results.txt.
+    private static func check(_ name: String, _ ok: Bool, _ dir: URL) {
+        let line = "\(ok ? "PASS" : "FAIL") \(name)\n"
+        let url = dir.appendingPathComponent("results.txt")
+        if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close() }
+        else { try? line.write(to: url, atomically: true, encoding: .utf8) }
+    }
 
     private static func snap(_ name: String, _ dir: URL) async {
         await pause(0.3)

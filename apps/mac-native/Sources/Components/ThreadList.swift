@@ -270,6 +270,13 @@ struct ThreadListView: View {
         }
     }
     private var items: [ListItem] { sectionItems.flatMap { $0 } }
+    /// Where each section's rows start in the flat cursor order.
+    private var sectionOffsets: [Int] {
+        var out: [Int] = []
+        var n = 0
+        for rows in sectionItems { out.append(n); n += rows.count }
+        return out
+    }
     private var curThread: ThreadSummary? {
         guard cursor >= 0, cursor < items.count, case .thread(let t) = items[cursor] else { return nil }
         return t
@@ -288,7 +295,7 @@ struct ThreadListView: View {
                         act(Array(selected), action, msg, removes: removes)
                     }
                 }
-                var index = 0
+                let offsets = sectionOffsets
                 ForEach(Array(sections.enumerated()), id: \.offset) { si, s in
                     VStack(alignment: .leading, spacing: 0) {
                         if let title = s.title {
@@ -300,8 +307,7 @@ struct ThreadListView: View {
                             else { Text("Nothing here.").font(W.s13).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 12) }
                         } else {
                             let rows = sectionItems[si]
-                            let base = index
-                            let _ = { index += rows.count }()
+                            let base = offsets[si]
                             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                                 if groupByMonth {
                                     ForEach(monthGroups(rows), id: \.month) { g in
@@ -324,15 +330,17 @@ struct ThreadListView: View {
         }
         .onKeys([
             "j": { step(1) }, "k": { step(-1) }, "ArrowDown": { step(1) }, "ArrowUp": { step(-1) },
-            "Enter": { open() }, "o": { open() },
             "x": { if let t = curThread { toggle(t.id, shift: false) } },
             "l": { act(targets(), .replyLater(true), "Added to Reply Later") },
             "a": { act(targets(), .setAside(true), "Set aside") },
             "z": { let ids = targets(); if !ids.isEmpty { bubble(ids) } },
             "#": { act(targets(), .move(.trash), "Moved to trash") },
             "u": { act(targets(), .markUnread, nil, removes: false) },
-            "Escape": { selected = [] },
         ], enabled: keysEnabled && ui.region == .content)
+        // A bound key is a claimed key, so these only bind while they have something to
+        // do: the Imbox's own `o` and a page's Escape get through otherwise.
+        .onKeys(["Enter": { open() }, "o": { open() }], enabled: keysEnabled && ui.region == .content && cursor >= 0 && cursor < items.count)
+        .onKeys(["Escape": { selected = [] }], enabled: keysEnabled && ui.region == .content && !selected.isEmpty)
         .onChange(of: all.map(\.id)) { _, ids in
             selected = selected.filter { ids.contains($0) }
             if cursor >= items.count { cursor = items.count - 1 }
@@ -360,7 +368,10 @@ struct ThreadListView: View {
         switch item {
         case .bundle(let b):
             BundleRowView(bundle: b, compact: compact, focused: i == cursor && ui.region == .content) { b in
-                Task { await Mail.raw(b.latest.id, ["action": "bundle_seen"]); Mail.invalidate(); Toasts.shared.show("Marked \(b.name.isEmpty ? b.email : b.name) as seen") }
+                Task {
+                    do { try await APIClient.shared.markBundleSeen(b.id); Mail.invalidate(); Toasts.shared.show("Marked \(b.name.isEmpty ? b.email : b.name) as seen") }
+                    catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+                }
             }
             .id(item.id)
         case .thread(let t):

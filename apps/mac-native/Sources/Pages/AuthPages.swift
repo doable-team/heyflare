@@ -45,13 +45,26 @@ struct ServerSetupPage: View {
         guard let url = ServerConfig.normalize(address) else { error = "That does not look like a web address."; return }
         checking = true; defer { checking = false }
         error = nil
-        await app.setServer(url)
+        // Probe first, commit after: `setServer` swaps this page out for the login page at
+        // once, so a bad address must be caught while this view is still on screen.
+        let previous = ServerConfig.shared.baseURL
+        ServerConfig.shared.baseURL = url
+        await APIClient.shared.clearCookies()
         do {
             _ = try await APIClient.shared.me()
-            await app.loadSession()
-        } catch let e as APIError {
-            if e.isAuthFailure { await app.loadSession() } else { error = e.errorDescription; ServerConfig.shared.baseURL = nil; await app.start() }
-        } catch { self.error = error.localizedDescription }
+        } catch let e as APIError where !e.isAuthFailure {
+            ServerConfig.shared.baseURL = previous
+            error = e.errorDescription
+            return
+        } catch let e as APIError where e.isAuthFailure {
+            // Reachable, just signed out: that is a server.
+        } catch {
+            ServerConfig.shared.baseURL = previous
+            self.error = error.localizedDescription
+            return
+        }
+        await app.setServer(url)
+        await app.loadSession()
     }
 }
 

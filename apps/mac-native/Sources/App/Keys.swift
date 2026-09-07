@@ -11,6 +11,8 @@ final class KeyBus {
     struct Handler {
         let id: UUID
         let priority: Int
+        /// Overlays with their own text field (the palette) still want ↑ ↓ ↵ while typing.
+        let whileTyping: Bool
         let handle: (KeyEvent) -> Bool
     }
 
@@ -33,17 +35,17 @@ final class KeyBus {
             let e = KeyEvent(key: key, meta: event.modifierFlags.contains(.command), shift: event.modifierFlags.contains(.shift), typing: typing, nsEvent: event)
             // ⌘-shortcuts belong to the menu bar; ⌥ and ⌃ are left alone too.
             if event.modifierFlags.contains(.command) || event.modifierFlags.contains(.option) || event.modifierFlags.contains(.control) { return event }
-            if typing && key != "Escape" { return event }
             for h in self.handlers.sorted(by: { $0.priority > $1.priority }) {
+                if typing && key != "Escape" && !h.whileTyping { continue }
                 if h.handle(e) { return nil }
             }
             return event
         }
     }
 
-    func register(priority: Int, _ handle: @escaping (KeyEvent) -> Bool) -> UUID {
+    func register(priority: Int, whileTyping: Bool = false, _ handle: @escaping (KeyEvent) -> Bool) -> UUID {
         let id = UUID()
-        handlers.append(Handler(id: id, priority: priority, handle: handle))
+        handlers.append(Handler(id: id, priority: priority, whileTyping: whileTyping, handle: handle))
         return id
     }
 
@@ -53,9 +55,10 @@ final class KeyBus {
 
     /// The web's `isTyping`: a text field or text view has focus.
     static func isTyping() -> Bool {
-        guard let responder = NSApp.keyWindow?.firstResponder else { return false }
+        guard let responder = (NSApp.keyWindow ?? NSApp.mainWindow)?.firstResponder else { return false }
         if responder is NSTextView { return true }
-        if responder is NSTextField { return true }
+        // Text fields, date pickers and the like: any control that eats keys.
+        if responder is NSControl { return true }
         return false
     }
 
@@ -87,6 +90,7 @@ struct KeysModifier: ViewModifier {
     let map: [String: () -> Void]
     let enabled: Bool
     let priority: Int
+    let whileTyping: Bool
     @State private var id: UUID?
 
     func body(content: Content) -> some View {
@@ -100,7 +104,7 @@ struct KeysModifier: ViewModifier {
         if let id { KeyBus.shared.unregister(id); self.id = nil }
         guard enabled else { return }
         let map = self.map
-        id = KeyBus.shared.register(priority: priority) { e in
+        id = KeyBus.shared.register(priority: priority, whileTyping: whileTyping) { e in
             guard let fn = map[e.key] else { return false }
             fn()
             return true
@@ -110,7 +114,7 @@ struct KeysModifier: ViewModifier {
 
 extension View {
     /// Keys the page answers to. Higher priority wins when several views are listening.
-    func onKeys(_ map: [String: () -> Void], enabled: Bool = true, priority: Int = 0) -> some View {
-        modifier(KeysModifier(map: map, enabled: enabled, priority: priority))
+    func onKeys(_ map: [String: () -> Void], enabled: Bool = true, priority: Int = 0, whileTyping: Bool = false) -> some View {
+        modifier(KeysModifier(map: map, enabled: enabled, priority: priority, whileTyping: whileTyping))
     }
 }

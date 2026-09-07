@@ -6,6 +6,7 @@ import SwiftUI
 struct CalendarPage: View {
     @Environment(UIState.self) private var ui
     @Environment(SheetState.self) private var sheet
+    @Environment(DialogState.self) private var dialogs
     @State private var store = CalendarStore()
     @State private var view = "week"
     @State private var cursor: String = CalDate.todayKey
@@ -35,7 +36,7 @@ struct CalendarPage: View {
             "t": { cursor = CalDate.todayKey }, "d": { view = "days" }, "w": { view = "week" }, "y": { view = "year" },
             "n": { create(day: cursor, start: 9 * 60, end: 10 * 60) },
             "PageUp": { cursor = CalDate.addingDays(-7, toKey: cursor, in: cal) }, "PageDown": { cursor = CalDate.addingDays(7, toKey: cursor, in: cal) },
-        ], enabled: ui.region == .content)
+        ], enabled: ui.region == .content && !sheet.isOpen && !dialogs.isOpen)
     }
 
     private func ensure() async {
@@ -119,7 +120,8 @@ struct WeekStack: View {
     private func weekStart(_ offset: Int) -> Date {
         let d = CalDate.date(fromKey: cursor, in: cal) ?? Date()
         let weekday = cal.component(.weekday, from: d) - 1
-        let ws = store.prefs.weekStart
+        // Before prefs load `weekStart` is -1; `cal` already carries the resolved first weekday.
+        let ws = cal.firstWeekday - 1
         let back = (weekday - ws + 7) % 7
         let start = cal.date(byAdding: .day, value: -back, to: cal.startOfDay(for: d)) ?? d
         return cal.date(byAdding: .day, value: offset * 7, to: start) ?? start

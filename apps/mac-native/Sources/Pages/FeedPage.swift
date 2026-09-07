@@ -164,7 +164,7 @@ struct BundlePage: View {
                         .font(W.s13).monospacedDigit().foregroundStyle(W.mutedForeground)
                     }
                     Spacer()
-                    if b.isOpen {
+                    if b.isOpen && !store.closed {
                         WButton("Mark as seen", icon: "check", variant: .outline, size: .sm) { Task { _ = await store.markAllSeen(bundleID); Mail.invalidate(); toasts.show("Marked as seen") } }
                     } else {
                         WButton("Mark unread", icon: "mailOpen", variant: .outline, size: .sm) { Task { try? await APIClient.shared.markBundleUnseen(bundleID); await store.refresh(bundleID); Mail.invalidate(); toasts.show("Marked unread") } }
@@ -172,7 +172,7 @@ struct BundlePage: View {
                     WButton("Unbundle", icon: "ungroup", variant: .ghost, size: .sm, muted: true) {
                         dialogs.confirm(title: "Unbundle these messages?", description: "The \(b.threadCount) \(b.threadCount == 1 ? "thread" : "threads") in this bundle go back to being separate rows. The sender stays bundled for future mail; turn that off on their contact page.", action: "Unbundle") {
                             Task {
-                                try? await APIClient.shared.postIgnoringResult("/api/bundles/\(bundleID)/dissolve")
+                                do { try await APIClient.shared.delete("/api/bundles/\(bundleID)") } catch { toasts.error((error as? APIError)?.errorDescription ?? error.localizedDescription); return }
                                 Mail.invalidate(); toasts.show("Unbundled")
                                 router.go(b.latest.bucket == .paperTrail ? .paperTrail : .imbox)
                             }

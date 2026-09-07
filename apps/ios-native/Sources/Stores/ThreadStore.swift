@@ -41,6 +41,14 @@ final class ThreadStore {
         }
     }
 
+    /// Fetches again without touching what is on screen until the answer is back. `load`
+    /// returns early once a detail is held; this is for a change made elsewhere.
+    func reload(_ id: String) async {
+        guard let value = try? await APIClient.shared.thread(id, peek: true) else { return }
+        detail = value
+        ContentCache.shared.store(value, for: .thread(id))
+    }
+
     func apply(_ value: ThreadDetail?) {
         guard let value else { return }
         detail = value

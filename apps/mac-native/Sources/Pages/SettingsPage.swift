@@ -342,27 +342,56 @@ private struct AddDomainForm: View {
     @State private var name = ""
     @State private var error: String?
     @State private var busy = false
+    /// The worker answers 409 `mx_in_use` when the domain's mail goes elsewhere; then the
+    /// takeover has to be spelled out and ticked, as on the web.
+    @State private var mxInUse = false
+    @State private var confirm = false
     var body: some View {
         FormDialog(title: "Add a domain", description: "The domain must be on your Cloudflare account with Cloudflare nameservers.") {
-            VStack(alignment: .leading, spacing: 6) {
-                FieldLabel("Domain")
-                WTextField(placeholder: "example.com", text: $name, onSubmit: { submit() }, autofocus: true)
-                if let error { Text(error).font(W.xs) }
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    FieldLabel("Domain")
+                    WTextField(placeholder: "example.com", text: $name, onSubmit: { submit() }, autofocus: true)
+                        .onChange(of: name) { _, _ in mxInUse = false; confirm = false }
+                    if let error { Text(error).font(W.xs) }
+                }
+                if mxInUse {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .top, spacing: 8) {
+                            Icon("triangleAlert", size: 16).padding(.top, 2)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("This will take over ALL mail for \(name.trimmingCharacters(in: .whitespaces).lowercased()).").font(W.font(14, 500))
+                                Text("It currently goes to another provider. Enabling Cloudflare Email Routing replaces those MX records, so mail stops arriving there.").font(W.s13).foregroundStyle(W.mutedForeground)
+                            }
+                        }
+                        HStack(alignment: .top, spacing: 8) {
+                            WCheckbox(checked: confirm) { confirm.toggle() }.padding(.top, 1)
+                            Text("I understand. Route all mail for this domain to heyflare.").font(W.s13)
+                        }
+                    }
+                    .padding(12).background(W.muted60).rounded(W.radiusMd)
+                }
             }
         } footer: {
             WButton("Cancel", variant: .ghost, action: onCancel)
-            WButton("Add domain") { submit() }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || busy)
+            WButton(mxInUse ? "Take over domain" : "Add domain") { submit() }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || busy || (mxInUse && !confirm))
         }
     }
     private func submit() {
+        guard !(mxInUse && !confirm) else { return }
         busy = true
         Task {
             defer { busy = false }
             do {
-                let d = try await APIClient.shared.post("/api/domains", body: ["name": name.trimmingCharacters(in: .whitespaces).lowercased(), "confirm": true], as: MailDomain.self, scoped: false)
+                var body: [String: Any] = ["name": name.trimmingCharacters(in: .whitespaces).lowercased()]
+                if mxInUse { body["confirm"] = true }
+                let d = try await APIClient.shared.post("/api/domains", body: body, as: MailDomain.self, scoped: false)
                 Toasts.shared.show(d.status == "active" ? "\(d.name) is receiving mail" : "\(d.name) added — finish the setup steps")
                 onDone()
-            } catch { self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription }
+            } catch let e as APIError {
+                if case .server(let code, _) = e, code == "mx_in_use" { mxInUse = true; confirm = false; error = nil }
+                else { self.error = e.errorDescription }
+            } catch { self.error = error.localizedDescription }
         }
     }
 }
@@ -607,8 +636,11 @@ struct AiSection: View {
         } else if let error = store.error {
             Text(error).font(W.s13).foregroundStyle(W.mutedForeground)
         } else {
-            SkeletonRows(rows: 4).task { await store.load(); if let s = store.settings { seed(s) }; await loadMemory() }
+            // Loading lives on the container: this branch leaves the moment settings land,
+            // which would cancel the memory fetch mid-flight.
+            SkeletonRows(rows: 4)
         }
+        Color.clear.frame(height: 0).task { await store.load(); if let s = store.settings { seed(s) }; await loadMemory() }
     }
 
     private func seed(_ s: AiSettings) {

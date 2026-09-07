@@ -203,8 +203,9 @@ struct SetAsidePage: View {
     private func done(_ t: ThreadSummary) {
         leaving.insert(t.id)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            Mail.bulk([t.id], .setAside(false), toast: "Back in the Imbox") { imbox.remove(t.id) }
+            imbox.remove(t.id)
             leaving.remove(t.id)
+            Mail.bulk([t.id], .setAside(false), toast: "Back in the Imbox")
         }
     }
 }
@@ -308,8 +309,10 @@ struct PowerThroughPage: View {
     private func act(_ t: ThreadSummary, _ action: ThreadAction, _ msg: String) {
         leaving.insert(t.id)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
-            Mail.bulk([t.id], action, toast: msg) { _ = store.remove(t.id); if cursor >= store.items.count { cursor = max(store.items.count - 1, 0) } }
+            _ = store.remove(t.id)
+            if cursor >= store.items.count { cursor = max(store.items.count - 1, 0) }
             leaving.remove(t.id)
+            Mail.bulk([t.id], action, toast: msg)
         }
     }
 

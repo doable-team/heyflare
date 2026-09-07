@@ -83,12 +83,12 @@ struct ThreadPageView: View {
             if !peek, store.detail != nil { Mail.invalidate() }
             seed()
         }
-        .syncsWithMail { await store.load(threadID, peek: true); seed() }
+        .syncsWithMail { await store.reload(threadID); seed() }
         .onChange(of: store.detail?.id) { _, _ in seed() }
         .onAppear { publishDock() }
         .onChange(of: t?.summary) { _, _ in publishDock() }
         .onChange(of: reply?.message.id) { _, _ in publishDock() }
-        .onDisappear { ui.dock = nil; ui.currentThread = nil }
+        .onDisappear { ui.clearDock(owner: "thread"); ui.currentThread = nil }
         .onKeys([
             "ArrowDown": { moveMsg(1) }, "ArrowUp": { moveMsg(-1) }, "j": { moveMsg(1) }, "k": { moveMsg(-1) },
             "Enter": { toggleFocused() }, "o": { toggleFocused() },
@@ -98,7 +98,7 @@ struct ThreadPageView: View {
             "u": { run(.markUnread, "Marked unread") },
             "n": { noteOpen = true },
             "#": { run(.move(.trash), "Moved to trash"); router.back() },
-            "Escape": { if reply != nil { reply = nil } else { router.back() } },
+            "Escape": { if let reply { Task { await reply.model.saveAndClose() } } else { router.back() } },
         ], enabled: !renaming && !noteOpen && ui.region == .content)
     }
 
@@ -114,8 +114,8 @@ struct ThreadPageView: View {
     }
 
     private func publishDock() {
-        guard let t, reply == nil else { ui.dock = nil; return }
-        ui.dock = AnyView(actionBar(t))
+        guard let t, reply == nil else { ui.clearDock(owner: "thread"); return }
+        ui.setDock(AnyView(actionBar(t)), owner: "thread")
     }
 
     // MARK: Content
@@ -269,7 +269,7 @@ struct ThreadPageView: View {
                             Text("to \(reply.message.isFromMe ? reply.message.to.map { $0.name.isEmpty ? $0.email : $0.name }.joined(separator: ", ") : (reply.message.from.name.isEmpty ? reply.message.from.email : reply.message.from.name))").font(W.s13).foregroundStyle(W.mutedForeground).lineLimit(1)
                         }
                         Spacer()
-                        WButton(icon: "x", variant: .ghost, size: .iconXs, muted: true, help: "Close") { self.reply = nil }
+                        WButton(icon: "x", variant: .ghost, size: .iconXs, muted: true, help: "Close") { Task { await reply.model.saveAndClose() } }
                     }
                     .padding(.horizontal, 12).frame(height: 36).edgeLine(.bottom)
                     ComposerView(model: reply.model, inline: true)
@@ -371,7 +371,7 @@ struct ThreadPageView: View {
             }
             MenuItem("Collections", icon: "folderOpen") {
                 pops.open("thread-collections", side: .top, align: .end) {
-                    PopCard(padding: 0) { CollectionPicker(current: Set(t.collections.map(\.id)), onToggle: { id, on in Task { await Mail.raw(t.id, ["action": "collections", (on ? "add" : "remove"): [id]]); await store.load(t.id, peek: true) } }, onClose: { pops.closeAll() }) }
+                    PopCard(padding: 0) { CollectionPicker(current: Set(t.collections.map(\.id)), onToggle: { id, on in Task { await Mail.raw(t.id, ["action": "collections", (on ? "add" : "remove"): [id]]); await store.reload(t.id) } }, onClose: { pops.closeAll() }) }
                 }
             }
             MenuItem("Merge with…", icon: "gitMerge") {
@@ -384,7 +384,7 @@ struct ThreadPageView: View {
                         .padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 4)
                         ThreadPicker(exclude: [t.id]) { other in
                             dialogs.dismiss("merge")
-                            Task { if await Mail.raw(t.id, ["action": "merge", "thread_ids": [other.id]], toast: "Merged “\(other.subject)”") { await store.load(t.id, peek: true) } }
+                            Task { if await Mail.raw(t.id, ["action": "merge", "thread_ids": [other.id]], toast: "Merged “\(other.subject)”") { await store.reload(t.id) } }
                         }
                         .frame(width: 448)
                     }
@@ -413,8 +413,8 @@ struct ThreadPageView: View {
         var initial = replyInitial(t.summary, msg, mode, myEmail: account?.email)
         if let bodyHTML { initial.bodyHTML = bodyHTML }
         let model = ComposerModel(initial: initial)
-        model.onDone = { self.reply = nil }
-        model.onCancel = { self.reply = nil }
+        model.onDone = { self.reply = nil; Compose.current = nil }
+        model.onCancel = { self.reply = nil; Compose.current = nil }
         Compose.current = model
         reply = (mode, msg, model)
     }
