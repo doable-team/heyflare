@@ -37,8 +37,8 @@ struct ImboxPage: View {
                         ListSection(title: "New for you", threads: store.data.newThreads, bundles: store.data.bundles.filter(\.isOpen),
                                     emptyView: AnyView(
                                         VStack(alignment: .leading, spacing: 4) {
-                                            Text("Nothing new. Go enjoy your day.").font(W.font(14)).webLine(14).foregroundStyle(W.foreground)
-                                            Text("Mail from people you've screened in shows up here.").font(W.s13).webLine(13).foregroundStyle(W.mutedForeground)
+                                            Text("Nothing new. Go enjoy your day.").font(W.font(14)).webLine(14, 21).foregroundStyle(W.foreground)
+                                            Text("Mail from people you've screened in shows up here.").font(W.s13).webLine(13, 19.5).foregroundStyle(W.mutedForeground)
                                         }
                                         .padding(.horizontal, 8).padding(.top, 8)
                                         .frame(maxWidth: .infinity, minHeight: ui.viewportHeight * 0.2, alignment: .topLeading)
