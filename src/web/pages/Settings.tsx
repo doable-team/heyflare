@@ -57,6 +57,7 @@ export function Section({ title, description, children, actions }: { title: stri
   );
 }
 
+
 export function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="grid sm:grid-cols-[minmax(0,1fr)_auto] gap-x-6 gap-y-2 items-center px-2 py-3 border-b border-border last:border-b-0">
@@ -64,9 +65,13 @@ export function Row({ label, hint, children }: { label: string; hint?: string; c
         <div className="text-sm">{label}</div>
         {hint && <div className="text-xs text-muted-foreground mt-0.5">{hint}</div>}
       </div>
-      <div className="min-w-0 sm:justify-self-end overflow-x-auto [scrollbar-width:none]"><div className="w-max max-w-full">{children}</div></div>
+      <div className="min-w-0 sm:justify-self-end scrollbar-none"><div className="w-max max-w-full">{children}</div></div>
     </div>
   );
+}
+
+export function Panel({ children }: { children: React.ReactNode }) {
+  return <div className="mx-2 rounded-lg border border-border overflow-hidden">{children}</div>;
 }
 
 export function SavedMark({ show }: { show: boolean }) {
@@ -593,6 +598,7 @@ export function ProfileSection({ compact }: { compact?: boolean }) {
       </div>
       <Row label="Name">
         <div className="flex items-center gap-2">
+          {!compact && <SavedMark show={nameSaved} />}
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -600,7 +606,6 @@ export function ProfileSection({ compact }: { compact?: boolean }) {
             className={inputCls}
             aria-label="Name"
           />
-          {!compact && <SavedMark show={nameSaved} />}
         </div>
       </Row>
       <Row label="Email" hint="Used to log in. Can't be changed here.">
@@ -911,6 +916,7 @@ function CredentialRow({ c, compact }: { c: OAuthCredentialStatus; compact?: boo
   // A Worker secret is used by default, but you can take over here — otherwise a deployment set up
   // with `wrangler secret put` could never rotate an expiring secret without the CLI.
   const managed = c.source === "env";
+  const [open, setOpen] = useState(false);
   const [takingOver, setTakingOver] = useState(false);
   const showForm = !managed || takingOver;
   const [clientId, setClientId] = useState(c.client_id);
@@ -934,13 +940,21 @@ function CredentialRow({ c, compact }: { c: OAuthCredentialStatus; compact?: boo
     );
 
   return (
-    <div className="px-2 py-3 border-b border-border last:border-b-0">
-      <div className="flex items-center gap-2 mb-2">
+    <Collapsible open={open} onOpenChange={setOpen} className="border-b border-border last:border-b-0">
+      <div className="flex items-center gap-2 px-2 h-12">
         <span className="text-sm font-medium">{meta.name}</span>
         {c.configured ? <Badge variant="secondary">Connected</Badge> : <Badge variant="outline">Not set</Badge>}
         {managed ? <Badge variant="outline">Worker secret</Badge> : null}
         {c.overriding ? <Badge variant="outline">Overriding Worker secret</Badge> : null}
+        <span className="flex-1" />
+        <CollapsibleTrigger asChild>
+          <Button size="sm" variant="ghost" className="text-muted-foreground">
+            Edit <ChevronDown className={cn("transition-transform duration-100", open && "rotate-180")} />
+          </Button>
+        </CollapsibleTrigger>
       </div>
+      <CollapsibleContent>
+        <div className="px-2 pb-4">
       {managed && !takingOver ? (
         <div className="text-[13px] text-muted-foreground space-y-2">
           <div>
@@ -981,7 +995,9 @@ function CredentialRow({ c, compact }: { c: OAuthCredentialStatus; compact?: boo
           </div>
         </FieldGroup>
       )}
-    </div>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -993,7 +1009,9 @@ export function ConnectorCredentialsSection({ compact }: { compact?: boolean }) 
       {isLoading ? (
         <div className="px-2 py-2"><Skeleton className="h-16 w-full" /></div>
       ) : (
-        <div>{(data ?? []).map((c) => <CredentialRow key={c.provider} c={c} compact={compact} />)}</div>
+        <Panel>
+          <div>{(data ?? []).map((c) => <CredentialRow key={c.provider} c={c} compact={compact} />)}</div>
+        </Panel>
       )}
     </Section>
   );
@@ -1029,11 +1047,13 @@ export function AccountsSection({ onNewMailbox }: { onNewMailbox?: () => void })
             <strong>Provider credentials</strong> below. IMAP mailboxes need no setup.
           </div>
         ) : null}
-        {remote.length === 0 ? (
-          <div className="px-2 py-2 text-[13px] text-muted-foreground">Nothing connected yet.</div>
-        ) : (
-          <div>{remote.map((a) => <AccountBlock key={a.id} a={a} />)}</div>
-        )}
+        <Panel>
+          {remote.length === 0 ? (
+            <div className="px-3 py-4 text-[13px] text-muted-foreground">Nothing connected yet.</div>
+          ) : (
+            <div>{remote.map((a) => <AccountBlock key={a.id} a={a} />)}</div>
+          )}
+        </Panel>
       </Section>
       <ConnectorCredentialsSection />
       <Section
@@ -1041,11 +1061,13 @@ export function AccountsSection({ onNewMailbox }: { onNewMailbox?: () => void })
         description="Addresses on your own domains."
         actions={onNewMailbox ? <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={onNewMailbox}><Plus /> New mailbox</Button> : undefined}
       >
-        {boxes.length === 0 ? (
-          <div className="px-2 py-2 text-[13px] text-muted-foreground">No mailboxes yet. Add a domain first.</div>
-        ) : (
-          <div>{boxes.map((a) => <AccountBlock key={a.id} a={a} />)}</div>
-        )}
+        <Panel>
+          {boxes.length === 0 ? (
+            <div className="px-3 py-4 text-[13px] text-muted-foreground">No mailboxes yet. Add a domain first.</div>
+          ) : (
+            <div>{boxes.map((a) => <AccountBlock key={a.id} a={a} />)}</div>
+          )}
+        </Panel>
       </Section>
     </>
   );
@@ -1301,7 +1323,7 @@ export default function SettingsPage() {
     <div className="max-w-3xl mx-auto">
       <PageHeader title="Settings" />
       <Tabs value={TABS.some((t) => t.key === tab) ? tab : "profile"} onValueChange={setTab} className="gap-6">
-        <div className="px-2 -mx-2 overflow-x-auto [scrollbar-width:none] border-b border-border">
+        <div className="px-2 -mx-2 overflow-x-auto overflow-y-hidden scrollbar-none border-b border-border">
           <TabsList variant="line" className="w-max px-2">
             {TABS.map((t) => (
               <TabsTrigger key={t.key} value={t.key} className="gap-1.5 px-2 text-muted-foreground data-active:text-foreground [&>svg]:size-3.5">
