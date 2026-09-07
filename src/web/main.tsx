@@ -28,3 +28,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
 );
 installConnectInterceptor();
 installBuildWatcher();
+
+// The worker only exists to make the app installable; it caches nothing (see public/sw.js).
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => void navigator.serviceWorker.register("/sw.js").catch(() => {}));
+}

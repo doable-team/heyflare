@@ -3,3 +3,11 @@
 # browser revalidates every script, stylesheet and font on every page load.
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# Never hold the service worker in the HTTP cache, or a future change to it can't reach an installed client.
+/sw.js
+  Cache-Control: no-cache
+
+# Same for the manifest: a change to it must be able to reach an installed client.
+/manifest.webmanifest
+  Cache-Control: no-cache
