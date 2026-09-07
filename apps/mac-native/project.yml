@@ -52,7 +52,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.doable.heyflare.mac
         PRODUCT_NAME: heyflare
-        MARKETING_VERSION: "0.4.5"
+        MARKETING_VERSION: "0.4.6"
         CURRENT_PROJECT_VERSION: "1"
         INFOPLIST_FILE: Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/heyflare.entitlements
