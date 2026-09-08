@@ -189,12 +189,7 @@ struct Sidebar: View {
                     app.setScope(ServerConfig.allAccounts); router.go(.imbox)
                 }
                 ForEach(Array(app.accounts.enumerated()), id: \.element.id) { i, a in
-                    HStack(spacing: 0) {
-                        MenuItem(a.email, checked: app.scope == a.id) { app.setScope(a.id); router.go(.imbox) }
-                    }
-                    .overlay(alignment: .leading) {
-                        Text(Theme.glyph(forAccountIndex: i)).font(W.font(10)).foregroundStyle(W.mutedForeground).padding(.leading, 28)
-                    }
+                    MenuItem(a.email, glyph: Theme.glyph(forAccountIndex: i), checked: app.scope == a.id) { app.setScope(a.id); router.go(.imbox) }
                 }
                 if app.accounts.isEmpty {
                     Text("No Gmail connected yet.").font(W.xs).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 6)

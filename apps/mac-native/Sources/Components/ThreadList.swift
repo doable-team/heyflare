@@ -256,6 +256,7 @@ struct ThreadListView: View {
     @Environment(Router.self) private var router
     @Environment(UIState.self) private var ui
     @Environment(DialogState.self) private var dialogs
+    @Environment(\.pageScrollProxy) private var pageScroll
     @State private var selected: Set<String> = []
     @State private var cursor = -1
     @State private var leaving: Set<String> = []
@@ -400,6 +401,11 @@ struct ThreadListView: View {
     private func step(_ delta: Int) {
         guard !items.isEmpty else { return }
         cursor = min(max(cursor + delta, 0), items.count - 1)
+        // `scrollIntoView` on the web: the cursor moving is not enough on its own, since the
+        // list sits inside the page's own ScrollView rather than owning one of its own.
+        if items.indices.contains(cursor) {
+            withAnimation(nil) { pageScroll?.scrollTo(items[cursor].id, anchor: .center) }
+        }
     }
 
     /// Animate rows out, then post.

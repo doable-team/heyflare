@@ -152,6 +152,10 @@ struct PopCard<Content: View>: View {
 struct MenuItem: View {
     let label: String
     var icon: String?
+    /// `<span class="w-4 text-center text-[10px]">`: the account switcher's letter glyph, an
+    /// inline neighbour of the label rather than an icon — was drawn as an `.overlay` sitting
+    /// on top of the email text, which is why the two used to run into each other.
+    var glyph: String?
     var shortcut: String?
     var checked: Bool? = nil
     var disabled = false
@@ -160,8 +164,8 @@ struct MenuItem: View {
     @State private var hovering = false
     @Environment(PopLayerState.self) private var pops
 
-    init(_ label: String, icon: String? = nil, shortcut: String? = nil, checked: Bool? = nil, disabled: Bool = false, action: @escaping () -> Void) {
-        self.label = label; self.icon = icon; self.shortcut = shortcut; self.checked = checked; self.disabled = disabled; self.action = action
+    init(_ label: String, icon: String? = nil, glyph: String? = nil, shortcut: String? = nil, checked: Bool? = nil, disabled: Bool = false, action: @escaping () -> Void) {
+        self.label = label; self.icon = icon; self.glyph = glyph; self.shortcut = shortcut; self.checked = checked; self.disabled = disabled; self.action = action
     }
 
     var body: some View {
@@ -175,6 +179,7 @@ struct MenuItem: View {
                     Icon("check", size: 16).opacity(checked ? 1 : 0)
                 }
                 if let icon { Icon(icon, size: 16).foregroundStyle(hovering ? W.foreground : W.mutedForeground) }
+                if let glyph { Text(glyph).font(W.font(10)).foregroundStyle(W.mutedForeground).frame(width: 16, alignment: .center) }
                 Text(label).font(W.sm).foregroundStyle(W.foreground).lineLimit(1)
                 Spacer(minLength: 12)
                 if let shortcut { Text(shortcut).font(W.xs).foregroundStyle(W.mutedForeground) }

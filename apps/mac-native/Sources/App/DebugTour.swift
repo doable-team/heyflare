@@ -16,6 +16,16 @@ enum DebugTour {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         for _ in 0..<50 { if case .launching = app.phase { try? await Task.sleep(for: .milliseconds(200)) } else { break } }
         await snap("01-start", dir)
+        // The container can already hold a real, signed-in session from ordinary use — the tour
+        // types into threads, toggles them and sends mail, so it must never touch one it did not
+        // establish itself. Refusing to run against a session that already exists, on whatever
+        // server it happens to point at, is the only check that cannot be fooled by the server
+        // matching what HEY_TOUR_SERVER expected.
+        if case .signedIn = app.phase {
+            check("refused: already signed in", false, dir)
+            try? "done".write(to: dir.appendingPathComponent("done"), atomically: true, encoding: .utf8)
+            return
+        }
         if case .needsServer = app.phase, let server = env["HEY_TOUR_SERVER"], let url = ServerConfig.normalize(server) {
             await app.setServer(url)
             await app.loadSession()
@@ -102,7 +112,7 @@ enum DebugTour {
         let drafts = (try? await APIClient.shared.drafts()) ?? []
         check("draft on server", drafts.contains { $0.subject == "Tour draft" }, dir)
         for d in drafts where d.subject == "Tour draft" { try? await APIClient.shared.deleteDraft(d.id) }
-        for (name, route) in [("06-feed", AppRoute.feed), ("07-paper-trail", .paperTrail), ("08-screener", .screener), ("09-reply-later", .replyLater), ("10-set-aside", .setAside), ("11-calendar", .calendar), ("12-contacts", .contacts), ("13-files", .files), ("14-settings", .settings("profile")), ("15-drafts", .drafts)] {
+        for (name, route) in [("06-feed", AppRoute.feed), ("07-paper-trail", .paperTrail), ("08-screener", .screener), ("09-reply-later", .replyLater), ("10-set-aside", .setAside), ("11-calendar", .calendar), ("12-contacts", .contacts), ("13-files", .files), ("14-settings", .settings("profile")), ("14b-settings-calendar", .settings("calendar")), ("15-drafts", .drafts)] {
             router.go(route)
             await pause(2)
             await snap(name, dir)

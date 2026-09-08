@@ -132,16 +132,21 @@ struct PageHost: View {
                     .padding(.top, 16)
                     .padding(.bottom, 12)
             } else {
-                ScrollView {
-                    page
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 32)
-                        .padding(.top, 16)
-                        .padding(.bottom, 96)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        page
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, 32)
+                            .padding(.top, 16)
+                            .padding(.bottom, 96)
+                    }
+                    // Browsers overlay their scrollbar; a reserved gutter would shift the
+                    // centred column left by half its width.
+                    .scrollIndicators(.never)
+                    // Lets a list further down (ThreadListView) keep the keyboard cursor
+                    // on screen without owning the scroll view itself.
+                    .environment(\.pageScrollProxy, proxy)
                 }
-                // Browsers overlay their scrollbar; a reserved gutter would shift the
-                // centred column left by half its width.
-                .scrollIndicators(.never)
             }
         }
         .id(router.route)
@@ -207,5 +212,15 @@ struct PageColumn<Content: View>: View {
         VStack(alignment: .leading, spacing: 0) { content() }
             .frame(maxWidth: width)
             .frame(maxWidth: .infinity)
+    }
+}
+
+private struct PageScrollProxyKey: EnvironmentKey { static let defaultValue: ScrollViewProxy? = nil }
+extension EnvironmentValues {
+    /// The page's own scroll view, so a keyboard cursor further down can keep itself visible
+    /// without every list needing its own `ScrollView`.
+    var pageScrollProxy: ScrollViewProxy? {
+        get { self[PageScrollProxyKey.self] }
+        set { self[PageScrollProxyKey.self] = newValue }
     }
 }

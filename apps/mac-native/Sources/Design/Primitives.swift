@@ -78,6 +78,10 @@ private struct WButtonBody: View {
     let expanded: Bool
     @State private var hovering = false
     @Environment(\.isEnabled) private var enabled
+    @Environment(\.wButtonSquare) private var square
+
+    /// Inside a `ButtonGroup` the plate is square and the group rounds the row's ends.
+    private var radius: CGFloat { square ? 0 : size.radius }
 
     var body: some View {
         configuration.label
@@ -89,11 +93,11 @@ private struct WButtonBody: View {
             .background(background)
             .overlay {
                 if variant == .outline {
-                    RoundedRectangle(cornerRadius: size.radius, style: .continuous).strokeBorder(W.border, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(W.border, lineWidth: 1)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: size.radius, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: size.radius, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
             .opacity(enabled ? 1 : 0.5)
             .offset(y: configuration.isPressed && variant != .link ? 1 : 0)
             .onHover { hovering = $0 }
@@ -159,11 +163,25 @@ struct WButton: View {
     }
 }
 
-/// A row of buttons that share edges (`ButtonGroup`).
+/// `ButtonGroup`: buttons that share edges. The web squares the inner corners and drops the
+/// inner border (`rounded-l-none`, `border-l-0`); here the children draw square and the group
+/// clips the outer radius, with a 1pt overlap so neighbouring borders land on one line.
 struct ButtonGroup<Content: View>: View {
+    var radius: CGFloat = W.radiusLg
     @ViewBuilder var content: () -> Content
     var body: some View {
         HStack(spacing: -1) { content() }
+            .environment(\.wButtonSquare, true)
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+    }
+}
+
+private struct WButtonSquareKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    /// Set by `ButtonGroup`: the plate keeps its size but gives up its own corners.
+    var wButtonSquare: Bool {
+        get { self[WButtonSquareKey.self] }
+        set { self[WButtonSquareKey.self] = newValue }
     }
 }
 
