@@ -266,6 +266,8 @@ struct Message: Codable, Hashable, Identifiable, Sendable {
     var id: String
     var threadID: String
     var from: Address
+    /// The Reply-To header, lowercased by the worker; empty when the sender set none.
+    var replyTo: String
     var to: [Address]
     var cc: [Address]
     var bcc: [Address]
@@ -294,6 +296,7 @@ struct Message: Codable, Hashable, Identifiable, Sendable {
         case isFromMe = "is_from_me"
         case hasAttachments = "has_attachments"
         case listUnsubscribe = "list_unsubscribe"
+        case replyTo = "reply_to"
     }
 
     init(from decoder: Decoder) throws {
@@ -302,6 +305,7 @@ struct Message: Codable, Hashable, Identifiable, Sendable {
         accountID = try? c.decodeIfPresent(String.self, forKey: .accountID)
         threadID = (try? c.decode(String.self, forKey: .threadID)) ?? ""
         from = (try? c.decode(Address.self, forKey: .from)) ?? Address(email: "")
+        replyTo = (try? c.decode(String.self, forKey: .replyTo)) ?? ""
         to = (try? c.decode([Address].self, forKey: .to)) ?? []
         cc = (try? c.decode([Address].self, forKey: .cc)) ?? []
         bcc = (try? c.decode([Address].self, forKey: .bcc)) ?? []
@@ -624,10 +628,15 @@ struct MeResponse: Codable, Sendable {
     var user: User?
     var accounts: [Account]
     var googleConfigured: Bool?
+    var microsoftConfigured: Bool?
+    /// A server with no owner yet: the first sign-in creates one (`/auth/setup`).
+    var setupRequired: Bool
 
     enum CodingKeys: String, CodingKey {
         case user, accounts
         case googleConfigured = "google_configured"
+        case microsoftConfigured = "microsoft_configured"
+        case setupRequired = "setup_required"
     }
 
     init(from decoder: Decoder) throws {
@@ -635,6 +644,8 @@ struct MeResponse: Codable, Sendable {
         user = try? c.decodeIfPresent(User.self, forKey: .user)
         accounts = (try? c.decode([Account].self, forKey: .accounts)) ?? []
         googleConfigured = try? c.decodeIfPresent(Bool.self, forKey: .googleConfigured)
+        microsoftConfigured = try? c.decodeIfPresent(Bool.self, forKey: .microsoftConfigured)
+        setupRequired = (try? c.decode(Bool.self, forKey: .setupRequired)) ?? false
     }
 }
 
@@ -739,16 +750,19 @@ struct ImboxResponse: Codable, Sendable {
 
 struct ThreadPage: Codable, Sendable {
     var threads: [ThreadSummary]
+    /// Paper Trail only, page 0: the bundled senders' threads come as bundles instead of rows.
+    var bundles: [MailBundle]
     var nextPage: Int?
 
     enum CodingKeys: String, CodingKey {
-        case threads
+        case threads, bundles
         case nextPage = "next_page"
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         threads = (try? c.decode([ThreadSummary].self, forKey: .threads)) ?? []
+        bundles = (try? c.decode([MailBundle].self, forKey: .bundles)) ?? []
         nextPage = try? c.decodeIfPresent(Int.self, forKey: .nextPage)
     }
 }

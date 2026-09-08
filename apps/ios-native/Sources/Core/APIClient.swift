@@ -248,6 +248,11 @@ extension APIClient {
         try await post("/auth/login", body: ["email": email, "password": password], as: LoginResponse.self, scoped: false)
     }
 
+    /// First run: creates the owner. The worker signs the new user in on the same answer.
+    func setup(email: String, name: String, password: String) async throws {
+        try await postIgnoringResult("/auth/setup", body: ["email": email, "name": name, "password": password], scoped: false)
+    }
+
     func loginTwoFactor(ticket: String, code: String) async throws -> LoginResponse {
         try await post("/auth/login/2fa", body: ["ticket": ticket, "code": code], as: LoginResponse.self, scoped: false)
     }

@@ -10,6 +10,8 @@ final class AppState {
         case launching
         case needsServer
         case signedOut(message: String?)
+        /// A fresh server with nobody on it yet: create the owner first.
+        case needsSetup
         case signedIn
     }
 
@@ -109,8 +111,10 @@ final class AppState {
                 refreshCounts()
                 watchChanges(active: true)
             } else {
-                phase = .signedOut(message: nil)
+                phase = me.setupRequired ? .needsSetup : .signedOut(message: nil)
             }
+            googleConfigured = me.googleConfigured ?? true
+            microsoftConfigured = me.microsoftConfigured ?? false
         } catch let error as APIError {
             if case .notConfigured = error {
                 phase = .needsServer
@@ -237,6 +241,11 @@ final class AppState {
     }
 
     private var lastForeground = Date.distantPast
+
+    /// Whether the server can start a Google / Microsoft sign-in at all (`google_configured`
+    /// on `/api/me`); the web hides "Connect Gmail" when it cannot.
+    var googleConfigured = true
+    var microsoftConfigured = false
 
     /// heyflare syncs on focus in the browser; the phone does the same when it comes back
     /// to the foreground, throttled so tabbing around does not hammer the worker. App-wide

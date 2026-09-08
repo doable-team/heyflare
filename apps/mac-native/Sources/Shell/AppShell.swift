@@ -16,6 +16,7 @@ struct AppShell: View {
                 Color.clear
                     .onAppear { ui.viewportHeight = g.size.height }
                     .onChange(of: g.size.height) { _, h in ui.viewportHeight = h }
+                    .onChange(of: g.size.width) { _, _ in pops.closeAll() }
             }
             HStack(spacing: 0) {
                 Sidebar()
@@ -81,8 +82,13 @@ struct AppShell: View {
         ], enabled: overlayOpen, priority: 100)
         .onChange(of: router.route) { _, _ in
             pops.closeAll()
+            dialogs.stack.removeAll()
             ui.region = .content
         }
+        // A popover is placed by the frame its button had when it opened; once the sidebar
+        // slides or the window resizes that frame is stale, so the popover goes instead.
+        .onChange(of: ui.sidebarOpen) { _, _ in pops.closeAll() }
+        .onChange(of: ui.viewportHeight) { _, _ in pops.closeAll() }
         .onAppear { Mail.app = app }
     }
 

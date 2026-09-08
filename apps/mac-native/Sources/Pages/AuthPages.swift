@@ -100,6 +100,44 @@ private struct ServerFooter: View {
     }
 }
 
+/// `Setup.tsx`: first run only, creates the single owner of this heyflare.
+struct SetupPage: View {
+    @Environment(AppState.self) private var app
+    @State private var name = ""
+    @State private var email = ""
+    @State private var password = ""
+    @State private var error = ""
+    @State private var busy = false
+
+    var body: some View {
+        AuthLayout(title: "Set up your login", subtitle: "This is a private, single-owner heyflare. You only do this once.") {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) { FieldLabel("Your name"); WTextField(placeholder: "Farhan", text: $name, onSubmit: { Task { await submit() } }, autofocus: true) }
+                VStack(alignment: .leading, spacing: 6) {
+                    FieldLabel("Email"); WTextField(placeholder: "you@example.com", text: $email, onSubmit: { Task { await submit() } })
+                    Text("Used to log in. It doesn't have to be a Gmail address.").font(W.xs).foregroundStyle(W.mutedForeground)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    FieldLabel("Password"); WTextField(placeholder: "At least 8 characters", text: $password, secure: true, onSubmit: { Task { await submit() } })
+                    if !error.isEmpty { Text(error).font(W.xs) }
+                }
+                WButton(busy ? "Creating…" : "Create my login", fullWidth: true) { Task { await submit() } }.disabled(busy || email.isEmpty || password.count < 8)
+                Text("Next, you'll connect one or more Gmail accounts from the Imbox.").font(W.xs).foregroundStyle(W.mutedForeground)
+            }
+        }
+        .overlay(alignment: .bottom) { ServerFooter() }
+    }
+
+    private func submit() async {
+        busy = true; error = ""
+        defer { busy = false }
+        do {
+            try await APIClient.shared.setup(email: email.trimmingCharacters(in: .whitespaces), name: name.trimmingCharacters(in: .whitespaces), password: password)
+            await app.loadSession()
+        } catch { self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription }
+    }
+}
+
 /// `Login.tsx`, with the two-factor step.
 struct LoginPage: View {
     let initialMessage: String?
@@ -166,10 +204,15 @@ struct LoginPage: View {
             let r = try await APIClient.shared.loginTwoFactor(ticket: ticket, code: code)
             if let u = r.user { await app.adopt(user: u) } else { error = "That code isn't right." }
         } catch {
-            let m = (error as? APIError)?.errorDescription ?? error.localizedDescription
-            if m.range(of: "expired", options: .caseInsensitive) != nil { self.error = "That took too long. Log in again."; self.ticket = nil }
-            else if m.range(of: "too many", options: .caseInsensitive) != nil { self.error = "Too many attempts. Log in again."; self.ticket = nil }
-            else { self.error = "That code isn't right." }
+            // The worker answers with codes; the friendly text they map to is not stable enough
+            // to match on, and an expired ticket must be dropped or every retry fails.
+            var codeName = ""
+            if case .server(let c, _)? = error as? APIError { codeName = c }
+            switch codeName {
+            case "mfa_ticket_expired": self.error = "That took too long. Log in again."; self.ticket = nil
+            case "mfa_too_many_attempts": self.error = "Too many attempts. Log in again."; self.ticket = nil
+            default: self.error = "That code isn't right."
+            }
             code = ""
         }
     }

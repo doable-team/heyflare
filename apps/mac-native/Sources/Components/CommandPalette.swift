@@ -37,11 +37,16 @@ struct CommandPalette: View {
             }
         }
         let theme = app.user?.settings.theme ?? "system"
-        let dark = theme == "dark"
-        let actions: [Item] = [
+        // "system" resolves to whatever the Mac is showing, as `prefers-color-scheme` does.
+        let dark = theme == "dark" || (theme != "light" && NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
+        var actions: [Item] = [
             Item(id: "act-compose", group: "Actions", label: "Compose a new message", icon: "penSquare", kbd: "c", avatar: nil, sub: nil, time: nil) { Compose.open() },
             Item(id: "act-assistant", group: "Actions", label: "Open the Assistant", icon: "sparkles", kbd: "⌘J", avatar: nil, sub: nil, time: nil) { ui.openAssistant() },
-            Item(id: "act-connect", group: "Actions", label: "Connect a Gmail account", icon: "plus", kbd: nil, avatar: nil, sub: nil, time: nil) { GoogleConnect.start(toasts: toasts) },
+        ]
+        if app.googleConfigured {
+            actions.append(Item(id: "act-connect", group: "Actions", label: "Connect a Gmail account", icon: "plus", kbd: nil, avatar: nil, sub: nil, time: nil) { GoogleConnect.start(toasts: toasts) })
+        }
+        actions += [
             Item(id: "act-theme", group: "Actions", label: dark ? "Switch to light theme" : "Switch to dark theme", icon: dark ? "sun" : "moon", kbd: nil, avatar: nil, sub: nil, time: nil) {
                 Task { if let u = try? await APIClient.shared.updateMe(settings: ["theme": dark ? "light" : "dark"]) { await app.adopt(user: u) } }
             },

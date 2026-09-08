@@ -141,8 +141,8 @@ extension APIClient {
 
     /// Mints the one-time link that starts Google's consent in a real browser. The state
     /// it carries identifies the session, so the browser needs no cookie of ours.
-    func gmailConnectLink(loginHint: String? = nil) async throws -> URL {
-        var body: [String: Any] = [:]
+    func gmailConnectLink(loginHint: String? = nil, provider: String = "google") async throws -> URL {
+        var body: [String: Any] = ["provider": provider]
         if let loginHint, !loginHint.isEmpty { body["login_hint"] = loginHint }
         let link = try await post("/api/accounts/connect-link", body: body, as: ConnectLink.self, scoped: false)
         guard let url = URL(string: link.url) else { throw APIError.decoding("connect link") }

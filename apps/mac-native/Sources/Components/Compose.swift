@@ -30,6 +30,8 @@ enum Compose {
     private static var pending: (payload: [String: Any], toast: Int, task: Task<Void, Never>)?
 
     static func open(_ initial: ComposerInitial = ComposerInitial()) {
+        // ⌘N or the palette over an open composer: what was typed is kept, not replaced.
+        if let existing = current, SheetState.shared.isOpen { Task { await existing.saveAndClose(); open(initial) }; return }
         let model = ComposerModel(initial: initial)
         model.onDone = { close() }
         model.onCancel = { close() }
@@ -314,6 +316,18 @@ final class ComposerModel {
         }
     }
 
+    /// `setReply(null)`: an inline reply that was never typed into just goes away — the
+    /// prefilled recipient and quote are not a draft worth keeping. Typed text is saved.
+    func closeInline() async {
+        guard let app = Mail.app else { onCancel?(); return }
+        if dirty, !isEmpty(app: app) {
+            if await saveDraft() != nil { Toasts.shared.show("Saved as a draft", duration: 3); Mail.invalidate() }
+        } else if let id = draftID, isEmpty(app: app) {
+            try? await APIClient.shared.deleteDraft(id)
+        }
+        onCancel?()
+    }
+
     /// Save a draft if there is anything worth saving, then close.
     func saveAndClose() async {
         guard let app = Mail.app else { onCancel?(); return }
@@ -464,7 +478,7 @@ struct ComposerView: View {
         .task {
             while !Task.isCancelled { try? await Task.sleep(for: .seconds(5)); tick += 1 }
         }
-        .onKeys(["Escape": { Task { await model.saveAndClose() } }], enabled: inline, priority: 20)
+        .onKeys(["Escape": { Task { await model.closeInline() } }], enabled: inline, priority: 20)
     }
 
     private func rowLabel(_ t: String) -> some View {

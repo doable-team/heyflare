@@ -197,7 +197,7 @@ struct AccountsSection: View {
         let gmail = app.accounts.filter { !$0.isDomain }
         let boxes = app.accounts.filter(\.isDomain)
         SettingsSection(title: "Gmail accounts", description: "What's connected, and how it signs off.", actions: {
-            WButton("Connect Gmail", icon: "plus", variant: .ghost, size: .sm, muted: true) { GoogleConnect.start(toasts: toasts) }
+            if app.googleConfigured { WButton("Connect Gmail", icon: "plus", variant: .ghost, size: .sm, muted: true) { GoogleConnect.start(toasts: toasts) } }
         }) {
             if gmail.isEmpty { Text("No Gmail connected yet.").font(W.s13).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 8) }
             ForEach(gmail) { AccountBlock(account: $0) }
@@ -231,7 +231,11 @@ struct AccountBlock: View {
         return ("Synced", false)
     }
     private var dirty: Bool { signature != account.signature || displayName != account.displayName }
-    private var isGmail: Bool { account.provider == "gmail" }
+    /// `Settings.tsx`: Outlook is handled like Gmail (synced, resettable, disconnectable);
+    /// IMAP is synced too but its server settings are edited on the web.
+    private var isGmail: Bool { account.provider == "gmail" || account.provider == "outlook" }
+    private var isImap: Bool { account.provider == "imap" }
+    private var synced: Bool { isGmail || isImap }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -246,14 +250,14 @@ struct AccountBlock: View {
                     HStack(spacing: 6) {
                         if status.spin { Spinner(size: 11) }
                         Text(status.label)
-                        if isGmail, let at = account.lastSyncedAt { Text("· \(Fmt.relative(at))") }
+                        if synced, let at = account.lastSyncedAt { Text("· \(Fmt.relative(at))") }
                         if let e = account.syncError, !e.isEmpty { Text("· \(e)") }
-                        if account.syncStatus == "disconnected" { Button("Reconnect") { GoogleConnect.start(toasts: toasts, loginHint: account.email) }.buttonStyle(.plain).underline() }
+                        if account.syncStatus == "disconnected", !isImap { Button("Reconnect") { GoogleConnect.start(toasts: toasts, loginHint: account.email, provider: account.provider == "outlook" ? "microsoft" : "google") }.buttonStyle(.plain).underline() }
                     }
                     .font(W.xs).monospacedDigit().foregroundStyle(W.mutedForeground)
                 }
                 Spacer()
-                if isGmail {
+                if synced {
                     WButton("Sync", icon: "refreshCw", variant: .ghost, size: .sm, muted: true) {
                         syncing = true
                         Task { defer { syncing = false }; do { let n = try await APIClient.shared.syncNow(accountID: account.id); toasts.show("Synced\(n.map { " · \($0) new" } ?? "")"); Mail.invalidate() } catch { toasts.error((error as? APIError)?.errorDescription ?? error.localizedDescription) } }
@@ -271,15 +275,16 @@ struct AccountBlock: View {
                         WButton("Save", size: .sm) { save() }.disabled(!dirty)
                         SavedMark(show: saved && !dirty)
                         Spacer()
-                        if isGmail {
+                        if isImap { Text("Server settings are edited on the web.").font(W.xs).foregroundStyle(W.mutedForeground) }
+                        if synced {
                             WButton("Start fresh", icon: "refreshCw", variant: .ghost, size: .sm, muted: true) {
                                 dialogs.confirm(title: "Start fresh with \(account.email)?", description: "This deletes everything heyflare has synced for this account — threads, contacts, screener decisions, clips, drafts. Gmail itself is untouched. New mail from now on will go through the Screener.", action: "Start fresh") {
                                     Task { do { let e = try await APIClient.shared.resetAccount(account.id); if let e { toasts.error("Reset done, but the first sync failed: \(e)") } else { toasts.show("Starting fresh — watching for new mail from now on") }; await app.refreshAccounts(); Mail.invalidate() } catch { toasts.error(error.localizedDescription) } }
                                 }
                             }
                         }
-                        WButton(isGmail ? "Disconnect" : "Delete mailbox", icon: isGmail ? "unplug" : "trash2", variant: .ghost, size: .sm, muted: true) {
-                            dialogs.confirm(title: isGmail ? "Disconnect \(account.email)?" : "Delete \(account.email)?", description: isGmail ? "This removes the account and all of its synced mail from heyflare. Nothing changes in Gmail." : "This deletes the mailbox and every message stored in it. Mail sent to this address will bounce (or land in the domain's catch-all).", action: isGmail ? "Disconnect" : "Delete mailbox") {
+                        WButton(synced ? "Disconnect" : "Delete mailbox", icon: synced ? "unplug" : "trash2", variant: .ghost, size: .sm, muted: true) {
+                            dialogs.confirm(title: synced ? "Disconnect \(account.email)?" : "Delete \(account.email)?", description: synced ? "This removes the account and all of its synced mail from heyflare. Nothing changes at the provider." : "This deletes the mailbox and every message stored in it. Mail sent to this address will bounce (or land in the domain's catch-all).", action: synced ? "Disconnect" : "Delete mailbox") {
                                 Task { do { try await APIClient.shared.deleteAccount(account.id); await app.refreshAccounts(); Mail.invalidate() } catch { toasts.error(error.localizedDescription) } }
                             }
                         }
@@ -477,7 +482,10 @@ private struct DomainBlock: View {
                         .font(W.s13).foregroundStyle(W.mutedForeground)
                     HStack { Spacer(); WButton("Remove domain", icon: "trash2", variant: .ghost, size: .sm, muted: true) {
                         dialogs.confirm(title: "Remove \(domain.name)?", description: "Deletes every mailbox on it and all of their mail from heyflare. Email Routing on Cloudflare is left as it is.", action: "Remove domain") {
-                            Task { try? await APIClient.shared.delete("/api/domains/\(domain.id)", scoped: false); await reload(); await app.refreshAccounts() }
+                            Task {
+                                do { try await APIClient.shared.delete("/api/domains/\(domain.id)", scoped: false) } catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+                                await reload(); await app.refreshAccounts()
+                            }
                         }
                     } }
                 }
@@ -550,7 +558,11 @@ struct CalendarSettingsSection: View {
         SettingsSection(title: "Calendars", description: "Untick to hide, without deleting.", actions: {
             WButton(syncingAll ? "Syncing…" : "Sync all", icon: "refreshCw", variant: .ghost, size: .sm, muted: true) {
                 syncingAll = true
-                Task { defer { syncingAll = false }; try? await CalendarAPI.syncSources(); await load(); CalendarBus.shared.changed() }
+                Task {
+                    defer { syncingAll = false }
+                    do { try await CalendarAPI.syncSources() } catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+                    await load(); CalendarBus.shared.changed()
+                }
             }
             .disabled(syncingAll)
         }) {
@@ -572,7 +584,11 @@ struct CalendarSettingsSection: View {
                 CalendarGroupBlock(title: "In heyflare", calendars: local, onChange: refreshOne, empty: "None yet.") {
                     WButton("New calendar", icon: "plus", variant: .outline, size: .sm) {
                         creating = true
-                        Task { defer { creating = false }; if let c = try? await CalendarAPI.createSource(name: "New calendar", color: "#111111") { calendars.append(c); Toasts.shared.show("Calendar added") } }
+                        Task {
+                            defer { creating = false }
+                            do { let c = try await CalendarAPI.createSource(name: "New calendar", color: "#111111"); calendars.append(c); Toasts.shared.show("Calendar added") }
+                            catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+                        }
                     }
                     .disabled(creating)
                 }
@@ -585,6 +601,8 @@ struct CalendarSettingsSection: View {
         }
         CalendarPreferencesSection()
         .task { await load() }
+        // A removal, a new default or a sync elsewhere changes this list too.
+        .onChange(of: CalendarBus.shared.revision) { _, _ in Task { await load() } }
     }
 
     private func load() async {
@@ -779,7 +797,9 @@ private struct CalendarSourceRow: View {
 
     private func apply(isDefault: Bool) {
         Task {
-            do { onChange(try await CalendarAPI.updateSource(id: source.id, isDefault: isDefault)) }
+            // The worker clears the old default; the bus makes the list re-read so only one
+            // row says Default.
+            do { onChange(try await CalendarAPI.updateSource(id: source.id, isDefault: isDefault)); CalendarBus.shared.changed() }
             catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
         }
     }
@@ -823,6 +843,7 @@ private struct ColorRamp: View {
 /// left read-only there; the Mac is a desk too, so this is the second client that can change it.
 private struct CalendarPreferencesSection: View {
     @State private var prefs: CalPrefs?
+    @State private var loadError: String?
     @State private var saving = false
 
     var body: some View {
@@ -863,10 +884,14 @@ private struct CalendarPreferencesSection: View {
                     .help("Change the timezone on the web for the full list")
                 }
             } else {
-                SkeletonRows(rows: 3)
+                if let loadError { Text(loadError).font(W.s13).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 8) }
+                else { SkeletonRows(rows: 3) }
             }
         }
-        .task { prefs = try? await CalendarAPI.settings() }
+        .task {
+            do { prefs = try await CalendarAPI.settings() }
+            catch { loadError = (error as? APIError)?.errorDescription ?? error.localizedDescription }
+        }
     }
 
     @ViewBuilder

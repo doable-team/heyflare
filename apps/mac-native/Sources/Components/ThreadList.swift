@@ -338,6 +338,9 @@ struct ThreadListView: View {
             "#": { act(targets(), .move(.trash), "Moved to trash") },
             "u": { act(targets(), .markUnread, nil, removes: false) },
         ], enabled: keysEnabled && ui.region == .content)
+        // `b` and `g` only mean something with a selection, so they bind only then.
+        .onKeys(["b": { BulkBar.labelSelection(selected, all, pops: PopLayerState.shared) }, "g": { BulkBar.mergeSelection(selected, all) { selected = [] } }],
+                enabled: keysEnabled && ui.region == .content && !selected.isEmpty)
         // A bound key is a claimed key, so these only bind while they have something to
         // do: the Imbox's own `o` and a page's Escape get through otherwise.
         .onKeys(["Enter": { open() }, "o": { open() }], enabled: keysEnabled && ui.region == .content && cursor >= 0 && cursor < items.count)
@@ -491,13 +494,7 @@ struct BulkBar: View {
                 }
             }
             .popAnchor("bulk-move")
-            WButton("Label", icon: "tag", variant: .ghost, size: .sm, muted: true) {
-                let ids = Array(selected)
-                let common = Set(sel.first.map { first in first.labels.map(\.id).filter { id in sel.allSatisfy { $0.labels.contains { $0.id == id } } } } ?? [])
-                pops.toggle("bulk-label", side: .bottom, align: .start) {
-                    PopCard(padding: 0) { LabelPicker(current: common, onToggle: { id, on in Mail.bulk(ids, .labels(add: on ? [id] : [], remove: on ? [] : [id])) }, onClose: { pops.closeAll() }) }
-                }
-            }
+            WButton("Label", icon: "tag", variant: .ghost, size: .sm, muted: true) { Self.labelSelection(selected, threads, pops: pops) }
             .popAnchor("bulk-label")
             WButton("Collect", icon: "folderPlus", variant: .ghost, size: .sm, muted: true) {
                 let ids = Array(selected)
@@ -507,13 +504,7 @@ struct BulkBar: View {
             }
             .popAnchor("bulk-collect")
             if selected.count >= 2 {
-                WButton("Merge", icon: "gitMerge", variant: .ghost, size: .sm, muted: true) {
-                    let sorted = sel.sorted { $0.lastMessageAt > $1.lastMessageAt }
-                    guard let target = sorted.first else { return }
-                    Task {
-                        if await Mail.raw(target.id, ["action": "merge", "thread_ids": sorted.dropFirst().map(\.id)], toast: "Merged \(selected.count) threads") { onClear() }
-                    }
-                }
+                WButton("Merge", icon: "gitMerge", variant: .ghost, size: .sm, muted: true) { Self.mergeSelection(selected, threads, onClear: onClear) }
             }
             Spacer()
             WButton(icon: "trash2", variant: .ghost, size: .iconSm, muted: true, help: "Trash  #") { onAct(.move(.trash), "Moved to trash", true) }
@@ -524,6 +515,27 @@ struct BulkBar: View {
         .edgeLine(.bottom)
         .padding(.horizontal, -8)
         .padding(.bottom, 4)
+    }
+}
+
+extension BulkBar {
+    /// The label picker over the selection, from the bar's button or the `b` key.
+    static func labelSelection(_ selected: Set<String>, _ threads: [ThreadSummary], pops: PopLayerState) {
+        let sel = threads.filter { selected.contains($0.id) }
+        let ids = Array(selected)
+        let common = Set(sel.first.map { first in first.labels.map(\.id).filter { id in sel.allSatisfy { $0.labels.contains { $0.id == id } } } } ?? [])
+        pops.toggle("bulk-label", side: .bottom, align: .start) {
+            PopCard(padding: 0) { LabelPicker(current: common, onToggle: { id, on in Mail.bulk(ids, .labels(add: on ? [id] : [], remove: on ? [] : [id])) }, onClose: { pops.closeAll() }) }
+        }
+    }
+
+    /// Merges the selection into its newest thread, from the bar's button or the `g` key.
+    static func mergeSelection(_ selected: Set<String>, _ threads: [ThreadSummary], onClear: @escaping () -> Void) {
+        let sorted = threads.filter { selected.contains($0.id) }.sorted { $0.lastMessageAt > $1.lastMessageAt }
+        guard sorted.count >= 2, let target = sorted.first else { return }
+        Task {
+            if await Mail.raw(target.id, ["action": "merge", "thread_ids": sorted.dropFirst().map(\.id)], toast: "Merged \(sorted.count) threads") { onClear() }
+        }
     }
 }
 
@@ -544,7 +556,19 @@ struct LoadMore: View {
                 Spacer()
             }
             .padding(.vertical, 24)
-            .onAppear { if hasMore && !loading { onMore() } }
+            // The web's IntersectionObserver: the next page is asked for when the footer is
+            // near the window, and asked again once that page has landed if it still is.
+            .background(GeometryReader { g in
+                Color.clear
+                    .onChange(of: g.frame(in: .named("window")).minY, initial: true) { _, y in top = y; nudge() }
+            })
+            .onChange(of: loading) { _, l in if !l { nudge() } }
         }
+    }
+
+    @Environment(UIState.self) private var ui
+    @State private var top: CGFloat = .infinity
+    private func nudge() {
+        if hasMore && !loading && top < ui.viewportHeight + 300 { onMore() }
     }
 }

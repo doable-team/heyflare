@@ -269,3 +269,102 @@ private extension View {
             .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.radius, style: .continuous))
     }
 }
+
+/// First run only: a server with nobody on it yet asks for its owner (`Setup.tsx`).
+struct SetupView: View {
+    @Environment(AppState.self) private var app
+    @State private var name = ""
+    @State private var email = ""
+    @State private var password = ""
+    @State private var busy = false
+    @State private var error: String?
+    @FocusState private var field: Field?
+
+    private enum Field { case name, email, password }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Wordmark(size: 20)
+                .padding(.bottom, 28)
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Set up your login")
+                    .font(Theme.Typography.section)
+                    .foregroundStyle(Theme.Colors.foreground)
+                Text("This is a private, single-owner heyflare. You only do this once.")
+                    .font(Theme.Typography.small)
+                    .foregroundStyle(Theme.Colors.mutedForeground)
+                    .padding(.bottom, 8)
+
+                TextField("Your name", text: $name)
+                    .textContentType(.name)
+                    .focused($field, equals: .name)
+                    .submitLabel(.next)
+                    .onSubmit { field = .email }
+                    .fieldStyle()
+
+                TextField("Email", text: $email)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.emailAddress)
+                    .textContentType(.username)
+                    .focused($field, equals: .email)
+                    .submitLabel(.next)
+                    .onSubmit { field = .password }
+                    .fieldStyle()
+
+                SecureField("Password (at least 8 characters)", text: $password)
+                    .textContentType(.newPassword)
+                    .focused($field, equals: .password)
+                    .submitLabel(.go)
+                    .onSubmit { Task { await submit() } }
+                    .fieldStyle()
+
+                Button {
+                    Task { await submit() }
+                } label: {
+                    if busy { ProgressView().tint(Theme.Colors.background) } else { Text("Create my login") }
+                }
+                .buttonStyle(FilledButtonStyle())
+                .disabled(busy || email.isEmpty || password.count < 8)
+                .opacity(email.isEmpty || password.count < 8 ? 0.4 : 1)
+                .padding(.top, 4)
+            }
+            .onAppear { field = .name }
+
+            if let error {
+                Text(error)
+                    .font(Theme.Typography.small)
+                    .foregroundStyle(Theme.Colors.foreground)
+                    .padding(.top, 12)
+            }
+
+            Spacer()
+
+            Button {
+                Task { await app.clearServer() }
+            } label: {
+                Text(app.serverHost.isEmpty ? "Change server" : app.serverHost)
+                    .font(Theme.Typography.small)
+                    .foregroundStyle(Theme.Colors.mutedForeground)
+            }
+            .padding(.bottom, 12)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 72)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .screenBackground()
+    }
+
+    private func submit() async {
+        busy = true
+        error = nil
+        defer { busy = false }
+        do {
+            try await APIClient.shared.setup(email: email.trimmingCharacters(in: .whitespaces), name: name.trimmingCharacters(in: .whitespaces), password: password)
+            await app.loadSession()
+        } catch {
+            self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+}

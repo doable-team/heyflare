@@ -60,6 +60,7 @@ struct ScreenerPage: View {
                 "2": { if let e = current { store.setTarget(.feed, for: e) } },
                 "3": { if let e = current { store.setTarget(.paperTrail, for: e) } },
             ], enabled: !store.entries.isEmpty && ui.region == .content)
+            .onChange(of: store.entries.count) { _, n in if cursor >= n { cursor = max(n - 1, 0) } }
         }
     }
 
@@ -69,7 +70,9 @@ struct ScreenerPage: View {
         guard leaving[e.id] == nil else { return }
         leaving[e.id] = d != .screenedOut
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            guard let index = store.index(of: e.id) else { return }
+            // A refresh during the fade can have dropped the row already; the decision still
+            // goes to the server, there is just nothing to put back if it fails.
+            let index = store.index(of: e.id) ?? store.entries.count
             store.remove(e.id)
             leaving[e.id] = nil
             Task {

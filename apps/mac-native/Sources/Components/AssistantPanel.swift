@@ -68,10 +68,15 @@ struct AssistantPanel: View {
         // A chat started here gets its id from the stream; the switcher must learn about it.
         .onChange(of: ui.assistantConversationID) { _, id in if id != nil { Task { await list.refresh() } } }
         .onChange(of: pops.isOpen("assistant-convs")) { _, open in if open { Task { await list.refresh() } } }
-        .onAppear {
-            if case .thread(let id, _) = router.route, let chip = ui.currentThread, chip.id == id { ui.addContext(chip) }
-        }
+        .onAppear { attachCurrentThread() }
+        // `AssistantPanel.tsx`: the thread on screen rides along whenever it changes while
+        // the panel is open, including when it finishes loading after the panel did.
+        .onChange(of: ui.currentThread?.id) { _, _ in attachCurrentThread() }
         .onKeys(["Escape": { ui.closeAssistant() }], enabled: ui.region == .assistant, priority: 5)
+    }
+
+    private func attachCurrentThread() {
+        if case .thread(let id, _) = router.route, let chip = ui.currentThread, chip.id == id { ui.addContext(chip) }
     }
 
     @ViewBuilder
@@ -85,7 +90,7 @@ struct AssistantPanel: View {
                         if gi > 0 { MenuSeparator() }
                         MenuLabel(g.label)
                         ForEach(g.items) { c in
-                            ConversationRow(conversation: c, current: c.id == ui.assistantConversationID, onPick: { pops.closeAll(); if ui.assistantConversationID != c.id { ui.assistantConversationID = c.id; chatKey += 1 } }, onDelete: {
+                            ConversationRow(conversation: c, current: c.id == ui.assistantConversationID, onPick: { pops.closeAll(); if ui.assistantConversationID != c.id { ui.assistantConversationID = c.id; ui.assistantContext = []; chatKey += 1 } }, onDelete: {
                                 Task {
                                     await list.delete(c.id)
                                     Toasts.shared.show("Deleted")
@@ -261,6 +266,9 @@ struct AssistantChat: View {
         }
         .task { await store.loadHistory() }
         .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { focused = true } }
+        // The web has no "assistant" region: list keys work with the panel open whenever
+        // nobody is typing into it. Focus leaving the field hands the keys back to the page.
+        .onChange(of: focused) { _, f in if f { ui.region = .assistant } else if ui.region == .assistant { ui.region = .content } }
         .onChange(of: store.conversationID) { _, id in if let id, ui.assistantConversationID == nil { ui.assistantConversationID = id } }
     }
 
@@ -268,7 +276,11 @@ struct AssistantChat: View {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !store.streaming, !notConfigured else { return }
         input = ""
-        store.send(text, contextThreadIDs: ui.assistantContext.map(\.id))
+        // `AssistantChat.tsx`: at most three threads ride along, and once sent they are
+        // spent — the worker keeps them in the conversation, so re-sending re-reads them.
+        let ids = ui.assistantContext.prefix(3).map(\.id)
+        store.send(text, contextThreadIDs: ids)
+        ui.assistantContext.removeAll { ids.contains($0.id) }
     }
 
     @ViewBuilder

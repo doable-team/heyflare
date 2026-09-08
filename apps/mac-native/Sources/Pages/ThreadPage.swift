@@ -17,7 +17,9 @@ func replyInitial(_ thread: ThreadSummary, _ m: Message, _ mode: ReplyMode, myEm
         let header = "<div>---------- Forwarded message ----------<br>From: \(esc(m.from.name)) &lt;\(esc(m.from.email))&gt;<br>Date: \(Fmt.full(m.date))<br>Subject: \(esc(m.subject))<br>To: \(esc(m.to.map(\.email).joined(separator: ", ")))</div><br>"
         return ComposerInitial(accountID: thread.accountID, subject: subj.range(of: "^fwd?:", options: [.regularExpression, .caseInsensitive]) != nil ? subj : "Fwd: \(subj)", quotedHTML: header + body, title: "Forward")
     }
-    var to: [Address] = m.isFromMe ? m.to : [m.from]
+    // `reply.ts`: a Reply-To header names where the answer goes; the name stays the sender's.
+    let replyTarget = m.replyTo.isEmpty ? m.from : Address(email: m.replyTo.lowercased(), name: m.from.name)
+    var to: [Address] = m.isFromMe ? m.to : [replyTarget]
     var cc: [Address] = []
     if mode == .replyAll {
         let seen = Set(to.map(\.email))
@@ -98,8 +100,10 @@ struct ThreadPageView: View {
             "u": { run(.markUnread, "Marked unread") },
             "n": { noteOpen = true },
             "#": { run(.move(.trash), "Moved to trash"); router.back() },
-            "Escape": { if let reply { Task { await reply.model.saveAndClose() } } else { router.back() } },
+            "Escape": { if let reply { Task { await reply.model.closeInline() } } else { router.back() } },
         ], enabled: !renaming && !noteOpen && ui.region == .content)
+        // Escape backs out of a rename or a note, as the web's inputs do.
+        .onKeys(["Escape": { renaming = false; noteOpen = false }], enabled: renaming || noteOpen, priority: 10, whileTyping: true)
     }
 
     private func seed() {
@@ -269,7 +273,7 @@ struct ThreadPageView: View {
                             Text("to \(reply.message.isFromMe ? reply.message.to.map { $0.name.isEmpty ? $0.email : $0.name }.joined(separator: ", ") : (reply.message.from.name.isEmpty ? reply.message.from.email : reply.message.from.name))").font(W.s13).foregroundStyle(W.mutedForeground).lineLimit(1)
                         }
                         Spacer()
-                        WButton(icon: "x", variant: .ghost, size: .iconXs, muted: true, help: "Close") { Task { await reply.model.saveAndClose() } }
+                        WButton(icon: "x", variant: .ghost, size: .iconXs, muted: true, help: "Close") { Task { await reply.model.closeInline() } }
                     }
                     .padding(.horizontal, 12).frame(height: 36).edgeLine(.bottom)
                     ComposerView(model: reply.model, inline: true)
@@ -365,12 +369,12 @@ struct ThreadPageView: View {
             MenuItem("Rename subject", icon: "pencil") { subjectDraft = s.subject; renaming = true }
             MenuItem(s.note.isEmpty ? "Stick a note on it" : "Edit note", icon: "stickyNote", shortcut: "n") { noteOpen = true }
             MenuItem("Labels", icon: "tag") {
-                pops.open("thread-labels", side: .top, align: .end) {
+                pops.open("thread-more", side: .top, align: .end) {
                     PopCard(padding: 0) { LabelPicker(current: Set(s.labels.map(\.id)), onToggle: { id, on in run(.labels(add: on ? [id] : [], remove: on ? [] : [id]), nil) }, onClose: { pops.closeAll() }) }
                 }
             }
             MenuItem("Collections", icon: "folderOpen") {
-                pops.open("thread-collections", side: .top, align: .end) {
+                pops.open("thread-more", side: .top, align: .end) {
                     PopCard(padding: 0) { CollectionPicker(current: Set(t.collections.map(\.id)), onToggle: { id, on in Task { await Mail.raw(t.id, ["action": "collections", (on ? "add" : "remove"): [id]]); await store.reload(t.id) } }, onClose: { pops.closeAll() }) }
                 }
             }

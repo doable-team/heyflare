@@ -45,6 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         // Opening the hosted window is the whole reopen; letting SwiftUI add a WindowGroup
         // window too would run a second RootHost.
+        // A minimised window does not count as visible, but it is still the window.
+        if let w = NSApp.windows.first(where: { $0.isMiniaturized }) { w.deminiaturize(nil); return false }
         if !flag { openHostedWindow(); return false }
         return true
     }
@@ -210,6 +212,8 @@ struct RootView: View {
                 ServerSetupPage()
             case .signedOut(let message):
                 LoginPage(initialMessage: message)
+            case .needsSetup:
+                SetupPage()
             case .signedIn:
                 AppShell()
             }

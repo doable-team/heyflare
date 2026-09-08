@@ -488,7 +488,10 @@ struct CollectionDetailPage: View {
                                 MenuSeparator()
                                 MenuItem("Delete collection", icon: "trash2") {
                                     dialogs.confirm(title: "Delete this collection?", description: "Threads and files stay where they are; only the grouping goes away.", action: "Delete") {
-                                        Task { try? await APIClient.shared.delete("/api/collections/\(c.id)"); router.go(.collections) }
+                                        Task {
+                                            do { try await APIClient.shared.delete("/api/collections/\(c.id)"); router.go(.collections) }
+                                            catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+                                        }
                                     }
                                 }
                             }
@@ -727,7 +730,10 @@ private struct LabelRow: View {
             Button { router.go(.label(label.id)) } label: { HStack(spacing: 4) { Text("Threads"); Icon("arrowRight", size: 12) }.font(W.s13).foregroundStyle(W.mutedForeground) }.buttonStyle(.plain)
             WButton(icon: "trash2", variant: .ghost, size: .iconXs, muted: true, help: "Delete") {
                 dialogs.confirm(title: "Delete “\(label.name)”?", description: "It comes off every thread. The threads themselves stay put.", action: "Delete label") {
-                    Task { try? await APIClient.shared.delete("/api/labels/\(label.id)"); onChanged() }
+                    Task {
+                        do { try await APIClient.shared.delete("/api/labels/\(label.id)") } catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+                        onChanged()
+                    }
                 }
             }
             .opacity(hovering ? 1 : 0)

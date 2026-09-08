@@ -33,7 +33,7 @@ struct HtmlBodyView: View {
                     .padding(.bottom, 8)
             }
             ZStack(alignment: .topLeading) {
-                MessageWebView(document: document, controller: controller, height: $height, ready: $ready, quoteCount: $quoteCount, selection: $selection, onLink: { NSWorkspace.shared.open($0) })
+                MessageWebView(document: document, controller: controller, height: $height, ready: $ready, quoteCount: $quoteCount, selection: $selection, onLink: { NSWorkspace.shared.open($0) }, collapseQuotes: collapseQuotes)
                     // A theme switch reloads the document, and the script collapses quotes again.
                     .onChange(of: scheme) { _, _ in quotesShown = false }
                     .frame(height: max(height, ready ? 0 : 48))
@@ -150,6 +150,7 @@ struct MessageWebView: NSViewRepresentable {
     @Binding var quoteCount: Int
     @Binding var selection: (text: String, x: CGFloat, y: CGFloat)?
     var onLink: (URL) -> Void
+    var collapseQuotes = true
 
     static let script = """
     (function(){
@@ -158,7 +159,7 @@ struct MessageWebView: NSViewRepresentable {
       const tops = () => { const n = Array.from(document.querySelectorAll(Q)); return n.filter(x => !n.some(o => o !== x && o.contains(x))); };
       window.__hf = { quotes(show) { for (const n of tops()) n.classList.toggle("hey-quoted-hidden", !show); setTimeout(measure, 30); } };
       function measure(){ const b = document.body; if(!b) return; const h = Math.max(b.getBoundingClientRect().height, b.offsetHeight, b.scrollHeight); post({type:"height", h: Math.min(Math.ceil(h)+2, 20000)}); }
-      const t = tops(); for (const n of t) n.classList.add("hey-quoted-hidden");
+      const t = tops(); if (__COLLAPSE__) for (const n of t) n.classList.add("hey-quoted-hidden");
       post({type:"quotes", count: t.length});
       measure();
       try { new ResizeObserver(measure).observe(document.body); } catch(e){}
@@ -204,7 +205,7 @@ struct MessageWebView: NSViewRepresentable {
         config.defaultWebpagePreferences.allowsContentJavaScript = false
         let user = WKUserContentController()
         user.add(context.coordinator, name: "hf")
-        user.addUserScript(WKUserScript(source: Self.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        user.addUserScript(WKUserScript(source: Self.script.replacingOccurrences(of: "__COLLAPSE__", with: collapseQuotes ? "true" : "false"), injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         config.userContentController = user
         let view = WKWebView(frame: .zero, configuration: config)
         view.navigationDelegate = context.coordinator

@@ -7,10 +7,15 @@ struct CalendarPage: View {
     @Environment(UIState.self) private var ui
     @Environment(SheetState.self) private var sheet
     @Environment(DialogState.self) private var dialogs
+    @Environment(PopLayerState.self) private var pops
+    @Environment(Router.self) private var router
     @State private var store = CalendarStore()
     @State private var view = "week"
+    @State private var viewChosen = false
     @State private var cursor: String = CalDate.todayKey
     @State private var revision = 0
+    /// Bumped by Today/`t` so the week stack re-centres even when the cursor did not move.
+    @State private var reveal = 0
 
     private var cal: Calendar { store.calendar }
     private var cursorDate: Date { CalDate.date(fromKey: cursor, in: cal) ?? Date() }
@@ -21,11 +26,13 @@ struct CalendarPage: View {
             switch view {
             case "year": YearView(store: store, cursor: $cursor, onPick: { cursor = $0; view = "week" })
             case "days": ScrollView { DayColumnView(store: store, dayKey: cursor, onEvent: edit, onCreate: create).padding(.bottom, 24) }
-            default: WeekStack(store: store, cursor: cursor, onEvent: edit, onCreate: create)
+            default: WeekStack(store: store, cursor: cursor, reveal: reveal, onEvent: edit, onCreate: create)
             }
         }
         .task {
             await store.loadPrefs()
+            // `CalendarContext.tsx`: the saved default view applies until a view is picked.
+            if !viewChosen, ["days", "week", "year"].contains(store.prefs.defaultView) { view = store.prefs.defaultView }
             await ensure()
             if let draft = ui.pendingEvent { ui.pendingEvent = nil; create(day: draft.dayKey, start: draft.startMinutes, end: draft.endMinutes, draft: draft) }
         }
@@ -33,8 +40,9 @@ struct CalendarPage: View {
         .onChange(of: CalendarBus.shared.revision) { _, _ in Task { await store.refresh(month: cursorDate); revision += 1 } }
         .onKeys([
             "ArrowUp": { step(-1) }, "ArrowDown": { step(1) },
-            "t": { cursor = CalDate.todayKey }, "d": { view = "days" }, "w": { view = "week" }, "y": { view = "year" },
+            "t": { goToday() }, "d": { pick("days") }, "w": { pick("week") }, "y": { pick("year") },
             "n": { create(day: cursor, start: 9 * 60, end: 10 * 60) },
+            "j": { router.go(.journal) }, "b": { router.go(.habits) },
             "PageUp": { cursor = CalDate.addingDays(-7, toKey: cursor, in: cal) }, "PageDown": { cursor = CalDate.addingDays(7, toKey: cursor, in: cal) },
         ], enabled: ui.region == .content && !sheet.isOpen && !dialogs.isOpen)
     }
@@ -44,6 +52,9 @@ struct CalendarPage: View {
         await store.ensure(month: cal.date(byAdding: .month, value: 1, to: cursorDate) ?? cursorDate)
         await store.ensure(month: cal.date(byAdding: .month, value: -1, to: cursorDate) ?? cursorDate)
     }
+
+    private func pick(_ v: String) { view = v; viewChosen = true }
+    private func goToday() { cursor = CalDate.todayKey; reveal += 1 }
 
     private func step(_ d: Int) {
         switch view {
@@ -61,12 +72,12 @@ struct CalendarPage: View {
         HStack(spacing: 6) {
             WButton(icon: "chevronLeft", variant: .ghost, size: .iconSm, help: "Previous") { step(-1) }
             WButton(icon: "chevronRight", variant: .ghost, size: .iconSm, help: "Next") { step(1) }
-            WButton("Today", variant: .ghost, size: .sm) { cursor = CalDate.todayKey }
+            WButton("Today", variant: .ghost, size: .sm) { goToday() }
             Text(title).font(W.font(14, 500)).monospacedDigit().padding(.leading, 4)
             Spacer()
             HStack(spacing: 0) {
                 ForEach([("days", "Day", "d"), ("week", "Week", "w"), ("year", "Year", "y")], id: \.0) { v in
-                    Button { view = v.0 } label: {
+                    Button { pick(v.0) } label: {
                         Text(v.1).font(W.font(12.8, 500)).foregroundStyle(view == v.0 ? W.foreground : W.mutedForeground)
                             .padding(.horizontal, 10).frame(height: 24).background(view == v.0 ? W.muted : Color.clear).rounded(W.radiusSm + 2).contentShape(Rectangle())
                     }
@@ -74,7 +85,10 @@ struct CalendarPage: View {
                 }
             }
             .padding(2).overlay(RoundedRectangle(cornerRadius: W.radiusMd, style: .continuous).strokeBorder(W.border, lineWidth: 1))
-            WButton(icon: "calendarDays", variant: .ghost, size: .iconSm, muted: true, help: "Calendars") {}
+            WButton(icon: "calendarDays", variant: .ghost, size: .iconSm, muted: true, help: "Calendars") {
+                pops.toggle("cal-visible", side: .bottom, align: .end) { CalendarsMenu(store: store) }
+            }
+            .popAnchor("cal-visible")
             WButton("New", icon: "plus", size: .sm, kbd: "n") { create(day: cursor, start: 9 * 60, end: 10 * 60) }
         }
         .padding(.bottom, 8)
@@ -96,6 +110,7 @@ struct CalendarPage: View {
 struct WeekStack: View {
     let store: CalendarStore
     let cursor: String
+    var reveal = 0
     var onEvent: (CalEventFull) -> Void
     var onCreate: (String, Int, Int, EventDraft?) -> Void
 
@@ -116,6 +131,7 @@ struct WeekStack: View {
             .scrollIndicators(.never)
             .onAppear { proxy.scrollTo(0, anchor: .top) }
             .onChange(of: cursor) { _, _ in proxy.scrollTo(0, anchor: .top) }
+            .onChange(of: reveal) { _, _ in proxy.scrollTo(0, anchor: .top) }
         }
     }
 
@@ -182,8 +198,9 @@ struct WeekView: View {
                                 ForEach(0..<24, id: \.self) { _ in Rectangle().fill(Color.clear).frame(height: hourHeight).overlay(alignment: .top) { Rectangle().fill(W.border.opacity(0.6)).frame(height: 1) } }
                             }
                             ForEach(events.timed) { e in
-                                let top = CGFloat(CalDate.minutesOfDay(e.startsAt, in: cal)) / 60 * hourHeight
-                                let height = max(14, CGFloat(e.endsAt - e.startsAt) / 3_600_000 * hourHeight)
+                                let span = CalDate.clipToDay(e, day: day, in: cal)
+                                let top = CGFloat(span.start) / 60 * hourHeight
+                                let height = max(14, CGFloat(span.end - span.start) / 60 * hourHeight)
                                 EventBlock(event: e, onTap: { onEvent(e) })
                                     .frame(height: height)
                                     .padding(.horizontal, 2)
@@ -242,13 +259,13 @@ struct WeekView: View {
     /// `heyTime` in calendar/scale.ts: "11:34AM", "11AM", or "23:34" — never a space.
     private func heyTime(_ d: Date) -> String {
         let h = cal.component(.hour, from: d), m = cal.component(.minute, from: d)
-        if store.prefs.timeFormat == "24h" { return String(format: "%02d:%02d", h, m) }
+        if store.prefs.timeFormat == "24" { return String(format: "%02d:%02d", h, m) }
         let hh = h % 12 == 0 ? 12 : h % 12
         let ap = h < 12 ? "AM" : "PM"
         return m == 0 ? "\(hh)\(ap)" : "\(hh):\(String(format: "%02d", m))\(ap)"
     }
     private func hourLabel(_ h: Int) -> String {
-        if store.prefs.timeFormat == "24h" { return String(format: "%02d", h) }
+        if store.prefs.timeFormat == "24" { return String(format: "%02d", h) }
         let x = h % 12 == 0 ? 12 : h % 12
         return "\(x)\(h < 12 ? "a" : "p")"
     }
@@ -303,8 +320,9 @@ struct DayColumnView: View {
                 ZStack(alignment: .top) {
                     VStack(spacing: 0) { ForEach(0..<24, id: \.self) { _ in Rectangle().fill(Color.clear).frame(height: hourHeight).overlay(alignment: .top) { Rectangle().fill(W.border).frame(height: 1) } } }
                     ForEach(events.timed) { e in
-                        let top = CGFloat(CalDate.minutesOfDay(e.startsAt, in: cal)) / 60 * hourHeight
-                        let height = max(20, CGFloat(e.endsAt - e.startsAt) / 3_600_000 * hourHeight)
+                        let span = CalDate.clipToDay(e, day: day, in: cal)
+                        let top = CGFloat(span.start) / 60 * hourHeight
+                        let height = max(20, CGFloat(span.end - span.start) / 60 * hourHeight)
                         EventBlock(event: e, onTap: { onEvent(e) }).frame(height: height).padding(.horizontal, 4).offset(y: top)
                     }
                 }
@@ -416,16 +434,48 @@ struct EventSheet: View {
             HStack(spacing: 8) {
                 if let e = event, e.writable {
                     WButton("Delete", icon: "trash2", variant: .ghost, size: .sm, muted: true) {
-                        dialogs.confirm(title: "Delete this event?", action: "Delete") { Task { try? await CalendarAPI.deleteEvent(id: e.id, scope: nil); CalendarBus.shared.changed(); sheet.dismiss() } }
+                        if e.recurring { askScope(delete: true) { scope in Task { await remove(e, scope: scope) } } }
+                        else { dialogs.confirm(title: "Delete this event?", action: "Delete") { Task { await remove(e, scope: nil) } } }
                     }
                 }
                 Spacer()
                 WButton("Cancel", variant: .ghost) { sheet.dismiss() }
-                WButton(event == nil ? "Create" : "Save") { Task { await save() } }.disabled(busy || title.trimmingCharacters(in: .whitespaces).isEmpty || !writable)
+                WButton(event == nil ? "Create" : "Save") { requestSave() }.disabled(busy || title.trimmingCharacters(in: .whitespaces).isEmpty || !writable)
             }
             .padding(12).edgeLine(.top)
         }
         .onAppear(perform: seed)
+    }
+
+    /// `requestSave` in EventSheet.tsx: a repeating event asks which occurrences a save means.
+    /// Not a Google-expanded series, whose rows carry no rule, so every scope would be the same.
+    private func requestSave() {
+        if let e = event, e.recurring, !e.series { askScope(delete: false) { scope in Task { await save(scope: scope) } } }
+        else { Task { await save(scope: nil) } }
+    }
+
+    private func askScope(delete: Bool, then: @escaping (EventScope) -> Void) {
+        let id = "event-scope"
+        dialogs.present(id) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(delete ? "Delete which events?" : "Save to which events?").font(W.font(16, 500)).webLine(16, weight: 500).foregroundStyle(W.foreground)
+                Text("“\(title.trimmingCharacters(in: .whitespaces).isEmpty ? "This event" : title.trimmingCharacters(in: .whitespaces))” repeats. Choose how far the change reaches.")
+                    .font(W.sm).foregroundStyle(W.mutedForeground).fixedSize(horizontal: false, vertical: true)
+                VStack(spacing: 6) {
+                    ForEach(EventScope.allCases, id: \.self) { scope in
+                        WButton(scope.title, variant: .outline, fullWidth: true) { dialogs.dismiss(id); then(scope) }
+                    }
+                }
+                .padding(.top, 8)
+                HStack { Spacer(); WButton("Cancel", variant: .outline) { dialogs.dismiss(id) } }.padding(.top, 8)
+            }
+            .padding(16)
+        }
+    }
+
+    private func remove(_ e: CalEventFull, scope: EventScope?) async {
+        do { try await CalendarAPI.deleteEvent(id: e.id, scope: scope); CalendarBus.shared.changed(); sheet.dismiss() }
+        catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? "Couldn't delete this event.") }
     }
 
     private func field<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
@@ -444,11 +494,21 @@ struct EventSheet: View {
             if let draft { title = draft.title; notes = draft.description; start = Date(timeIntervalSince1970: draft.startsAt / 1000); end = Date(timeIntervalSince1970: draft.endsAt / 1000) }
         case .edit(let e):
             title = e.title; calendarID = e.calendarID; allDay = e.allDay
-            start = e.start; end = e.end; location = e.location; notes = e.description; url = e.url
+            location = e.location; notes = e.description; url = e.url
+            if e.allDay {
+                // `ends_at` on an all-day row is the midnight *after* the last day, and Google's
+                // rows carry UTC midnights: the date strings are the days the person means
+                // (`makeForm` in EventSheet.tsx). Seeding from the instants grew the event by a
+                // day on every save.
+                start = CalDate.date(fromKey: e.startDate ?? CalDate.key(e.start, in: cal), in: cal) ?? e.start
+                end = CalDate.date(fromKey: e.endDate ?? CalDate.key(e.end.addingTimeInterval(-1), in: cal), in: cal) ?? e.end
+            } else {
+                start = e.start; end = e.end
+            }
         }
     }
 
-    private func save() async {
+    private func save(scope: EventScope?) async {
         busy = true; defer { busy = false }
         let cal = store.calendar
         var input = EventInput()
@@ -470,9 +530,41 @@ struct EventSheet: View {
         }
         if let draft, !draft.attendees.isEmpty { input.attendees = draft.attendees.map { ["email": $0.email, "name": $0.name] } }
         do {
-            if let event { _ = try await CalendarAPI.updateEvent(id: event.id, scope: nil, input: input) } else { _ = try await CalendarAPI.createEvent(input) }
+            if let event { _ = try await CalendarAPI.updateEvent(id: event.id, scope: scope, input: input) } else { _ = try await CalendarAPI.createEvent(input) }
             CalendarBus.shared.changed()
             sheet.dismiss()
         } catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? "Couldn't save this event.") }
+    }
+}
+
+
+/// `CalendarToolbar.tsx`: the calendars, ticked to show, with Refresh all and Manage.
+private struct CalendarsMenu: View {
+    let store: CalendarStore
+    @Environment(PopLayerState.self) private var pops
+    @Environment(Router.self) private var router
+    @State private var syncing = false
+
+    var body: some View {
+        PopCard(width: 240) {
+            if store.calendars.isEmpty {
+                Text("No calendars yet.").font(W.sm).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 6)
+            }
+            ForEach(store.calendars) { c in
+                MenuItem(c.name, checked: c.visible) {
+                    Task {
+                        do { _ = try await CalendarAPI.updateSource(id: c.id, visible: !c.visible); await store.loadCalendars(); CalendarBus.shared.changed() }
+                        catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+                    }
+                }
+            }
+            MenuSeparator()
+            MenuItem(syncing ? "Refreshing…" : "Refresh all", icon: "refreshCw") {
+                guard !syncing else { return }
+                syncing = true
+                Task { defer { syncing = false }; try? await CalendarAPI.syncSources(); CalendarBus.shared.changed() }
+            }
+            MenuItem("Manage calendars", icon: "settings") { pops.closeAll(); router.go(.settings("calendar")) }
+        }
     }
 }

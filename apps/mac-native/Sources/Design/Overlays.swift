@@ -159,19 +159,23 @@ struct MenuItem: View {
     var shortcut: String?
     var checked: Bool? = nil
     var disabled = false
+    /// A menu closes every popover when a row is picked. A select that lives *inside* another
+    /// popover (the time list under "Pick a date…") must only close itself, or the parent and
+    /// the choice go with it.
+    var closesAll = true
     var trailing: AnyView? = nil
     var action: () -> Void
     @State private var hovering = false
     @Environment(PopLayerState.self) private var pops
 
-    init(_ label: String, icon: String? = nil, glyph: String? = nil, shortcut: String? = nil, checked: Bool? = nil, disabled: Bool = false, action: @escaping () -> Void) {
-        self.label = label; self.icon = icon; self.glyph = glyph; self.shortcut = shortcut; self.checked = checked; self.disabled = disabled; self.action = action
+    init(_ label: String, icon: String? = nil, glyph: String? = nil, shortcut: String? = nil, checked: Bool? = nil, disabled: Bool = false, closesAll: Bool = true, action: @escaping () -> Void) {
+        self.label = label; self.icon = icon; self.glyph = glyph; self.shortcut = shortcut; self.checked = checked; self.disabled = disabled; self.closesAll = closesAll; self.action = action
     }
 
     var body: some View {
         Button {
             guard !disabled else { return }
-            pops.closeAll()
+            if closesAll { pops.closeAll() }
             action()
         } label: {
             HStack(spacing: 6) {
@@ -225,7 +229,8 @@ final class DialogState {
         stack.append(Entry(id: id, width: width, dismissible: dismissible, content: AnyView(content())))
     }
     func dismiss(_ id: String) { stack.removeAll { $0.id == id } }
-    func dismissTop() { _ = stack.popLast() }
+    /// Escape: the top dialog goes, unless it was presented as one that must be finished.
+    func dismissTop() { if stack.last?.dismissible ?? false { _ = stack.popLast() } }
     var isOpen: Bool { !stack.isEmpty }
 }
 

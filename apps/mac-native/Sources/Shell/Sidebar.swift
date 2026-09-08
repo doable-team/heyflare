@@ -195,7 +195,8 @@ struct Sidebar: View {
                     Text("No Gmail connected yet.").font(W.xs).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 6)
                 }
                 MenuSeparator()
-                MenuItem("Connect Gmail", icon: "plus") { GoogleConnect.start(toasts: toasts) }
+                // `Shell.tsx`: only offered when the server can actually start Google's consent.
+                if app.googleConfigured { MenuItem("Connect Gmail", icon: "plus") { GoogleConnect.start(toasts: toasts) } }
                 MenuItem("Manage accounts", icon: "settings") { router.go(.settings("accounts")) }
             }
         }
@@ -357,10 +358,10 @@ struct SidebarButton<Label: View>: View {
 /// its accounts when it comes back to the front.
 enum GoogleConnect {
     @MainActor
-    static func start(toasts: Toasts, loginHint: String? = nil) {
+    static func start(toasts: Toasts, loginHint: String? = nil, provider: String = "google") {
         Task {
             do {
-                let url = try await APIClient.shared.gmailConnectLink(loginHint: loginHint)
+                let url = try await APIClient.shared.gmailConnectLink(loginHint: loginHint, provider: provider)
                 NSWorkspace.shared.open(url)
             } catch {
                 toasts.error((error as? APIError)?.errorDescription ?? "Google sign-in isn't configured on this server.")

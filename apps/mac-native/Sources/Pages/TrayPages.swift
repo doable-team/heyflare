@@ -292,6 +292,7 @@ struct PowerThroughPage: View {
                 }
             }
             .task { await store.firstLoad() }
+            .syncsWithMail { await store.refresh(); if cursor >= store.items.count { cursor = max(store.items.count - 1, 0) } }
             .onKeys([
                 "j": { cursor = min(cursor + 1, max(items.count - 1, 0)) }, "k": { cursor = max(cursor - 1, 0) },
                 "ArrowDown": { cursor = min(cursor + 1, max(items.count - 1, 0)) }, "ArrowUp": { cursor = max(cursor - 1, 0) },

@@ -91,6 +91,8 @@ struct ThreadMonthGroup: Identifiable {
 @Observable
 final class ThreadListStore {
     private(set) var threads: [ThreadSummary] = []
+    /// Paper Trail: bundled senders come as bundles rather than rows (page 0 only).
+    private(set) var bundles: [MailBundle] = []
     private(set) var groups: [ThreadMonthGroup] = []
     private(set) var loading = false
     private(set) var loadingMore = false
@@ -147,6 +149,7 @@ final class ThreadListStore {
             guard scope == ServerConfig.shared.scope else { return }
             if replacing {
                 threads = result.threads
+                bundles = result.bundles
                 // Page 0 only: a stored page 5 replayed into an empty list would open
                 // this screen in the middle of a month nobody scrolled to.
                 ContentCache.shared.store(result.threads, for: .list(kind))

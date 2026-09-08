@@ -100,7 +100,7 @@ struct TimeSelect: View {
                     ScrollView {
                         VStack(spacing: 0) {
                             ForEach(0..<48, id: \.self) { i in
-                                MenuItem(label(i * 30), checked: minutes == i * 30) { minutes = i * 30 }
+                                MenuItem(label(i * 30), checked: minutes == i * 30, closesAll: false) { minutes = i * 30; pops.close(id) }
                             }
                         }
                     }

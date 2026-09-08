@@ -35,7 +35,12 @@ final class KeyBus {
             let e = KeyEvent(key: key, meta: event.modifierFlags.contains(.command), shift: event.modifierFlags.contains(.shift), typing: typing, nsEvent: event)
             // ⌘-shortcuts belong to the menu bar; ⌥ and ⌃ are left alone too.
             if event.modifierFlags.contains(.command) || event.modifierFlags.contains(.option) || event.modifierFlags.contains(.control) { return event }
+            // `overlayOpen()`: with a dialog, popover or sheet up, only the overlays' own
+            // handlers (priority 50 and above) get a say — `#` must not trash the thread
+            // behind a "Delete forever?" confirm, and `j` must not walk the list under a menu.
+            let overlay = DialogState.shared.isOpen || !PopLayerState.shared.stack.isEmpty || SheetState.shared.isOpen
             for h in self.handlers.sorted(by: { $0.priority > $1.priority }) {
+                if overlay && h.priority < 50 { continue }
                 if typing && key != "Escape" && !h.whileTyping { continue }
                 if h.handle(e) { return nil }
             }

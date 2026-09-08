@@ -17,6 +17,9 @@ enum Mail {
                 onSuccess?()
             } catch {
                 Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription)
+                // `onSettled: invalidateMail`: the row that left the list on the way out
+                // comes back with the refetch.
+                invalidate()
             }
         }
     }
@@ -57,6 +60,7 @@ enum Mail {
                 if let toast { Toasts.shared.success(toast) }
             } catch {
                 Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription)
+                invalidate()
             }
         }
     }

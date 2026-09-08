@@ -8,10 +8,10 @@ struct PaperTrailPage: View {
     var body: some View {
         if app.accounts.isEmpty { ConnectGmailCard() } else {
             PageColumn {
-                let n = store.threads.count
+                let n = store.threads.count + store.bundles.count
                 let count = n > 0 ? "\(n)\(store.hasMore ? "+" : "") \(n == 1 && !store.hasMore ? "item" : "items"). " : ""
                 PageHeader(title: "Paper Trail", subtitle: "\(count)Receipts, confirmations, and the rest of the paperwork.")
-                ThreadListView(sections: [ListSection(threads: store.threads, emptyTitle: "No paperwork yet.", emptyBody: "Receipts and confirmations land here once you screen those senders into the Paper Trail.")],
+                ThreadListView(sections: [ListSection(threads: store.threads, bundles: store.bundles, emptyTitle: "No paperwork yet.", emptyBody: "Receipts and confirmations land here once you screen those senders into the Paper Trail.")],
                                loading: store.loading && store.threads.isEmpty, error: store.error, onRetry: { Task { await store.refresh(.paperTrail) } },
                                compact: true, groupByMonth: true, emptyIcon: "fileText",
                                footer: AnyView(LoadMore(hasMore: store.hasMore, loading: store.loadingMore) { Task { await store.loadMore(.paperTrail) } }),

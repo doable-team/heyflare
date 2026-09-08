@@ -15,6 +15,9 @@ struct RootView: View {
             case .signedOut(let message):
                 LoginView(initialMessage: message)
                     .transition(.opacity)
+            case .needsSetup:
+                SetupView()
+                    .transition(.opacity)
             case .signedIn:
                 MainShell()
                     .transition(.opacity)

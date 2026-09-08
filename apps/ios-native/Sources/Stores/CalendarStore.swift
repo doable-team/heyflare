@@ -75,6 +75,18 @@ enum CalDate {
         cal.startOfDay(for: day).timeIntervalSince1970 * 1000 + Double(minutes) * 60_000
     }
 
+    /// The part of a timed event that falls on `day`, in minutes past that day's midnight —
+    /// an event that crosses midnight is drawn to the bottom of its first column and from the
+    /// top of its second, as `WeekView.tsx` clips it, instead of overflowing the grid.
+    static func clipToDay(_ e: CalEventFull, day: Date, in cal: Calendar = CalDate.cal) -> (start: Int, end: Int) {
+        let dayStart = cal.startOfDay(for: day).timeIntervalSince1970 * 1000
+        let dayEnd = dayStart + 86_400_000
+        let s = max(e.startsAt, dayStart), en = min(e.endsAt, dayEnd)
+        let start = Int((s - dayStart) / 60_000)
+        let end = max(start, Int((en - dayStart) / 60_000))
+        return (start, min(end, 1440))
+    }
+
     /// Minutes past local midnight of an epoch-millisecond instant.
     static func minutesOfDay(_ millis: Double, in cal: Calendar = CalDate.cal) -> Int {
         let date = Date(timeIntervalSince1970: millis / 1000)
@@ -329,6 +341,11 @@ final class CalendarStore {
             apply(fresh)
             ContentCache.shared.store(fresh, for: .calendarSettings)
         }
+        await loadCalendars()
+    }
+
+    /// Re-reads the calendar list: after a visibility toggle, a rename, a removal.
+    func loadCalendars() async {
         if let list = try? await CalendarAPI.sources() {
             calendars = list
             ContentCache.shared.store(list, for: .calendarSources)
