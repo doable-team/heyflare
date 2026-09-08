@@ -75,6 +75,43 @@ enum CalDate {
         cal.startOfDay(for: day).timeIntervalSince1970 * 1000 + Double(minutes) * 60_000
     }
 
+    /// `layoutColumns` in caldate.ts: events that overlap share the column, side by side. Each
+    /// cluster of mutually overlapping events is split into as many columns as it needs; an
+    /// event shorter than `floorMs` reserves that much, so the columns match what is drawn.
+    static func layoutColumns(_ events: [CalEventFull], floorMs: Double) -> [(column: Int, columns: Int)] {
+        var out = Array(repeating: (column: 0, columns: 1), count: events.count)
+        guard !events.isEmpty else { return out }
+        struct Item { let i: Int; let start: Double; let end: Double }
+        let floor = max(floorMs, 0)
+        var items: [Item] = []
+        for (i, e) in events.enumerated() { items.append(Item(i: i, start: e.startsAt, end: max(e.endsAt, e.startsAt + floor))) }
+        items.sort { a, b in
+            if a.start != b.start { return a.start < b.start }
+            if a.end != b.end { return a.end > b.end }
+            return a.i < b.i
+        }
+        var cluster: [Int] = [], colEnds: [Double] = [], clusterEnd = -Double.infinity
+        func flush() {
+            let n = max(colEnds.count, 1)
+            for idx in cluster { out[idx].columns = n }
+            cluster = []; colEnds = []; clusterEnd = -.infinity
+        }
+        for it in items {
+            if it.start >= clusterEnd { flush() }
+            if let col = colEnds.firstIndex(where: { $0 <= it.start }) {
+                colEnds[col] = it.end
+                out[it.i].column = col
+            } else {
+                colEnds.append(it.end)
+                out[it.i].column = colEnds.count - 1
+            }
+            cluster.append(it.i)
+            if it.end > clusterEnd { clusterEnd = it.end }
+        }
+        flush()
+        return out
+    }
+
     /// The part of a timed event that falls on `day`, in minutes past that day's midnight —
     /// an event that crosses midnight is drawn to the bottom of its first column and from the
     /// top of its second, as `WeekView.tsx` clips it, instead of overflowing the grid.

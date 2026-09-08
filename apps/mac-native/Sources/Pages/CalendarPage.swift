@@ -197,13 +197,15 @@ struct WeekView: View {
                             VStack(spacing: 0) {
                                 ForEach(0..<24, id: \.self) { _ in Rectangle().fill(Color.clear).frame(height: hourHeight).overlay(alignment: .top) { Rectangle().fill(W.border.opacity(0.6)).frame(height: 1) } }
                             }
-                            ForEach(events.timed) { e in
+                            // The floor is the week's, 8pt: at this scale a taller floor would
+                            // reserve room a short lunch never takes and shoulder the next
+                            // meeting into a second column for an overlap that never happens.
+                            let layout = CalDate.layoutColumns(events.timed, floorMs: 8 / hourHeight * 3_600_000)
+                            ForEach(Array(events.timed.enumerated()), id: \.element.id) { i, e in
                                 let span = CalDate.clipToDay(e, day: day, in: cal)
                                 let top = CGFloat(span.start) / 60 * hourHeight
-                                let height = max(14, CGFloat(span.end - span.start) / 60 * hourHeight)
-                                EventBlock(event: e, onTap: { onEvent(e) })
-                                    .frame(height: height)
-                                    .padding(.horizontal, 2)
+                                let height = max(8, CGFloat(span.end - span.start) / 60 * hourHeight)
+                                EventBlock(event: e, height: height, column: layout[i].column, columns: layout[i].columns, timeFormat: store.prefs.timeFormat, onTap: { onEvent(e) })
                                     .offset(y: top)
                             }
                             if cal.isDateInToday(day) {
@@ -307,28 +309,83 @@ struct EventSurface {
     }
 }
 
-/// An event: a solid block in its calendar's colour, the title flipped to contrast.
+/// `EventBlock` (timed) in EventBlock.tsx: a proportional box in its calendar's colour, the
+/// title flipped to contrast. Under 13pt it is a bare bar of colour; under 34pt the time and
+/// the title share one line; taller blocks carry the range over the title, and from 64pt the
+/// small icons along the floor. Overlapping neighbours split the column between them with
+/// two points of air at each edge and a hairline between.
 struct EventBlock: View {
     let event: CalEventFull
+    var height: CGFloat
+    var column = 0
+    var columns = 1
+    var timeFormat = "12"
     var onTap: () -> Void
+
+    private var bare: Bool { height < 13 }
+    private var oneLine: Bool { height < 34 }
+    private var roomy: Bool { height >= 64 }
+    private var titleLines: Int { max(1, min(3, Int((height - 6 - 12) / 14))) }
+    private var declined: Bool { event.rsvp == .declined }
+    private var maybe: Bool { event.isTentative || event.rsvp == .tentative }
+
     var body: some View {
         let s = EventSurface(event)
-        Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text(event.displayTitle).font(W.font(11, 500)).lineLimit(2).strikethrough(event.done || event.isCancelled)
-                if !event.location.isEmpty { Text(event.location).font(W.font(10)).lineLimit(1).opacity(0.8) }
+        GeometryReader { g in
+            let n = CGFloat(max(columns, 1))
+            let width = (g.size.width - 4) / n - (n > 1 ? 1 : 0)
+            let left = (g.size.width - 4) / n * CGFloat(column) + 2
+            Button(action: onTap) {
+                VStack(alignment: .leading, spacing: 0) {
+                    if bare {
+                        EmptyView()
+                    } else if oneLine {
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text(heyTime(event.start)).font(W.font(9.5)).monospacedDigit().opacity(0.7).fixedSize()
+                            Text(titleText).font(W.font(11, 600)).italic(maybe).strikethrough(event.done || declined).lineLimit(1)
+                        }
+                        .frame(maxHeight: .infinity, alignment: .center)
+                    } else {
+                        Text("\(heyTime(event.start))- \(heyTime(event.end))").font(W.font(9.5)).monospacedDigit().opacity(0.7).lineLimit(1).frame(height: 12)
+                        Text(titleText).font(W.font(12, 600)).italic(maybe).strikethrough(event.done || declined).lineLimit(titleLines).webLine(12, 14, weight: 600)
+                        if roomy && (!event.conferenceURL.isEmpty || !event.attendees.isEmpty || event.recurring || !event.writable) {
+                            Spacer(minLength: 0)
+                            HStack(spacing: 4) {
+                                if !event.conferenceURL.isEmpty { Icon("video", size: 10) }
+                                if !event.attendees.isEmpty { Icon("users", size: 10) }
+                                if event.recurring { Icon("repeat", size: 10) }
+                                if !event.writable { Icon("lock", size: 10) }
+                            }
+                            .opacity(0.65).padding(.top, 2)
+                        }
+                    }
+                }
+                .foregroundStyle(s.ink)
+                .padding(.horizontal, 6).padding(.vertical, oneLine ? 0 : 3)
+                .frame(width: width, height: height, alignment: .topLeading)
+                .background(s.fill)
+                .clipped()
+                .overlay { if maybe { RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(W.foreground.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [3])) } }
+                .opacity(declined || event.isCancelled ? 0.45 : 1)
+                .rounded(3)
+                .contentShape(Rectangle())
             }
-            .foregroundStyle(s.ink)
-            .padding(.horizontal, 6).padding(.vertical, 3)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(s.fill)
-            .overlay { if event.isTentative { RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(W.foreground.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3])) } }
-            .opacity(event.isCancelled ? 0.45 : 1)
-            .rounded(4)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .offset(x: left)
         }
-        .buttonStyle(.plain)
-        .help(event.displayTitle)
+        .frame(height: height)
+        .help("\(titleText)\(event.location.isEmpty ? "" : " · \(event.location)") · \(heyTime(event.start))- \(heyTime(event.end))")
+    }
+
+    private var titleText: String { (event.emoji.isEmpty ? "" : "\(event.emoji) ") + (event.title.isEmpty ? "(no title)" : event.title) }
+
+    private func heyTime(_ d: Date) -> String {
+        let cal = CalDate.cal
+        let h = cal.component(.hour, from: d), m = cal.component(.minute, from: d)
+        if timeFormat == "24" { return String(format: "%02d:%02d", h, m) }
+        let hh = h % 12 == 0 ? 12 : h % 12
+        let ap = h < 12 ? "AM" : "PM"
+        return m == 0 ? "\(hh)\(ap)" : "\(hh):\(String(format: "%02d", m))\(ap)"
     }
 }
 
@@ -357,11 +414,13 @@ struct DayColumnView: View {
                 .frame(width: 48)
                 ZStack(alignment: .top) {
                     VStack(spacing: 0) { ForEach(0..<24, id: \.self) { _ in Rectangle().fill(Color.clear).frame(height: hourHeight).overlay(alignment: .top) { Rectangle().fill(W.border).frame(height: 1) } } }
-                    ForEach(events.timed) { e in
+                    let layout = CalDate.layoutColumns(events.timed, floorMs: 22 / hourHeight * 3_600_000)
+                    ForEach(Array(events.timed.enumerated()), id: \.element.id) { i, e in
                         let span = CalDate.clipToDay(e, day: day, in: cal)
                         let top = CGFloat(span.start) / 60 * hourHeight
-                        let height = max(20, CGFloat(span.end - span.start) / 60 * hourHeight)
-                        EventBlock(event: e, onTap: { onEvent(e) }).frame(height: height).padding(.horizontal, 4).offset(y: top)
+                        let height = max(22, CGFloat(span.end - span.start) / 60 * hourHeight)
+                        EventBlock(event: e, height: height, column: layout[i].column, columns: layout[i].columns, timeFormat: store.prefs.timeFormat, onTap: { onEvent(e) })
+                            .offset(y: top)
                     }
                 }
                 .frame(maxWidth: .infinity)
