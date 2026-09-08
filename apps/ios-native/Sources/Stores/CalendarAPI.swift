@@ -587,6 +587,11 @@ enum CalendarAPI {
         try await send("GET", "/api/calendar/events", query: ["from": from, "to": to], as: CalRange.self)
     }
 
+    /// `PUT /api/calendar/days/:date`: the day's name (and, on the web, its photo).
+    static func updateDay(date: String, label: String) async throws -> CalDay {
+        try await send("PUT", "/api/calendar/days/\(date)", body: ["label": label], as: CalDay.self)
+    }
+
     static func settings() async throws -> CalPrefs {
         try await send("GET", "/api/calendar/settings", as: CalPrefs.self)
     }

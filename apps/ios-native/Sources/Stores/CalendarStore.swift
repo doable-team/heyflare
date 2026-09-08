@@ -320,6 +320,8 @@ final class CalendarStore {
     private var windows: [String: [CalEventFull]] = [:]
     /// Month key → the days its window described.
     private var dayRows: [String: [CalDay]] = [:]
+    /// Month key → the habits its window returned, with that window's completions.
+    private var habitRows: [String: [CalHabit]] = [:]
     /// Month keys in use order; the oldest are dropped so a long session cannot grow forever.
     private var recent: [String] = []
     private var tasks: [String: Task<Void, Never>] = [:]
@@ -342,6 +344,49 @@ final class CalendarStore {
 
     func events(onKey key: String) -> DayEvents {
         index[key] ?? DayEvents()
+    }
+
+    /// The day's row — its label and photo — from whichever window described it.
+    func day(forKey key: String) -> CalDay? {
+        for rows in dayRows.values { if let d = rows.first(where: { $0.date == key }) { return d } }
+        return nil
+    }
+
+    /// The habits expected on `key`, with their completions from the window holding that day.
+    func habits(onKey key: String) -> [CalHabit] {
+        guard let date = CalDate.date(fromKey: key, in: calendar) else { return [] }
+        let weekday = calendar.component(.weekday, from: date) - 1
+        let month = CalDate.monthKey(date, in: calendar)
+        let rows = habitRows[month] ?? habitRows.values.first ?? []
+        return rows.filter { !$0.archived && $0.expectedDays.contains(weekday) }
+    }
+
+    /// Every timed event touching [from, to), once each, in clock order — the ribbon runs
+    /// through midnight, so it wants the window whole rather than sliced by day.
+    func timedEvents(from: Double, to: Double) -> [CalEventFull] {
+        var seen: Set<String> = []
+        var out: [CalEventFull] = []
+        for events in windows.values {
+            for e in events where !e.allDay && e.endsAt > from && e.startsAt < to && !seen.contains(e.id) {
+                if e.isDeclined && !prefs.showDeclined { continue }
+                seen.insert(e.id); out.append(e)
+            }
+        }
+        return out.sorted { $0.startsAt != $1.startsAt ? $0.startsAt < $1.startsAt : $0.endsAt > $1.endsAt }
+    }
+
+    /// Replaces a day's row after a write (its label, say) without a refetch.
+    func adopt(day: CalDay) {
+        for (k, rows) in dayRows {
+            if let i = rows.firstIndex(where: { $0.date == day.date }) { dayRows[k]?[i] = day }
+        }
+    }
+
+    /// Replaces a habit after a toggle without a refetch.
+    func adopt(habit: CalHabit) {
+        for (k, rows) in habitRows {
+            if let i = rows.firstIndex(where: { $0.id == habit.id }) { habitRows[k]?[i] = habit }
+        }
     }
 
     func isLoaded(month: Date) -> Bool {
@@ -439,6 +484,7 @@ final class CalendarStore {
         tasks.removeAll()
         windows.removeAll()
         dayRows.removeAll()
+        habitRows.removeAll()
         recent.removeAll()
         await load(month: month, force: true, visible: true)
         rebuild()
@@ -483,6 +529,7 @@ final class CalendarStore {
                 guard !Task.isCancelled else { return }
                 self.windows[key] = range.events
                 self.dayRows[key] = range.days
+                self.habitRows[key] = range.habits
                 ContentCache.shared.store(range.events, for: .calendarMonth(key))
                 self.touch(key)
                 self.rebuild()
@@ -517,6 +564,7 @@ final class CalendarStore {
             let dropped = recent.removeFirst()
             windows[dropped] = nil
             dayRows[dropped] = nil
+            habitRows[dropped] = nil
             evicted = true
         }
         return evicted

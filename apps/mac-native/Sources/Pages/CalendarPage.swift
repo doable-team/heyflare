@@ -25,8 +25,8 @@ struct CalendarPage: View {
             toolbar
             switch view {
             case "year": YearView(store: store, cursor: $cursor, onPick: { cursor = $0; view = "week" })
-            case "days": ScrollView { DayColumnView(store: store, dayKey: cursor, onEvent: edit, onCreate: create).padding(.bottom, 24) }
-            default: WeekStack(store: store, cursor: cursor, reveal: reveal, onEvent: edit, onCreate: create)
+            case "days": DayRibbonView(store: store, cursor: cursor, reveal: reveal, onEvent: edit, onCreate: createSpan)
+            default: WeekStack(store: store, cursor: cursor, reveal: reveal, onEvent: edit, onCreate: createSpan)
             }
         }
         .task {
@@ -98,6 +98,13 @@ struct CalendarPage: View {
         sheet.present(title: "Event", width: 480) { EventSheet(store: store, target: .edit(e)) }
     }
 
+    /// A sketch drawn on a column or the ribbon: the editor opens on those instants.
+    private func createSpan(_ startsAt: Double, _ endsAt: Double) {
+        let day = CalDate.key(Date(timeIntervalSince1970: startsAt / 1000), in: cal)
+        let base = CalDate.ms(day, minutes: 0, in: cal)
+        create(day: day, start: Int((startsAt - base) / 60_000), end: Int((endsAt - base) / 60_000))
+    }
+
     private func create(day: String, start: Int, end: Int, draft: EventDraft? = nil) {
         sheet.present(title: "New event", width: 480) { EventSheet(store: store, target: .create(day: day, startMinutes: start, endMinutes: end, allDay: false), draft: draft) }
     }
@@ -112,7 +119,7 @@ struct WeekStack: View {
     let cursor: String
     var reveal = 0
     var onEvent: (CalEventFull) -> Void
-    var onCreate: (String, Int, Int, EventDraft?) -> Void
+    var onCreate: (Double, Double) -> Void
 
     private var cal: Calendar { store.calendar }
 
@@ -151,13 +158,46 @@ struct WeekView: View {
     let start: Date
     var current = false
     var onEvent: (CalEventFull) -> Void
-    var onCreate: (String, Int, Int, EventDraft?) -> Void
+    /// A new event, from one instant to another — the sketch drawn out on a column.
+    var onCreate: (Double, Double) -> Void
+
+    @State private var live: EventPreview?
+    @State private var pending: EventPreview?
+    @State private var sketch: (from: Double, to: Double)?
+    @State private var gridWidth: CGFloat = 0
 
     private var cal: Calendar { store.calendar }
-    private let hourHeight: CGFloat = 57.5 / 3  // three hours measure 57.5pt on the web
+    /// Three hours measure 57.5pt on the web's week.
+    private let pxPerHour: CGFloat = 57.5 / 3
+    /// The night, folded: this tall for the whole of it, unless something is scheduled in it.
+    private let nightBand: CGFloat = 16
+    private let headerH: CGFloat = 40
     private var days: [Date] { (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: start) } }
+    private var space: String { "week-\(CalDate.key(start, in: cal))" }
+    private var preview: EventPreview? { live ?? pending }
+
+    /// The week shows the waking hours from Settings; the night is folded to a thin band, and
+    /// opens to full scale only when something in this week is actually scheduled in it.
+    private var collapse: Bool {
+        guard store.prefs.collapseNight else { return false }
+        for day in days {
+            let r = ribbon(for: day, collapse: true)
+            for run in r.runs where run.night {
+                if store.events(onKey: CalDate.key(day, in: cal)).timed.contains(where: { $0.startsAt < run.to && $0.endsAt > run.from }) { return false }
+            }
+        }
+        return true
+    }
+
+    private func ribbon(for day: Date, collapse: Bool) -> CalRibbon {
+        let from = cal.startOfDay(for: day).timeIntervalSince1970 * 1000
+        let to = (cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: day)) ?? day).timeIntervalSince1970 * 1000
+        return CalRibbon(from: from, to: to, pxPerHour: pxPerHour, nightStart: store.prefs.nightStart, nightEnd: store.prefs.nightEnd, nightPx: nightBand, collapseNight: collapse, in: cal)
+    }
 
     var body: some View {
+        let collapse = collapse
+        let first = ribbon(for: days[0], collapse: collapse)
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 0) {
                 // `w-6` rail: the month once, on its side, taking no width from the days.
@@ -170,80 +210,27 @@ struct WeekView: View {
                     .clipped()
                 // Hour gutter: `text-[9.5px] text-tertiary`, `right-1`, centred on its line.
                 VStack(alignment: .trailing, spacing: 0) {
-                    Color.clear.frame(height: 40)
+                    Color.clear.frame(height: headerH)
                     ZStack(alignment: .topTrailing) {
-                        ForEach([0, 3, 6, 9, 12, 15, 18, 21], id: \.self) { h in
-                            Text(hourLabel(h)).font(W.font(9.5)).foregroundStyle(W.tertiary).offset(y: CGFloat(h) * hourHeight - 4.75)
+                        ForEach(first.hours.filter { $0.hour % 3 == 0 }, id: \.ms) { h in
+                            Text(hourLabel(h.hour)).font(W.font(9.5)).foregroundStyle(W.tertiary).offset(y: h.pos - 4.75)
                         }
                     }
-                    .frame(height: 24 * hourHeight, alignment: .top)
+                    .frame(height: first.length, alignment: .top)
                     .padding(.trailing, 4)
                 }
                 .frame(width: 36)
-                ForEach(days, id: \.self) { day in
-                    let key = CalDate.key(day, in: cal)
-                    let events = store.events(onKey: key)
-                    VStack(spacing: 0) {
-                        HStack(spacing: 4) {
-                            Text(weekdayLabel(day)).font(W.font(11, 500)).tracking(1).foregroundStyle(W.mutedForeground)
-                            Text("\(cal.component(.day, from: day))").font(W.font(15, 700)).monospacedDigit()
-                        }
-                        .padding(.horizontal, 8).frame(height: 24)
-                        .background(cal.isDateInToday(day) ? W.foreground : Color.clear)
-                        .foregroundStyle(cal.isDateInToday(day) ? W.primaryForeground : W.foreground)
-                        .clipShape(Capsule())
-                        .frame(height: 40)
-                        ZStack(alignment: .top) {
-                            VStack(spacing: 0) {
-                                ForEach(0..<24, id: \.self) { _ in Rectangle().fill(Color.clear).frame(height: hourHeight).overlay(alignment: .top) { Rectangle().fill(W.border.opacity(0.6)).frame(height: 1) } }
-                            }
-                            // The floor is the week's, 8pt: at this scale a taller floor would
-                            // reserve room a short lunch never takes and shoulder the next
-                            // meeting into a second column for an overlap that never happens.
-                            let layout = CalDate.layoutColumns(events.timed, floorMs: 8 / hourHeight * 3_600_000)
-                            ForEach(Array(events.timed.enumerated()), id: \.element.id) { i, e in
-                                let span = CalDate.clipToDay(e, day: day, in: cal)
-                                let top = CGFloat(span.start) / 60 * hourHeight
-                                let height = max(8, CGFloat(span.end - span.start) / 60 * hourHeight)
-                                EventBlock(event: e, height: height, column: layout[i].column, columns: layout[i].columns, timeFormat: store.prefs.timeFormat, onTap: { onEvent(e) })
-                                    .offset(y: top)
-                            }
-                            if cal.isDateInToday(day) {
-                                let now = CGFloat(cal.component(.hour, from: Date()) * 60 + cal.component(.minute, from: Date())) / 60 * hourHeight
-                                HStack(spacing: 4) {
-                                    Text(heyTime(Date())).font(W.font(10)).foregroundStyle(.red)
-                                    Rectangle().fill(.red).frame(height: 1).overlay(Rectangle().stroke(style: StrokeStyle(lineWidth: 1, dash: [2])).foregroundStyle(.red))
-                                }
-                                .offset(y: now - 6)
-                            }
-                        }
-                        .frame(height: 24 * hourHeight, alignment: .top)
-                        .contentShape(Rectangle())
-                        .onTapGesture { location in
-                            let minutes = Int(location.y / hourHeight * 60 / 30) * 30
-                            onCreate(key, minutes, minutes + 60, nil)
-                        }
-                        VStack(spacing: 2) {
-                            ForEach(events.allDay) { e in
-                                Button { onEvent(e) } label: {
-                                    let s = EventSurface(e)
-                                    Text(e.displayTitle).font(W.font(11, 500)).lineLimit(1).foregroundStyle(s.ink).padding(.horizontal, 8).frame(maxWidth: .infinity).frame(height: 18).background(s.fill).clipShape(Capsule())
-                                        .overlay { if e.isTentative { Capsule().strokeBorder(W.foreground.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3])) } }
-                                        .opacity(e.isCancelled ? 0.45 : 1)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.top, 4)
-                        .frame(minHeight: 28, alignment: .top)
+                HStack(spacing: 0) {
+                    ForEach(Array(days.enumerated()), id: \.element) { col, day in
+                        column(col: col, day: day, collapse: collapse)
                     }
-                    .frame(maxWidth: .infinity)
-                    .edgeLine(.leading, W.border.opacity(0.6))
                 }
+                .coordinateSpace(name: space)
+                .background(GeometryReader { g in Color.clear.onAppear { gridWidth = g.size.width }.onChange(of: g.size.width) { _, w in gridWidth = w } })
             }
             HStack(spacing: 8) {
                 Text("SOMETIME THIS WEEK:").font(W.font(10.5)).tracking(1.155).foregroundStyle(W.tertiary)
-                WButton(icon: "plus", variant: .outline, size: .iconXs, muted: true) { onCreate(CalDate.key(start, in: cal), 9 * 60, 10 * 60, nil) }
+                WButton(icon: "plus", variant: .outline, size: .iconXs, muted: true) { onCreate(CalDate.ms(start, minutes: 9 * 60, in: cal), CalDate.ms(start, minutes: 10 * 60, in: cal)) }
                 Spacer()
             }
             .padding(.leading, 4).padding(.vertical, 8)
@@ -251,6 +238,132 @@ struct WeekView: View {
         .padding(.horizontal, 1)
         .overlay { if current { RoundedRectangle(cornerRadius: W.radiusLg, style: .continuous).strokeBorder(W.border, lineWidth: 1) } }
         .rounded(W.radiusLg)
+    }
+
+    @ViewBuilder
+    private func column(col: Int, day: Date, collapse: Bool) -> some View {
+        let key = CalDate.key(day, in: cal)
+        let events = store.events(onKey: key)
+        let ribbon = ribbon(for: day, collapse: collapse)
+        let dayStart = ribbon.from, dayEnd = ribbon.to
+        // A dragged event is drawn where it is going, which may be another column: every
+        // column drops it from its own list, and the one its span lands in draws it on top,
+        // full width, out of the overlap layout.
+        let rest = events.timed.filter { $0.id != preview?.id }
+        let ghost: CalEventFull? = preview.flatMap { p in (!p.event.allDay && p.span.endsAt > dayStart && p.span.startsAt < dayEnd) ? p.shown : nil }
+        let pills: [CalEventFull] = {
+            var out = events.allDay.filter { $0.id != preview?.id }
+            if let p = preview, p.event.allDay, let a = p.span.startDate, let b = p.span.endDate, key >= a, key <= b { out.append(p.shown) }
+            return out
+        }()
+        let layout = CalDate.layoutColumns(rest, floorMs: 8 / pxPerHour * 3_600_000)
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                Text(weekdayLabel(day)).font(W.font(11, 500)).tracking(1).foregroundStyle(W.mutedForeground)
+                Text("\(cal.component(.day, from: day))").font(W.font(15, 700)).monospacedDigit()
+            }
+            .padding(.horizontal, 8).frame(height: 24)
+            .background(cal.isDateInToday(day) ? W.foreground : Color.clear)
+            .foregroundStyle(cal.isDateInToday(day) ? W.primaryForeground : W.foreground)
+            .clipShape(Capsule())
+            .frame(height: headerH)
+            ZStack(alignment: .top) {
+                ForEach(ribbon.hours, id: \.ms) { h in
+                    Rectangle().fill(W.border.opacity(0.6)).frame(height: 1).offset(y: h.pos)
+                }
+                // The folded night: a darker band, so the fold reads as one.
+                ForEach(ribbon.runs.filter(\.night), id: \.from) { r in
+                    Rectangle().fill(W.muted60).frame(height: r.size).offset(y: r.pos)
+                }
+                ForEach(Array(rest.enumerated()), id: \.element.id) { i, e in
+                    let top = ribbon.pos(max(e.startsAt, dayStart))
+                    let height = max(8, ribbon.pos(min(e.endsAt, dayEnd)) - top)
+                    EventBlock(event: e, height: height, column: layout[i].column, columns: layout[i].columns, timeFormat: store.prefs.timeFormat, space: space,
+                               onTap: { onEvent(e) }, onDrag: { mode, p0, p1, ended in drag(e, col: col, mode: mode, p0: p0, p1: p1, ended: ended, ribbon: ribbon) })
+                        .offset(y: top)
+                }
+                if let g = ghost {
+                    let top = ribbon.pos(max(g.startsAt, dayStart))
+                    let height = max(8, ribbon.pos(min(g.endsAt, dayEnd)) - top)
+                    EventBlock(event: g, height: height, timeFormat: store.prefs.timeFormat, space: space, dragging: true, onTap: {}).offset(y: top).zIndex(35)
+                }
+                if let sketch {
+                    let a = ribbon.pos(min(sketch.from, sketch.to)), b = ribbon.pos(max(sketch.from, sketch.to))
+                    if sketch.from >= dayStart && sketch.from < dayEnd {
+                        RoundedRectangle(cornerRadius: 3, style: .continuous).fill(W.foreground.opacity(0.1))
+                            .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(W.foreground.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [3])))
+                            .frame(height: max(b - a, 6)).padding(.horizontal, 2).offset(y: a).allowsHitTesting(false)
+                    }
+                }
+                if cal.isDateInToday(day) {
+                    let now = ribbon.pos(Date().timeIntervalSince1970 * 1000)
+                    HStack(spacing: 4) {
+                        Text(heyTime(Date())).font(W.font(10)).foregroundStyle(.red)
+                        Rectangle().fill(.red).frame(height: 1).overlay(Rectangle().stroke(style: StrokeStyle(lineWidth: 1, dash: [2])).foregroundStyle(.red))
+                    }
+                    .offset(y: now - 6)
+                    .allowsHitTesting(false)
+                }
+            }
+            .frame(height: ribbon.length, alignment: .top)
+            .clipped()
+            .contentShape(Rectangle())
+            // Drag down the column to draw out a new event; a plain click makes a half hour.
+            .gesture(DragGesture(minimumDistance: 0).onChanged { v in
+                let from = sketch?.from ?? EventDrag.snap(ribbon.at(v.startLocation.y))
+                sketch = (from, EventDrag.snap(ribbon.at(v.location.y)))
+            }.onEnded { v in
+                let from = sketch?.from ?? EventDrag.snap(ribbon.at(v.startLocation.y))
+                let to = sketch?.to ?? from
+                sketch = nil
+                let a = min(from, to), b = max(from, to)
+                onCreate(a, b == a ? a + 30 * 60_000 : b)
+            })
+            VStack(spacing: 2) {
+                ForEach(pills) { e in
+                    let s = EventSurface(e)
+                    Text(e.displayTitle).font(W.font(11, 500)).lineLimit(1).foregroundStyle(s.ink).padding(.horizontal, 8).frame(maxWidth: .infinity).frame(height: 18).background(s.fill).clipShape(Capsule())
+                        .overlay { if e.isTentative { Capsule().strokeBorder(W.foreground.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3])) } }
+                        .opacity(e.isCancelled || e.isDeclined ? 0.45 : 1)
+                        .contentShape(Capsule())
+                        .onTapGesture { onEvent(e) }
+                        // An all-day pill has no time to change, only a day, so it only ever moves.
+                        .gesture(DragGesture(minimumDistance: EventDrag.slop, coordinateSpace: .named(space)).onChanged { v in
+                            guard e.writable else { return }
+                            drag(e, col: col, mode: .move, p0: v.startLocation, p1: v.location, ended: false, ribbon: ribbon)
+                        }.onEnded { v in
+                            guard e.writable else { return }
+                            drag(e, col: col, mode: .move, p0: v.startLocation, p1: v.location, ended: true, ribbon: ribbon)
+                        })
+                }
+            }
+            .padding(.top, 4)
+            .frame(minHeight: 28, alignment: .top)
+        }
+        .frame(maxWidth: .infinity)
+        .edgeLine(.leading, W.border.opacity(0.6))
+    }
+
+    /// The pointer's travel, as a column shift and a delta in time read off the ribbon — so
+    /// the folded night counts for what it is rather than what it measures.
+    private func drag(_ e: CalEventFull, col: Int, mode: EventDrag.Mode, p0: CGPoint, p1: CGPoint, ended: Bool, ribbon: CalRibbon) {
+        let colW = gridWidth / 7
+        let dx = p1.x - p0.x
+        let days = mode == .move && colW > 0 ? max(-col, min(6 - col, Int((dx / colW).rounded()))) : 0
+        let span: EventDrag.Span
+        if e.allDay {
+            span = EventDrag.allDaySpan(e, days: days, in: cal)
+        } else {
+            let delta = ribbon.at(p1.y - headerH) - ribbon.at(p0.y - headerH)
+            let dayStart = ribbon.from
+            span = EventDrag.span(e, mode: mode, deltaMs: delta, days: days, bounds: (EventDrag.shiftDays(dayStart, days, in: cal), EventDrag.shiftDays(dayStart, days + 1, in: cal)), in: cal)
+        }
+        if !ended { live = EventPreview(event: e, span: span); return }
+        live = nil
+        guard EventDrag.moved(e, span) else { return }
+        let p = EventPreview(event: e, span: span)
+        pending = p
+        DragCommit.commit(p, store: store, month: start) { if pending == p { pending = nil } }
     }
 
     private var monthLabel: String {
@@ -320,7 +433,15 @@ struct EventBlock: View {
     var column = 0
     var columns = 1
     var timeFormat = "12"
+    /// The coordinate space the drag reports in: the week's grid, so a move can cross columns.
+    var space = "week"
+    var dragging = false
     var onTap: () -> Void
+    /// (mode, point at press, point now, ended) — nil for a block that cannot be dragged.
+    var onDrag: ((EventDrag.Mode, CGPoint, CGPoint, Bool) -> Void)? = nil
+    @State private var mode: EventDrag.Mode?
+    /// The block's top edge in the drag's coordinate space, for telling a grab at an end apart.
+    @State private var blockTop: CGFloat = 0
 
     private var bare: Bool { height < 13 }
     private var oneLine: Bool { height < 34 }
@@ -335,7 +456,8 @@ struct EventBlock: View {
             let n = CGFloat(max(columns, 1))
             let width = (g.size.width - 4) / n - (n > 1 ? 1 : 0)
             let left = (g.size.width - 4) / n * CGFloat(column) + 2
-            Button(action: onTap) {
+            let grab = EventDrag.handle(height)
+            Group {
                 VStack(alignment: .leading, spacing: 0) {
                     if bare {
                         EmptyView()
@@ -368,10 +490,28 @@ struct EventBlock: View {
                 .overlay { if maybe { RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(W.foreground.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [3])) } }
                 .opacity(declined || event.isCancelled ? 0.45 : 1)
                 .rounded(3)
+                .overlay { if dragging { RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(W.foreground.opacity(0.4), lineWidth: 1) } }
+                .shadow(color: .black.opacity(dragging ? 0.2 : 0), radius: 8, y: 4)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .onTapGesture(perform: onTap)
+            // Press the block to move it, or either end to take that edge with you.
+            .gesture(DragGesture(minimumDistance: EventDrag.slop, coordinateSpace: .named(space)).onChanged { v in
+                guard let onDrag, event.writable else { return }
+                if mode == nil {
+                    // Where on the block the press landed decides which end moves.
+                    let atTop = (v.startLocation.y - blockTop) < grab
+                    let atBottom = (blockTop + height - v.startLocation.y) < grab
+                    mode = atTop ? .start : (atBottom ? .end : .move)
+                }
+                onDrag(mode!, v.startLocation, v.location, false)
+            }.onEnded { v in
+                guard let onDrag, let m = mode else { return }
+                mode = nil
+                onDrag(m, v.startLocation, v.location, true)
+            })
             .offset(x: left)
+            .background(GeometryReader { bg in Color.clear.onAppear { blockTop = bg.frame(in: .named(space)).minY }.onChange(of: bg.frame(in: .named(space)).minY) { _, y in blockTop = y } })
         }
         .frame(height: height)
         .help("\(titleText)\(event.location.isEmpty ? "" : " · \(event.location)") · \(heyTime(event.start))- \(heyTime(event.end))")
@@ -386,49 +526,6 @@ struct EventBlock: View {
         let hh = h % 12 == 0 ? 12 : h % 12
         let ap = h < 12 ? "AM" : "PM"
         return m == 0 ? "\(hh)\(ap)" : "\(hh):\(String(format: "%02d", m))\(ap)"
-    }
-}
-
-// MARK: - Day
-
-struct DayColumnView: View {
-    let store: CalendarStore
-    let dayKey: String
-    var onEvent: (CalEventFull) -> Void
-    var onCreate: (String, Int, Int, EventDraft?) -> Void
-    private var cal: Calendar { store.calendar }
-    private let hourHeight: CGFloat = 48
-
-    var body: some View {
-        let events = store.events(onKey: dayKey)
-        let day = CalDate.date(fromKey: dayKey, in: cal) ?? Date()
-        VStack(alignment: .leading, spacing: 8) {
-            Text(CalDate.dayLabel(day)).font(W.font(20, 600)).tracking(-0.2).padding(.horizontal, 8)
-            if !events.allDay.isEmpty {
-                HStack(spacing: 6) { ForEach(events.allDay) { e in Button { onEvent(e) } label: { let s = EventSurface(e); Text(e.displayTitle).font(W.font(12, 500)).foregroundStyle(s.ink).padding(.horizontal, 10).frame(height: 24).background(s.fill).clipShape(Capsule()) }.buttonStyle(.plain) } }.padding(.horizontal, 8)
-            }
-            HStack(alignment: .top, spacing: 0) {
-                VStack(alignment: .trailing, spacing: 0) {
-                    ForEach(0..<24, id: \.self) { h in Text(String(format: "%d:00", h)).font(W.font(11)).monospacedDigit().foregroundStyle(W.mutedForeground).frame(height: hourHeight, alignment: .top).offset(y: -6) }
-                }
-                .frame(width: 48)
-                ZStack(alignment: .top) {
-                    VStack(spacing: 0) { ForEach(0..<24, id: \.self) { _ in Rectangle().fill(Color.clear).frame(height: hourHeight).overlay(alignment: .top) { Rectangle().fill(W.border).frame(height: 1) } } }
-                    let layout = CalDate.layoutColumns(events.timed, floorMs: 22 / hourHeight * 3_600_000)
-                    ForEach(Array(events.timed.enumerated()), id: \.element.id) { i, e in
-                        let span = CalDate.clipToDay(e, day: day, in: cal)
-                        let top = CGFloat(span.start) / 60 * hourHeight
-                        let height = max(22, CGFloat(span.end - span.start) / 60 * hourHeight)
-                        EventBlock(event: e, height: height, column: layout[i].column, columns: layout[i].columns, timeFormat: store.prefs.timeFormat, onTap: { onEvent(e) })
-                            .offset(y: top)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .contentShape(Rectangle())
-                .onTapGesture { location in let m = Int(location.y / hourHeight * 60 / 30) * 30; onCreate(dayKey, m, m + 60, nil) }
-            }
-            .frame(maxWidth: 760)
-        }
     }
 }
 
