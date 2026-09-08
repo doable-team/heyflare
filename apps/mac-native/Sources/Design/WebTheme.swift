@@ -168,6 +168,16 @@ extension W {
     }
 }
 
+/// A calendar's own colour, or a label's — anything that arrives as a bare `#rrggbb` from the
+/// worker rather than one of the design tokens above.
+extension Color {
+    init(hex: String) {
+        var s = hex; if s.hasPrefix("#") { s.removeFirst() }
+        let v = UInt32(s, radix: 16) ?? 0
+        self.init(.sRGB, red: Double((v >> 16) & 0xff) / 255, green: Double((v >> 8) & 0xff) / 255, blue: Double(v & 0xff) / 255, opacity: 1)
+    }
+}
+
 // MARK: - Small modifiers the web's utility classes map onto
 
 extension View {

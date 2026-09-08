@@ -528,25 +528,372 @@ private struct NewMailboxForm: View {
 
 // MARK: - Calendar
 
+/// `CalendarSettingsSection.tsx`: the calendars list grouped by who owns them, then the
+/// calendar-wide preferences. Connecting, disconnecting or subscribing to a new source still
+/// happens on the web — those are one-time flows through Google's own consent screen — but
+/// everything about a calendar heyflare already has (shown, coloured, named, made default,
+/// synced, removed) is exactly what the web offers, writing to the same `/api/calendar` the
+/// web does, which is what makes it "synced" rather than a second copy of the setting.
 struct CalendarSettingsSection: View {
-    @State private var sources: [CalSource] = []
-    @State private var syncing = false
+    @State private var calendars: [CalSource] = []
+    @State private var accounts: [CalGoogleAccount] = []
+    @State private var loading = true
+    @State private var error: String?
+    @State private var syncingAll = false
+    @State private var creating = false
+
+    private var local: [CalSource] { calendars.filter { $0.source == "local" } }
+    private var ics: [CalSource] { calendars.filter { $0.source == "ics" } }
+    private var orphans: [CalSource] { calendars.filter { c in c.source == "google" && !accounts.contains { $0.id == c.accountID } } }
+
     var body: some View {
-        SettingsSection(title: "Calendars", description: "What's shown on the calendar, and where it comes from.", actions: {
-            WButton("Sync all", icon: "refreshCw", variant: .ghost, size: .sm, muted: true) { syncing = true; Task { defer { syncing = false }; try? await CalendarAPI.syncSources(); sources = (try? await CalendarAPI.sources()) ?? sources; CalendarBus.shared.changed() } }.disabled(syncing)
+        SettingsSection(title: "Calendars", description: "Untick to hide, without deleting.", actions: {
+            WButton(syncingAll ? "Syncing…" : "Sync all", icon: "refreshCw", variant: .ghost, size: .sm, muted: true) {
+                syncingAll = true
+                Task { defer { syncingAll = false }; try? await CalendarAPI.syncSources(); await load(); CalendarBus.shared.changed() }
+            }
+            .disabled(syncingAll)
         }) {
-            if sources.isEmpty { Text("No calendars yet.").font(W.s13).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 8) }
-            ForEach(sources) { s in
-                SettingsRow(label: s.name, hint: s.source) {
-                    HStack(spacing: 8) {
-                        if s.isDefault { WBadge("Default", variant: .secondary, muted: true) }
-                        if !s.writable { WBadge("Read only", variant: .outline, muted: true) }
+            if loading {
+                SkeletonRows(rows: 2)
+            } else if let error {
+                Text(error).font(W.s13).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 8)
+            } else {
+                if accounts.isEmpty {
+                    Text("No Google account connected. Connect one for mail under Accounts, or a calendar-only one on the web.")
+                        .font(W.xs).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.bottom, 12)
+                }
+                ForEach(accounts) { a in
+                    CalendarAccountGroup(account: a, calendars: calendars.filter { $0.accountID == a.id }, onChange: refreshOne)
+                }
+                if !orphans.isEmpty {
+                    CalendarGroupBlock(title: "Google Calendar", hint: "account no longer connected", calendars: orphans, onChange: refreshOne)
+                }
+                CalendarGroupBlock(title: "In heyflare", calendars: local, onChange: refreshOne, empty: "None yet.") {
+                    WButton("New calendar", icon: "plus", variant: .outline, size: .sm) {
+                        creating = true
+                        Task { defer { creating = false }; if let c = try? await CalendarAPI.createSource(name: "New calendar", color: "#111111") { calendars.append(c); Toasts.shared.show("Calendar added") } }
+                    }
+                    .disabled(creating)
+                }
+                if !ics.isEmpty {
+                    CalendarGroupBlock(title: "Subscribed links", calendars: ics, onChange: refreshOne)
+                }
+                Text("Subscribing to a link, importing a .ics file, and connecting a new Google account are on the web for now.")
+                    .font(W.xs).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.top, 8)
+            }
+        }
+        CalendarPreferencesSection()
+        .task { await load() }
+    }
+
+    private func load() async {
+        loading = calendars.isEmpty
+        defer { loading = false }
+        do {
+            let r = try await CalendarAPI.sourcesFull()
+            calendars = r.calendars; accounts = r.accounts; error = nil
+        } catch { self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription }
+    }
+
+    private func refreshOne(_ c: CalSource) {
+        if let i = calendars.firstIndex(where: { $0.id == c.id }) { calendars[i] = c }
+    }
+}
+
+/// One Google account: its calendars, and what disconnecting or reconnecting would do — read
+/// only here, since the OAuth handoff itself still runs on the web.
+private struct CalendarAccountGroup: View {
+    let account: CalGoogleAccount
+    let calendars: [CalSource]
+    let onChange: (CalSource) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text(account.email).font(W.font(13, 500)).lineLimit(1)
+                Text(account.calendar ? calendarCount(calendars.count) : account.mail ? "mail only" : "not connected").font(W.xs).foregroundStyle(W.mutedForeground)
+                Spacer()
+                if !account.calendar { Text("Connect on the web").font(W.xs).foregroundStyle(W.mutedForeground) }
+            }
+            .padding(.horizontal, 8).frame(height: 32).edgeLine(.bottom)
+            if let err = account.syncError, !err.isEmpty { Text("Last sync failed: \(err)").font(W.xs).padding(.horizontal, 8).padding(.top, 4) }
+            if let err = account.calendarError, !err.isEmpty {
+                Text("has not been used in project|is disabled".firstMatch(in: err) != nil
+                     ? "The Calendar API is off for this Google Cloud project. Turn it on and the calendars appear on the next pass."
+                     : "Couldn't read this account's calendars.")
+                    .font(W.xs).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.top, 4)
+            }
+            if account.calendar || !calendars.isEmpty {
+                ForEach(calendars) { c in CalendarSourceRow(source: c, onChange: onChange).padding(.leading, 20) }
+            }
+        }
+        .padding(.bottom, 12)
+    }
+
+    private func calendarCount(_ n: Int) -> String { n == 1 ? "1 calendar" : "\(n) calendars" }
+}
+
+private extension String {
+    func firstMatch(in text: String) -> Range<String.Index>? { text.range(of: self, options: [.regularExpression, .caseInsensitive]) }
+}
+
+/// A plain heading over a list of calendars, for the groups no Google account owns.
+private struct CalendarGroupBlock<Trailing: View>: View {
+    let title: String
+    var hint: String? = nil
+    let calendars: [CalSource]
+    let onChange: (CalSource) -> Void
+    var empty: String = ""
+    @ViewBuilder var trailing: () -> Trailing
+
+    init(title: String, hint: String? = nil, calendars: [CalSource], onChange: @escaping (CalSource) -> Void, empty: String = "", @ViewBuilder trailing: @escaping () -> Trailing = { EmptyView() }) {
+        self.title = title; self.hint = hint; self.calendars = calendars; self.onChange = onChange; self.empty = empty; self.trailing = trailing
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text(title).font(W.font(12, 500)).foregroundStyle(W.mutedForeground)
+                if let hint { Text(hint).font(W.xs).foregroundStyle(W.mutedForeground.opacity(0.8)) }
+                Spacer()
+                trailing()
+            }
+            .padding(.horizontal, 8).frame(height: 32).edgeLine(.bottom)
+            if calendars.isEmpty {
+                if !empty.isEmpty { Text(empty).font(W.xs).foregroundStyle(W.mutedForeground).padding(.horizontal, 20).padding(.vertical, 6) }
+            } else {
+                ForEach(calendars) { c in CalendarSourceRow(source: c, onChange: onChange).padding(.leading, 20) }
+            }
+        }
+        .padding(.bottom, 12)
+    }
+}
+
+/// One calendar: visible, coloured, named, made default, synced, removed — the tick is
+/// visibility, not existence, exactly as the web's row explains it.
+private struct CalendarSourceRow: View {
+    let source: CalSource
+    let onChange: (CalSource) -> Void
+
+    @State private var name = ""
+    @State private var syncing = false
+    @Environment(DialogState.self) private var dialogs
+    @Environment(PopLayerState.self) private var pops
+
+    private var note: String {
+        let where_ = source.source == "ics" ? (source.url ?? "") : (source.source == "local" ? (source.eventCount.map { "\($0) event\($0 == 1 ? "" : "s")" } ?? "") : "")
+        let synced = source.source != "local" ? source.lastSyncedAt.map { Fmt.relative($0) } ?? "" : ""
+        return [where_, synced].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                WCheckbox(checked: source.visible) { apply(visible: !source.visible) }
+                    .help("Shown in the calendar")
+                Button {
+                    pops.toggle("cal-color-\(source.id)", side: .bottom, align: .start) {
+                        PopCard(width: 208) { ColorRamp(current: source.color) { hex in apply(color: hex) } }
+                    }
+                } label: {
+                    Circle().fill(Color(hex: source.color)).frame(width: 14, height: 14).overlay(Circle().strokeBorder(W.border, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .popAnchor("cal-color-\(source.id)")
+                .help("Colour")
+                WTextField(placeholder: "", text: $name, onSubmit: { rename() })
+                    .frame(width: 180)
+                if !note.isEmpty { Text(note).font(W.xs).foregroundStyle(W.mutedForeground).lineLimit(1) }
+                Spacer(minLength: 8)
+                if source.writable {
+                    Button { apply(isDefault: true) } label: {
+                        HStack(spacing: 4) {
+                            Circle().strokeBorder(W.mutedForeground, lineWidth: 1).background(Circle().fill(source.isDefault ? W.foreground : .clear).padding(3)).frame(width: 12, height: 12)
+                            Text("Default").font(W.xs).foregroundStyle(W.mutedForeground)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help("New events go here")
+                }
+                if source.source != "local" {
+                    WButton(icon: "refreshCw", variant: .ghost, size: .iconSm, muted: true, help: "Sync") {
+                        syncing = true
+                        Task {
+                            defer { syncing = false }
+                            let r = try? await CalendarAPI.syncSource(id: source.id)
+                            if let err = r?.error { Toasts.shared.error(err) } else { Toasts.shared.show("\(source.name) is up to date") }
+                            if let fresh = try? await CalendarAPI.sources().first(where: { $0.id == source.id }) { onChange(fresh) }
+                            CalendarBus.shared.changed()
+                        }
+                    }
+                    .disabled(syncing)
+                }
+                WButton(icon: "trash2", variant: .ghost, size: .iconSm, muted: true, help: "Remove") {
+                    dialogs.confirm("remove-cal-\(source.id)", title: "Remove \(source.name)?", description: removeCopy, action: "Remove calendar") {
+                        Task {
+                            do { try await CalendarAPI.removeSource(id: source.id); CalendarBus.shared.changed(); Toasts.shared.show("\(source.name) removed") }
+                            catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+                        }
                     }
                 }
             }
-            Text("Subscriptions and colours are managed on the web for now.").font(W.xs).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.top, 12)
+            if let err = source.syncError, !err.isEmpty { Text("Last sync failed: \(err)").font(W.xs).padding(.leading, 22) }
         }
-        .task { sources = (try? await CalendarAPI.sources()) ?? [] }
+        .padding(.vertical, 4).edgeLine(.bottom)
+        .onAppear { name = source.name }
+        .onChange(of: source.name) { _, n in name = n }
+    }
+
+    private var removeCopy: String {
+        switch source.source {
+        case "google": return "Removes it and its events from heyflare for good. Google Calendar is untouched; to see it here again, reconnect the account's calendar access."
+        case "ics": return "Stops following the link and deletes the events it brought in. The feed is untouched."
+        default: return "Deletes the calendar and every event on it. There's no undo."
+        }
+    }
+
+    private func rename() {
+        let v = name.trimmingCharacters(in: .whitespaces)
+        guard !v.isEmpty, v != source.name else { name = source.name; return }
+        Task {
+            do { onChange(try await CalendarAPI.updateSource(id: source.id, name: v)) }
+            catch { name = source.name; Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+        }
+    }
+
+    private func apply(color: String) {
+        pops.closeAll()
+        Task {
+            do { onChange(try await CalendarAPI.updateSource(id: source.id, color: color)) }
+            catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+        }
+    }
+
+    private func apply(visible: Bool) {
+        Task {
+            do { onChange(try await CalendarAPI.updateSource(id: source.id, visible: visible)); CalendarBus.shared.changed() }
+            catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+        }
+    }
+
+    private func apply(isDefault: Bool) {
+        Task {
+            do { onChange(try await CalendarAPI.updateSource(id: source.id, isDefault: isDefault)) }
+            catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+        }
+    }
+}
+
+/// The web's 12-swatch ramp: muted, saturated hues built to carry white text, greys on the
+/// first row for anyone who wants the calendar to stay monochrome.
+private struct ColorRamp: View {
+    static let ramp = ["#111111", "#3d3d3d", "#5c5c5c", "#8a8a8a", "#3d6c56", "#3d5a6c", "#3d3e6c", "#613d6c", "#6c3d47", "#6c4b3d", "#6c633d", "#3d686c"]
+    let current: String
+    let onPick: (String) -> Void
+    @State private var hex = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+                ForEach(Self.ramp, id: \.self) { c in
+                    Button { onPick(c) } label: {
+                        Circle().fill(Color(hex: c))
+                            .overlay(Circle().strokeBorder(W.ring, lineWidth: current.lowercased() == c ? 2 : 0))
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            HStack(spacing: 6) {
+                WTextField(placeholder: "#767676", text: $hex, mono: true, height: 28, fontSize: 12)
+                WButton("Use", variant: .outline, size: .sm) { if isValid { onPick(hex.lowercased()) } }.disabled(!isValid)
+            }
+            if !hex.isEmpty && !isValid { Text("Six hex digits, like #767676.").font(W.font(11)).foregroundStyle(W.mutedForeground) }
+        }
+        .padding(10)
+        .onAppear { hex = current }
+    }
+
+    private var isValid: Bool { hex.range(of: "^#[0-9a-fA-F]{6}$", options: .regularExpression) != nil }
+}
+
+/// `CalendarPreferences` from the web: week start, time format, default view, the night
+/// collapse and its hours, declined events, timezone. Considered "desk work" on the phone and
+/// left read-only there; the Mac is a desk too, so this is the second client that can change it.
+private struct CalendarPreferencesSection: View {
+    @State private var prefs: CalPrefs?
+    @State private var saving = false
+
+    var body: some View {
+        SettingsSection(title: "Calendar preferences") {
+            if let s = prefs {
+                SettingsRow(label: "Week starts on") {
+                    WToggleGroup(options: [ToggleOption(id: "0", label: "Sunday"), ToggleOption(id: "1", label: "Monday")], value: Binding(get: { String(s.weekStart < 0 ? 0 : s.weekStart) }, set: { save(["week_start": Int($0) ?? 0]) }))
+                }
+                SettingsRow(label: "Time format") {
+                    WToggleGroup(options: [ToggleOption(id: "12", label: "12-hour"), ToggleOption(id: "24", label: "24-hour")], value: Binding(get: { s.timeFormat.isEmpty ? "12" : s.timeFormat }, set: { save(["time_format": $0]) }))
+                }
+                SettingsRow(label: "Default view") {
+                    WToggleGroup(options: [ToggleOption(id: "days", label: "Day"), ToggleOption(id: "week", label: "Week"), ToggleOption(id: "year", label: "Year")], value: Binding(get: { s.defaultView }, set: { save(["default_view": $0]) }))
+                }
+                SettingsRow(label: "Collapse the night", hint: "Folds the sleeping hours into one band you can click open.") {
+                    WSwitch(on: Binding(get: { s.collapseNight }, set: { save(["collapse_night": $0]) }))
+                }
+                SettingsRow(label: "Night runs from") {
+                    HStack(spacing: 8) {
+                        hourPicker(s.nightStart, disabled: !s.collapseNight, format: s.timeFormat) { save(["night_start": $0]) }
+                        Text("to").font(W.s13).foregroundStyle(W.mutedForeground)
+                        hourPicker(s.nightEnd, disabled: !s.collapseNight, format: s.timeFormat) { save(["night_end": $0]) }
+                    }
+                }
+                SettingsRow(label: "Show events you've declined") {
+                    WSwitch(on: Binding(get: { s.showDeclined }, set: { save(["show_declined": $0]) }))
+                }
+                SettingsRow(label: "Timezone") {
+                    Button {
+                        // Kept to the current zone plus the device's: a full IANA list belongs to a
+                        // proper search field, which this row does not have room for.
+                    } label: {
+                        Text(s.timezone.isEmpty ? "Same as this Mac (\(TimeZone.current.identifier))" : s.timezone.replacingOccurrences(of: "_", with: " "))
+                            .font(W.sm)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(W.mutedForeground)
+                    .help("Change the timezone on the web for the full list")
+                }
+            } else {
+                SkeletonRows(rows: 3)
+            }
+        }
+        .task { prefs = try? await CalendarAPI.settings() }
+    }
+
+    @ViewBuilder
+    private func hourPicker(_ hour: Int, disabled: Bool, format: String, onPick: @escaping (Int) -> Void) -> some View {
+        Menu {
+            ForEach(0..<24, id: \.self) { h in Button(hourLabel(h, format)) { onPick(h) } }
+        } label: {
+            Text(hourLabel(hour, format)).font(W.sm)
+        }
+        .frame(width: 92)
+        .disabled(disabled)
+    }
+
+    private func hourLabel(_ h: Int, _ format: String) -> String {
+        if format == "24" { return String(format: "%02d:00", h) }
+        let suffix = h < 12 ? "AM" : "PM"
+        return "\(h % 12 == 0 ? 12 : h % 12) \(suffix)"
+    }
+
+    private func save(_ patch: [String: Any]) {
+        guard !saving else { return }
+        saving = true
+        Task {
+            defer { saving = false }
+            do { prefs = try await CalendarAPI.applySettings(patch); CalendarBus.shared.changed() }
+            catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+        }
     }
 }
 

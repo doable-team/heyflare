@@ -269,25 +269,74 @@ struct CalDay: Codable, Hashable, Sendable {
 /// One writable (or at least visible) calendar, for the editor's picker.
 struct CalSource: Codable, Hashable, Identifiable, Sendable {
     var id: String
+    var accountID: String?
+    var accountEmail: String?
     var name: String
-    var source: String
+    var source: String   // local | google | ics
+    var url: String?
+    var color: String
     var visible: Bool
     var writable: Bool
     var isDefault: Bool
+    var lastSyncedAt: Double?
+    var syncError: String?
+    var eventCount: Int?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, source, visible, writable
+        case id, name, source, url, color, visible, writable
+        case accountID = "account_id"
+        case accountEmail = "account_email"
         case isDefault = "is_default"
+        case lastSyncedAt = "last_synced_at"
+        case syncError = "sync_error"
+        case eventCount = "event_count"
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
+        accountID = try? c.decode(String.self, forKey: .accountID)
+        accountEmail = try? c.decode(String.self, forKey: .accountEmail)
         name = (try? c.decode(String.self, forKey: .name)) ?? ""
         source = (try? c.decode(String.self, forKey: .source)) ?? "local"
+        url = try? c.decode(String.self, forKey: .url)
+        color = (try? c.decode(String.self, forKey: .color)) ?? "#111111"
         visible = (try? c.decode(Bool.self, forKey: .visible)) ?? true
         writable = (try? c.decode(Bool.self, forKey: .writable)) ?? false
         isDefault = (try? c.decode(Bool.self, forKey: .isDefault)) ?? false
+        lastSyncedAt = try? c.decode(Double.self, forKey: .lastSyncedAt)
+        syncError = try? c.decode(String.self, forKey: .syncError)
+        eventCount = try? c.decode(Int.self, forKey: .eventCount)
+    }
+}
+
+/// One Google account, as the settings page groups calendars by it (`google_accounts` in
+/// `GET /api/calendar/sources`).
+struct CalGoogleAccount: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var email: String
+    var calendar: Bool
+    var mail: Bool
+    var calendarCount: Int
+    var syncError: String?
+    var calendarError: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, email, calendar, mail
+        case calendarCount = "calendar_count"
+        case syncError = "sync_error"
+        case calendarError = "calendar_error"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        email = (try? c.decode(String.self, forKey: .email)) ?? ""
+        calendar = (try? c.decode(Bool.self, forKey: .calendar)) ?? false
+        mail = (try? c.decode(Bool.self, forKey: .mail)) ?? false
+        calendarCount = (try? c.decode(Int.self, forKey: .calendarCount)) ?? 0
+        syncError = try? c.decode(String.self, forKey: .syncError)
+        calendarError = try? c.decode(String.self, forKey: .calendarError)
     }
 }
 
@@ -305,6 +354,8 @@ struct CalPrefs: Codable, Hashable, Sendable {
     /// `"12"` or `"24"`.
     var timeFormat: String
     var showDeclined: Bool
+    /// `days | week | year` — which of `CalendarPage`'s three tabs opens by default.
+    var defaultView: String
 
     /// What the app assumes before `/settings` has answered: the device's own conventions.
     /// `weekStart` of -1 means "not yet known", which is how `calendar` tells the difference
@@ -319,7 +370,7 @@ struct CalPrefs: Codable, Hashable, Sendable {
         showDeclined: false
     )
 
-    init(timezone: String, weekStart: Int, nightStart: Int, nightEnd: Int, collapseNight: Bool, timeFormat: String, showDeclined: Bool) {
+    init(timezone: String, weekStart: Int, nightStart: Int, nightEnd: Int, collapseNight: Bool, timeFormat: String, showDeclined: Bool, defaultView: String = "week") {
         self.timezone = timezone
         self.weekStart = weekStart
         self.nightStart = nightStart
@@ -327,6 +378,7 @@ struct CalPrefs: Codable, Hashable, Sendable {
         self.collapseNight = collapseNight
         self.timeFormat = timeFormat
         self.showDeclined = showDeclined
+        self.defaultView = defaultView
     }
 
     enum CodingKeys: String, CodingKey {
@@ -337,6 +389,7 @@ struct CalPrefs: Codable, Hashable, Sendable {
         case collapseNight = "collapse_night"
         case timeFormat = "time_format"
         case showDeclined = "show_declined"
+        case defaultView = "default_view"
     }
 
     init(from decoder: Decoder) throws {
@@ -349,6 +402,7 @@ struct CalPrefs: Codable, Hashable, Sendable {
         collapseNight = (try? c.decode(Bool.self, forKey: .collapseNight)) ?? true
         timeFormat = (try? c.decode(String.self, forKey: .timeFormat)) ?? ""
         showDeclined = (try? c.decode(Bool.self, forKey: .showDeclined)) ?? false
+        defaultView = (try? c.decode(String.self, forKey: .defaultView)) ?? "week"
     }
 }
 
@@ -370,13 +424,15 @@ struct CalRange: Codable, Sendable {
 
 private struct CalSourcesResponse: Decodable {
     var calendars: [CalSource]
+    var googleAccounts: [CalGoogleAccount]
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         calendars = (try? c.decode([CalSource].self, forKey: .calendars)) ?? []
+        googleAccounts = (try? c.decode([CalGoogleAccount].self, forKey: .googleAccounts)) ?? []
     }
 
-    enum CodingKeys: String, CodingKey { case calendars }
+    enum CodingKeys: String, CodingKey { case calendars; case googleAccounts = "google_accounts" }
 }
 
 // MARK: - How far a write reaches
@@ -537,10 +593,51 @@ enum CalendarAPI {
         try await send("GET", "/api/calendar/sources", as: CalSourcesResponse.self).calendars
     }
 
+    /// The Mac's Settings screen edits this list, so it reads the account grouping the phone
+    /// does not.
+    static func sourcesFull() async throws -> (calendars: [CalSource], accounts: [CalGoogleAccount]) {
+        let r = try await send("GET", "/api/calendar/sources", as: CalSourcesResponse.self)
+        return (r.calendars, r.googleAccounts)
+    }
+
     /// Pull first, then re-read: without this a refresh only re-fetches whatever the last cron
     /// run left behind.
     static func syncSources() async throws {
         _ = try await run(try request("POST", "/api/calendar/sources/sync", body: [:]))
+    }
+
+    /// A `nil` field is left as it was; only what is passed changes.
+    @discardableResult
+    static func updateSource(id: String, name: String? = nil, color: String? = nil, visible: Bool? = nil, isDefault: Bool? = nil) async throws -> CalSource {
+        var body: [String: Any] = [:]
+        if let name { body["name"] = name }
+        if let color { body["color"] = color }
+        if let visible { body["visible"] = visible }
+        if let isDefault { body["is_default"] = isDefault }
+        return try await send("PATCH", "/api/calendar/sources/\(id)", body: body, as: CalSource.self)
+    }
+
+    /// The settings page's "Remove": for a Google calendar, gone for good rather than back on
+    /// the next sync (the worker tombstones it).
+    static func removeSource(id: String) async throws {
+        _ = try await run(try request("DELETE", "/api/calendar/sources/\(id)"))
+    }
+
+    static func createSource(name: String, color: String) async throws -> CalSource {
+        try await send("POST", "/api/calendar/sources", body: ["name": name, "color": color], as: CalSource.self)
+    }
+
+    private struct SyncOneResponse: Decodable { var ok: Bool; var changed: Int; var error: String? }
+
+    static func syncSource(id: String) async throws -> (changed: Int, error: String?) {
+        let r = try await send("POST", "/api/calendar/sources/\(id)/sync", body: [:], as: SyncOneResponse.self)
+        return (r.changed, r.error)
+    }
+
+    /// The web's `Section title="Calendar preferences"` — desk work on the phone, but the Mac is
+    /// a desk, so this is the one client besides the browser that lets someone change it.
+    static func applySettings(_ patch: [String: Any]) async throws -> CalPrefs {
+        try await send("PUT", "/api/calendar/settings", body: patch, as: CalPrefs.self)
     }
 
     // MARK: Events
