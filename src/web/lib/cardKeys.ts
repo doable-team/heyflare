@@ -21,6 +21,14 @@ export function scrollPageBy(delta: number) {
   s.scrollBy({ top: step, behavior: "smooth" });
 }
 
+/** The card being read on a card page: the first `[data-feed-card]` still below the top bar. */
+export function cardBeingRead(): string | null {
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-feed-card]"))) {
+    if (el.getBoundingClientRect().bottom > 44 + 24) return el.dataset.feedCard ?? null;
+  }
+  return null;
+}
+
 /**
  * Arrow keys on card layouts (The Feed, a bundle) scroll the page smoothly instead of hopping
  * between cards — these are made for reading, not triage.

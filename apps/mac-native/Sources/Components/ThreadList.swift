@@ -337,6 +337,7 @@ struct ThreadListView: View {
             "z": { let ids = targets(); if !ids.isEmpty { bubble(ids) } },
             "#": { act(targets(), .move(.trash), "Moved to trash") },
             "u": { act(targets(), .markUnread, nil, removes: false) },
+            "e": { act(targets(), .seen, "Done", removes: false) },
         ], enabled: keysEnabled && ui.region == .content)
         // `b` and `g` only mean something with a selection, so they bind only then.
         .onKeys(["b": { BulkBar.labelSelection(selected, all, pops: PopLayerState.shared) }, "g": { BulkBar.mergeSelection(selected, all) { selected = [] } }],
@@ -402,7 +403,8 @@ struct ThreadListView: View {
     }
 
     private func step(_ delta: Int) {
-        guard !items.isEmpty else { return }
+        // An empty page scrolls instead, so the keys never feel dead (`useItemCursor`).
+        guard !items.isEmpty else { PageScroll.by(CGFloat(delta) * 0.25); return }
         cursor = min(max(cursor + delta, 0), items.count - 1)
         // `scrollIntoView` on the web: the cursor moving is not enough on its own, since the
         // list sits inside the page's own ScrollView rather than owning one of its own.

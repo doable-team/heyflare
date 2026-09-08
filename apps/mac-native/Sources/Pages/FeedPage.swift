@@ -76,9 +76,11 @@ struct FeedCard: View {
 /// `Feed.tsx`.
 struct FeedPage: View {
     @Environment(AppState.self) private var app
+    @Environment(UIState.self) private var ui
     @State private var store = FeedStore()
     @State private var show = "new"
     @State private var leaving: Set<String> = []
+    @State private var tops = CardTops()
 
     private var filter: FeedFilter { show == "all" ? .all : .new }
 
@@ -99,7 +101,7 @@ struct FeedPage: View {
                 }
                 LazyVStack(spacing: 16) {
                     ForEach(store.threads) { t in
-                        FeedCard(thread: t, onLeave: leave).opacity(leaving.contains(t.id) ? 0 : 1).id(t.id)
+                        FeedCard(thread: t, onLeave: leave).opacity(leaving.contains(t.id) ? 0 : 1).id(t.id).trackCard(t.id, in: tops)
                     }
                 }
                 LoadMore(hasMore: store.hasMore, loading: store.loadingMore) { Task { await store.loadMore(filter) } }
@@ -107,6 +109,9 @@ struct FeedPage: View {
             .task { await store.firstLoad(filter) }
             .onChange(of: show) { _, _ in Task { await store.refresh(filter) } }
             .syncsWithMail { await store.refresh(filter) }
+            // A reading page: arrows scroll it. `e` is Done on the card being read.
+            .cardScrollKeys(enabled: ui.region == .content)
+            .onKeys(["e": { if let id = tops.current(store.threads.map(\.id)) { leave(id) { Mail.bulk([id], .seen, toast: "Done") } } }], enabled: ui.region == .content && !store.threads.isEmpty)
         }
     }
 
@@ -137,6 +142,8 @@ struct FeedSkeleton: View {
 struct BundlePage: View {
     let bundleID: String
     @Environment(Router.self) private var router
+    @Environment(UIState.self) private var ui
+    @State private var tops = CardTops()
     @Environment(DialogState.self) private var dialogs
     @Environment(Toasts.self) private var toasts
     @State private var store = BundleStore()
@@ -182,12 +189,14 @@ struct BundlePage: View {
                 .padding(.horizontal, 8).padding(.bottom, 24)
                 LazyVStack(spacing: 16) {
                     ForEach(store.threads.filter { $0.latestMessage != nil }) { t in
-                        FeedCard(thread: t, onLeave: leave).opacity(leaving.contains(t.id) ? 0 : 1)
+                        FeedCard(thread: t, onLeave: leave).opacity(leaving.contains(t.id) ? 0 : 1).trackCard(t.id, in: tops)
                     }
                     if store.threads.isEmpty { Text("Nothing in this bundle yet.").font(W.sm).foregroundStyle(W.mutedForeground).padding(.horizontal, 8) }
                 }
             }
             .onKeys(["Escape": { router.back() }])
+            .cardScrollKeys(enabled: ui.region == .content)
+            .onKeys(["e": { if let id = tops.current(store.threads.map(\.id)) { leave(id) { Mail.bulk([id], .seen, toast: "Done") } } }], enabled: ui.region == .content && !store.threads.isEmpty)
             .task {
                 if b.isOpen && !marked { marked = true; _ = await store.markAllSeen(bundleID); Mail.invalidate() }
             }
@@ -200,5 +209,28 @@ struct BundlePage: View {
     private func leave(_ id: String, _ then: @escaping () -> Void) {
         leaving.insert(id)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { then(); _ = store.remove(id); leaving.remove(id) }
+    }
+}
+
+
+/// Where each card sits in the window, so a key can act on the one being read: the first
+/// card whose bottom is still below the top bar.
+@MainActor
+@Observable
+final class CardTops {
+    @ObservationIgnored var frames: [String: CGRect] = [:]
+    func current(_ order: [String]) -> String? {
+        order.first { id in (frames[id]?.maxY ?? -1) > 44 + 24 }
+    }
+}
+
+extension View {
+    func trackCard(_ id: String, in tops: CardTops) -> some View {
+        background(GeometryReader { g in
+            Color.clear
+                .onAppear { tops.frames[id] = g.frame(in: .named("window")) }
+                .onChange(of: g.frame(in: .named("window"))) { _, f in tops.frames[id] = f }
+                .onDisappear { tops.frames[id] = nil }
+        })
     }
 }

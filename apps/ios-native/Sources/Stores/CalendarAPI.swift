@@ -86,6 +86,8 @@ struct CalEventFull: Codable, Hashable, Identifiable, Sendable {
     var occurrenceDate: String?
     var calendarID: String
     var calendarName: String
+    /// The calendar's colour, the one place colour enters the UI; empty means the default fill.
+    var calendarColor: String
     var source: String
     var writable: Bool
     var kind: String
@@ -134,6 +136,7 @@ struct CalEventFull: Codable, Hashable, Identifiable, Sendable {
         case occurrenceDate = "occurrence_date"
         case calendarID = "calendar_id"
         case calendarName = "calendar_name"
+        case calendarColor = "calendar_color"
         case allDay = "all_day"
         case startsAt = "starts_at"
         case endsAt = "ends_at"
@@ -152,6 +155,7 @@ struct CalEventFull: Codable, Hashable, Identifiable, Sendable {
         occurrenceDate = try? c.decodeIfPresent(String.self, forKey: .occurrenceDate)
         calendarID = (try? c.decode(String.self, forKey: .calendarID)) ?? ""
         calendarName = (try? c.decode(String.self, forKey: .calendarName)) ?? ""
+        calendarColor = (try? c.decode(String.self, forKey: .calendarColor)) ?? ""
         source = (try? c.decode(String.self, forKey: .source)) ?? "local"
         writable = (try? c.decode(Bool.self, forKey: .writable)) ?? false
         kind = (try? c.decode(String.self, forKey: .kind)) ?? "event"

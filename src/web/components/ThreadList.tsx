@@ -195,6 +195,7 @@ export function ThreadList({
       z: () => { const ids = targets(); if (ids.length) setBubbleFor(ids); },
       "#": () => act(targets(), { action: "move", bucket: "trash" }, "Moved to trash"),
       u: () => act(targets(), { action: "mark_unread" }, undefined, false),
+      e: () => act(targets(), { action: "seen" }, "Done", false),
       Escape: () => setSelected(new Set()),
     },
     // While the sidebar owns the arrows, the list stays put.

@@ -160,7 +160,8 @@ struct ShortcutsOverlay: View {
     private let groups: [(String, [(String, String)])] = [
         ("Moving around", [("↑ / ↓", "Move through mail"), ("←", "Jump to the sidebar"), ("→", "Open the Assistant"), ("↵", "Open (sidebar: go there)"), ("esc", "Back to the list")]),
         ("Go to", [("⌘K", "Search & commands"), ("⌘B", "Toggle sidebar"), ("⌘J", "Assistant (open / close)")]),
-        ("Lists", [("j / k", "Move down / up"), ("↵ or o", "Open thread"), ("x", "Select thread"), ("l", "Reply later"), ("a", "Set aside"), ("z", "Bubble up"), ("u", "Mark unread"), ("#", "Trash"), ("b", "Labels (with selection)"), ("g", "Merge selected")]),
+        ("Lists", [("j / k", "Move down / up"), ("↵ or o", "Open thread"), ("x", "Select thread"), ("l", "Reply later"), ("a", "Set aside"), ("z", "Bubble up"), ("e", "Done (mark seen)"), ("u", "Mark unread"), ("#", "Trash"), ("b", "Labels (with selection)"), ("g", "Merge selected")]),
+        ("The Feed", [("↑ / ↓ or j / k", "Scroll"), ("space / PgDn", "Scroll a page"), ("e", "Done with the card you're reading")]),
         ("Power through new", [("o", "Start (from the Imbox)"), ("j / k", "Next / previous"), ("r", "Reply inline"), ("l", "Reply later"), ("a", "Set aside"), ("e", "Mark seen"), ("#", "Trash"), ("↵", "Open the full thread"), ("esc", "Back to the Imbox")]),
         ("Calendar", [("0", "Mail ⇄ Calendar"), ("↑ / ↓", "Previous / next"), ("←", "Jump to the sidebar"), ("→", "Open the Assistant"), ("t", "Today"), ("d / w / y", "Day, week, year"), ("n", "New event"), ("j", "Journal"), ("b", "Habits")]),
         ("Everywhere", [("c", "Compose"), ("⌘↵", "Send message"), ("q", "Undo send"), ("i", "Back to Imbox"), ("esc", "Close / clear"), ("?", "This overlay")]),

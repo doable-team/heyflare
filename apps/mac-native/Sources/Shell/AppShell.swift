@@ -145,6 +145,9 @@ struct PageHost: View {
                             .padding(.horizontal, 32)
                             .padding(.top, 16)
                             .padding(.bottom, 96)
+                            // Hands the page's NSScrollView to `PageScroll`, so keys can
+                            // scroll by a fraction of the window (the web's `scrollPageBy`).
+                            .background(PageScrollHook())
                     }
                     // Browsers overlay their scrollbar; a reserved gutter would shift the
                     // centred column left by half its width.
@@ -218,6 +221,55 @@ struct PageColumn<Content: View>: View {
         VStack(alignment: .leading, spacing: 0) { content() }
             .frame(maxWidth: width)
             .frame(maxWidth: .infinity)
+    }
+}
+
+/// `scrollPageBy` in cardKeys.ts: the page scrolls by a fraction of the window, smoothly.
+@MainActor
+enum PageScroll {
+    weak static var scrollView: NSScrollView?
+
+    static func by(_ fraction: CGFloat) {
+        guard let sv = scrollView, let doc = sv.documentView else { return }
+        let clip = sv.contentView
+        let step = round(clip.bounds.height * fraction)
+        let maxY = max(0, doc.frame.height - clip.bounds.height)
+        var origin = clip.bounds.origin
+        origin.y = min(max(origin.y + step, 0), maxY)
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.2
+            ctx.allowsImplicitAnimation = true
+            clip.animator().setBoundsOrigin(origin)
+        }
+        sv.reflectScrolledClipView(clip)
+    }
+}
+
+/// Finds the scroll view the page sits in once the view lands in the window.
+private struct PageScrollHook: NSViewRepresentable {
+    func makeNSView(context: Context) -> HookView { HookView() }
+    func updateNSView(_ view: HookView, context: Context) {}
+    final class HookView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let sv = enclosingScrollView { PageScroll.scrollView = sv }
+        }
+    }
+}
+
+extension View {
+    /// `useCardScroll`: arrows and j / k scroll a reading page by a quarter of the window,
+    /// Page Up / Down and Space by most of it. `arrows: false` keeps only the big jumps for
+    /// pages whose arrows already drive a cursor (the thread's message cursor).
+    func cardScrollKeys(arrows: Bool = true, enabled: Bool = true) -> some View {
+        var map: [String: () -> Void] = [
+            "PageDown": { PageScroll.by(0.9) }, "PageUp": { PageScroll.by(-0.9) }, " ": { PageScroll.by(0.9) },
+        ]
+        if arrows {
+            map["ArrowDown"] = { PageScroll.by(0.25) }; map["ArrowUp"] = { PageScroll.by(-0.25) }
+            map["j"] = { PageScroll.by(0.25) }; map["k"] = { PageScroll.by(-0.25) }
+        }
+        return onKeys(map, enabled: enabled)
     }
 }
 

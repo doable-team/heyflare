@@ -102,6 +102,7 @@ struct ThreadPageView: View {
             "#": { run(.move(.trash), "Moved to trash"); router.back() },
             "Escape": { if let reply { Task { await reply.model.closeInline() } } else { router.back() } },
         ], enabled: !renaming && !noteOpen && ui.region == .content)
+        .cardScrollKeys(arrows: false, enabled: !renaming && !noteOpen && ui.region == .content)
         // Escape backs out of a rename or a note, as the web's inputs do.
         .onKeys(["Escape": { renaming = false; noteOpen = false }], enabled: renaming || noteOpen, priority: 10, whileTyping: true)
     }

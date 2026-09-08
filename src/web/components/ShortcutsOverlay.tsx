@@ -12,7 +12,11 @@ const GROUPS: { title: string; keys: [string, string][] }[] = [
   },
   {
     title: "Lists",
-    keys: [["j / k", "Move down / up"], ["↵ or o", "Open thread"], ["x", "Select thread"], ["l", "Reply later"], ["a", "Set aside"], ["z", "Bubble up"], ["u", "Mark unread"], ["#", "Trash"], ["b", "Labels (with selection)"], ["g", "Merge selected"]],
+    keys: [["j / k", "Move down / up"], ["↵ or o", "Open thread"], ["x", "Select thread"], ["l", "Reply later"], ["a", "Set aside"], ["z", "Bubble up"], ["e", "Done (mark seen)"], ["u", "Mark unread"], ["#", "Trash"], ["b", "Labels (with selection)"], ["g", "Merge selected"]],
+  },
+  {
+    title: "The Feed",
+    keys: [["↑ / ↓ or j / k", "Scroll"], ["space / PgDn", "Scroll a page"], ["e", "Done with the card you're reading"]],
   },
   {
     title: "Power through new",

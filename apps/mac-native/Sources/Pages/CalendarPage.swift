@@ -224,7 +224,10 @@ struct WeekView: View {
                         VStack(spacing: 2) {
                             ForEach(events.allDay) { e in
                                 Button { onEvent(e) } label: {
-                                    Text(e.displayTitle).font(W.font(11, 500)).lineLimit(1).padding(.horizontal, 8).frame(maxWidth: .infinity).frame(height: 20).background(W.muted).clipShape(Capsule())
+                                    let s = EventSurface(e)
+                                    Text(e.displayTitle).font(W.font(11, 500)).lineLimit(1).foregroundStyle(s.ink).padding(.horizontal, 8).frame(maxWidth: .infinity).frame(height: 18).background(s.fill).clipShape(Capsule())
+                                        .overlay { if e.isTentative { Capsule().strokeBorder(W.foreground.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3])) } }
+                                        .opacity(e.isCancelled ? 0.45 : 1)
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -271,21 +274,56 @@ struct WeekView: View {
     }
 }
 
-/// An event: a solid block, the title flipped to contrast.
+/// `eventColors` in calendar/colors.ts: the calendar's colour as a solid fill, the text
+/// flipped to whichever of near-white or near-black actually contrasts. A maybe (tentative)
+/// is drawn without colour, on white with a dashed edge.
+struct EventSurface {
+    let fill: Color
+    let ink: Color
+    static let defaultFill = "#1f1f1f"
+
+    init(_ e: CalEventFull) {
+        if e.isTentative || e.rsvp == .tentative {
+            fill = Color(hex: "#ffffff"); ink = Color(hex: "#131313")
+            return
+        }
+        let hex = Self.normalize(e.calendarColor) ?? Self.defaultFill
+        let v = UInt32(hex.dropFirst(), radix: 16) ?? 0x1f1f1f
+        let r = Double((v >> 16) & 0xff) / 255, g = Double((v >> 8) & 0xff) / 255, b = Double(v & 0xff) / 255
+        let lin: (Double) -> Double = { $0 <= 0.04045 ? $0 / 12.92 : pow(($0 + 0.055) / 1.055, 2.4) }
+        let L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+        fill = Color(hex: hex)
+        ink = Color(hex: 1.05 / (L + 0.05) >= (L + 0.05) / 0.05 ? "#fbfbfa" : "#131313")
+    }
+
+    static func normalize(_ hex: String) -> String? {
+        let v = hex.trimmingCharacters(in: .whitespaces)
+        if v.range(of: "^#[0-9a-fA-F]{6}$", options: .regularExpression) != nil { return v.lowercased() }
+        if v.range(of: "^#[0-9a-fA-F]{3}$", options: .regularExpression) != nil {
+            let c = Array(v.dropFirst())
+            return "#\(c[0])\(c[0])\(c[1])\(c[1])\(c[2])\(c[2])".lowercased()
+        }
+        return nil
+    }
+}
+
+/// An event: a solid block in its calendar's colour, the title flipped to contrast.
 struct EventBlock: View {
     let event: CalEventFull
     var onTap: () -> Void
     var body: some View {
+        let s = EventSurface(event)
         Button(action: onTap) {
             VStack(alignment: .leading, spacing: 0) {
-                Text(event.displayTitle).font(W.font(11, 500)).lineLimit(2)
+                Text(event.displayTitle).font(W.font(11, 500)).lineLimit(2).strikethrough(event.done || event.isCancelled)
                 if !event.location.isEmpty { Text(event.location).font(W.font(10)).lineLimit(1).opacity(0.8) }
             }
-            .foregroundStyle(event.isTentative ? W.foreground : W.primaryForeground)
+            .foregroundStyle(s.ink)
             .padding(.horizontal, 6).padding(.vertical, 3)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(event.isTentative ? W.background : W.foreground.opacity(event.isCancelled ? 0.4 : 1))
-            .overlay { if event.isTentative { RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(W.foreground, style: StrokeStyle(lineWidth: 1, dash: [3])) } }
+            .background(s.fill)
+            .overlay { if event.isTentative { RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(W.foreground.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3])) } }
+            .opacity(event.isCancelled ? 0.45 : 1)
             .rounded(4)
             .contentShape(Rectangle())
         }
@@ -310,7 +348,7 @@ struct DayColumnView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(CalDate.dayLabel(day)).font(W.font(20, 600)).tracking(-0.2).padding(.horizontal, 8)
             if !events.allDay.isEmpty {
-                HStack(spacing: 6) { ForEach(events.allDay) { e in Button { onEvent(e) } label: { Text(e.displayTitle).font(W.font(12, 500)).padding(.horizontal, 10).frame(height: 24).background(W.muted).clipShape(Capsule()) }.buttonStyle(.plain) } }.padding(.horizontal, 8)
+                HStack(spacing: 6) { ForEach(events.allDay) { e in Button { onEvent(e) } label: { let s = EventSurface(e); Text(e.displayTitle).font(W.font(12, 500)).foregroundStyle(s.ink).padding(.horizontal, 10).frame(height: 24).background(s.fill).clipShape(Capsule()) }.buttonStyle(.plain) } }.padding(.horizontal, 8)
             }
             HStack(alignment: .top, spacing: 0) {
                 VStack(alignment: .trailing, spacing: 0) {

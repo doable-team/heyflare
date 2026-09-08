@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Check, Layers, MailOpen, Ungroup } from "lucide-react";
 import { toast } from "sonner";
-import { useBundle, useBundleMutations, type FeedThread } from "../api";
+import { useBundle, useBundleMutations, useBulkAction, type FeedThread } from "../api";
 import { useKeys } from "../lib/keys";
-import { useCardScroll } from "../lib/cardKeys";
+import { useCardScroll, cardBeingRead } from "../lib/cardKeys";
 import { cn } from "@/lib/utils";
 import { BundleAvatar } from "../components/Avatar";
 import { ErrorState } from "../components/EmptyState";
@@ -45,7 +45,14 @@ export default function BundlePage() {
   };
 
   const threads = (q.data?.threads.filter((t) => t.latest_message) ?? []) as FeedThread[];
+  const bulk = useBulkAction();
   useCardScroll();
+  useKeys({
+    e: () => {
+      const id = cardBeingRead();
+      if (id) onLeave(id, () => bulk.mutate({ thread_ids: [id], action: "seen" }, { onSuccess: () => toast("Done") }));
+    },
+  }, !confirm && threads.length > 0);
 
   // Escape goes back, like the thread view (open menus/dialogs consume it first).
   useKeys(
@@ -99,6 +106,7 @@ export default function BundlePage() {
         {threads.map((t, i) => (
           <div
             key={t.id}
+            data-feed-card={t.id}
             className={cn("rounded-md scroll-mt-16 transition-opacity duration-100", leaving.has(t.id) && "opacity-0",)}
           >
             <FeedCard t={t} onLeave={onLeave} />

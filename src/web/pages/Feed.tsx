@@ -10,7 +10,8 @@ import { LoadMore } from "../components/ThreadList";
 import { Avatar, AccountGlyph } from "../components/Avatar";
 import { EmptyState, ErrorState, PageHeader } from "../components/EmptyState";
 import { useToast } from "../components/Toast";
-import { useCardScroll } from "../lib/cardKeys";
+import { useCardScroll, cardBeingRead } from "../lib/cardKeys";
+import { useKeys } from "../lib/keys";
 import { fmtTime, fmtFull, unsubscribeTarget } from "../lib/format";
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -146,7 +147,16 @@ export default function Feed() {
   const [leaving, setLeaving] = useState<Set<string>>(new Set());
   const nav = useNavigate();
   const threads = feed.data?.pages.flatMap((p) => p.threads) ?? [];
+  const bulk = useBulkAction();
+  const { toast } = useToast();
   useCardScroll();
+  // `e` is Done on the card being read: the first one still below the top bar.
+  useKeys({
+    e: () => {
+      const id = cardBeingRead();
+      if (id) onLeave(id, () => bulk.mutate({ thread_ids: [id], action: "seen" }, { onSuccess: () => toast("Done", { kind: "success" }) }));
+    },
+  }, accounts.length > 0 && threads.length > 0);
   if (accounts.length === 0) return <ConnectGmailCard />;
   const onLeave = (id: string, cb: () => void) => {
     setLeaving((l) => new Set([...l, id]));
@@ -184,6 +194,7 @@ export default function Feed() {
         {threads.map((t, i) => (
           <div
             key={t.id}
+            data-feed-card={t.id}
             className={cn("rounded-md scroll-mt-16 transition-opacity duration-100", leaving.has(t.id) && "opacity-0",)}
           >
             <FeedCard t={t} onLeave={onLeave} />

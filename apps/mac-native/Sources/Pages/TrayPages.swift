@@ -39,6 +39,7 @@ struct ReplyLaterPage: View {
             .syncsWithMail { await imbox.refresh() }
             .onChange(of: list.map(\.id)) { _, ids in if !ids.isEmpty, !ids.contains(currentID ?? "") { currentID = ids[min(index, ids.count - 1)] } }
             .onKeys(["j": { go(1) }, "k": { go(-1) }, "]": { go(1) }, "[": { go(-1) }, "d": { if let c = current { done(c) } }], enabled: !list.isEmpty && ui.region == .content)
+            .cardScrollKeys(enabled: ui.region == .content)
         }
     }
 
