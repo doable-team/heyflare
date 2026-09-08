@@ -107,6 +107,7 @@ final class AppState {
                 reconcileScope()
                 phase = .signedIn
                 refreshCounts()
+                watchChanges(active: true)
             } else {
                 phase = .signedOut(message: nil)
             }
@@ -165,6 +166,7 @@ final class AppState {
 
     /// Forgets the server entirely and returns to the address screen.
     func clearServer() async {
+        stopWatching()
         try? await APIClient.shared.logout()
         ServerConfig.shared.baseURL = nil
         ContentCache.shared.clear()
@@ -175,6 +177,7 @@ final class AppState {
     }
 
     func signOut() async {
+        stopWatching()
         try? await APIClient.shared.logout()
         // Cached mail outlives the session otherwise, and the next person to sign in
         // on this phone would see the last one's Imbox for a frame.
@@ -239,10 +242,64 @@ final class AppState {
     /// to the foreground, throttled so tabbing around does not hammer the worker. App-wide
     /// rather than per screen, so it is whichever screen is showing that gets refreshed.
     func becameActive() async {
+        watchChanges(active: true)
         guard phase == .signedIn, Date().timeIntervalSince(lastForeground) > 30 else { return }
         lastForeground = Date()
+        lastSyncKick = Date()
         await syncAll()
         didMutate()
+    }
+
+    /// The window lost focus (or the phone went to the background): keep an eye on the
+    /// server, just less often — enough for the badge to stay right.
+    func resignedActive() {
+        watchChanges(active: false)
+    }
+
+    // MARK: Staying current
+
+    private var changeWatch: Task<Void, Never>?
+    private var lastRevision: Int?
+    private var lastSyncKick = Date.distantPast
+
+    /// Polls `/api/changes` — one number that moves whenever any of the user's mail changes —
+    /// and, when it moves, tells every list on screen to refetch and the badges to recount.
+    /// Every ten seconds while the app is in front, once a minute behind; and while in front
+    /// it also asks each mailbox to pull every half minute, so mail that has just landed at
+    /// the provider is here well inside the worker's own minute-long cron. This is what makes
+    /// a change made on the web, or on the phone, show up here without anyone touching
+    /// anything — the app used to refetch only when it happened to write or navigate.
+    func watchChanges(active: Bool) {
+        changeWatch?.cancel()
+        changeWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.tick(active: active)
+                try? await Task.sleep(for: .seconds(active ? 10 : 60))
+            }
+        }
+    }
+
+    func stopWatching() {
+        changeWatch?.cancel()
+        changeWatch = nil
+        lastRevision = nil
+    }
+
+    private func tick(active: Bool) async {
+        guard phase == .signedIn else { return }
+        // In front, a mailbox that has not pulled for half a minute pulls now. Incremental
+        // sync is one cheap history call when nothing has changed.
+        if active, Date().timeIntervalSince(lastSyncKick) > 30, !accounts.isEmpty {
+            lastSyncKick = Date()
+            await withTaskGroup(of: Void.self) { group in
+                for account in accounts where account.syncStatus != "disconnected" {
+                    group.addTask { try? await APIClient.shared.sync(accountID: account.id) }
+                }
+            }
+        }
+        guard let revision = try? await APIClient.shared.changes(), !Task.isCancelled else { return }
+        if let last = lastRevision, last != revision { didMutate() }
+        lastRevision = revision
     }
 }
 

@@ -8,7 +8,7 @@ import { isNative, isMac, native, onMenu, installExternalLinkHandler } from "../
 import { startGoogleConnect, startMicrosoftConnect } from "../lib/connect";
 import { ALL, useAccount } from "../context/AccountContext";
 import { useCompose } from "../context/ComposeContext";
-import { api, useCounts, useMeMutations } from "../api";
+import { api, useCounts, useMailChanges, useMeMutations } from "../api";
 import { useKeys } from "../lib/keys";
 import { arrows, focus, overlayOpen, useFocusRegion } from "../lib/focusStore";
 import { Avatar } from "./Avatar";
@@ -223,6 +223,7 @@ function TopBar() {
 function AppSidebar() {
   const { user, accounts, account, scope, setScope, glyphFor, googleConfigured, microsoftConfigured } = useAccount();
   const counts = useCounts(accounts.length > 0);
+  useMailChanges(accounts.length > 0);
   const update = useUpdateCheck();
   const { openCompose } = useCompose();
   const { theme, setTheme } = useTheme();

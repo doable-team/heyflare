@@ -23,7 +23,7 @@ struct HeyflareApp: App {
                 }
                 .onChange(of: scenePhase) { _, phase in
                     // Anything still only in memory is written before the app is suspended.
-                    if phase != .active { ContentCache.shared.flushNow() }
+                    if phase != .active { ContentCache.shared.flushNow(); app.resignedActive() }
                     if phase == .active { Task { await app.becameActive() } }
                 }
         }

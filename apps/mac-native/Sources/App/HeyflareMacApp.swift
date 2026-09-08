@@ -31,6 +31,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // The window is hosted here rather than by a WindowGroup, so SwiftUI's scenePhase does
+    // not track it. AppKit's own activation is what says whether someone is looking.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        Task { await Services.app.becameActive() }
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        ContentCache.shared.flushNow()
+        Services.app.resignedActive()
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         // Opening the hosted window is the whole reopen; letting SwiftUI add a WindowGroup
         // window too would run a second RootHost.

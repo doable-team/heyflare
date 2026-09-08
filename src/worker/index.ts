@@ -75,6 +75,27 @@ api.get("/me", async (c, next) => {
 // What this deployment is running (used by the update check).
 api.get("/version", (c) => c.json({ version: VERSION, commit: COMMIT, built_at: BUILT_AT, latest: null }));
 api.use("*", requireUser);
+
+/**
+ * "Has any of my mail changed?" in one number: the newest `updated_at` across every thread the
+ * user owns. Sync bumps it when mail arrives, every action bumps it when mail moves, so a
+ * client that polls this every few seconds and refetches on a change sees what another client
+ * did within seconds — without asking for whole lists it already has. One index seek per
+ * account (idx_threads_account_updated), cheap enough to ask constantly.
+ */
+api.get("/changes", async (c) => {
+  const db = c.env.DB;
+  const accounts = await db.prepare(`SELECT id FROM accounts WHERE user_id = ?`).bind(c.get("user").id).all<{ id: string }>();
+  let revision = 0;
+  if (accounts.results.length > 0) {
+    const rows = await db.batch<{ r: number | null }>(
+      accounts.results.map((a) => db.prepare(`SELECT MAX(updated_at) AS r FROM threads WHERE account_id = ?`).bind(a.id))
+    );
+    for (const row of rows) revision = Math.max(revision, row.results[0]?.r ?? 0);
+  }
+  return c.json({ revision }, 200, { "cache-control": "private, no-store" });
+});
+
 api.route("/me", meRoutes);
 api.route("/accounts", accountRoutes);
 api.route("/domains", domainRoutes);

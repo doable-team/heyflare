@@ -259,6 +259,11 @@ extension APIClient {
 
     // Mail
     func counts() async throws -> Counts { try await get("/api/counts", as: Counts.self) }
+
+    private struct ChangesResponse: Decodable { let revision: Int }
+    /// One number that moves whenever any of the user's mail changes, on any account: what
+    /// the app polls to learn that something happened elsewhere without refetching lists.
+    func changes() async throws -> Int { try await get("/api/changes", as: ChangesResponse.self, scoped: false).revision }
     func imbox() async throws -> ImboxResponse { try await get("/api/imbox", as: ImboxResponse.self) }
 
     func threads(_ kind: ThreadListKind, page: Int = 0, query: String = "", label: String? = nil) async throws -> ThreadPage {

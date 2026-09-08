@@ -133,6 +133,43 @@ export function invalidateMail(qc: QueryClient) {
   }
 }
 
+/**
+ * Watches `/api/changes` — one number that moves whenever any of the user's mail changes — and
+ * drops the mail caches when it does, so something done in the Mac app, on the phone or in
+ * another tab shows up here within seconds. The lists' own minute-long refetch stays as the
+ * fallback; this is what makes them feel live between those.
+ */
+export function useMailChanges(enabled: boolean) {
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (!enabled) return;
+    let last: number | null = null;
+    let stopped = false;
+    const check = async () => {
+      if (document.visibilityState === "hidden") return;
+      try {
+        const r = await api.get<{ revision: number }>("/api/changes");
+        if (stopped) return;
+        if (last !== null && r.revision !== last) invalidateMail(qc);
+        last = r.revision;
+      } catch {
+        /* offline or signed out: the next tick tries again */
+      }
+    };
+    void check();
+    const id = window.setInterval(() => void check(), 10_000);
+    const onFocus = () => void check();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      stopped = true;
+      window.clearInterval(id);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [enabled, qc]);
+}
+
 /** Invalidate every calendar cache: ranges, sources, habits, days, journal, flex tasks, time, settings. */
 export function invalidateCalendar(qc: QueryClient) {
   qc.invalidateQueries({ queryKey: ["cal"] });
