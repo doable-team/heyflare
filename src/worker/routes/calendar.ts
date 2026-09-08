@@ -31,7 +31,7 @@ import {
   type EventInput,
   type SettingsPatch,
 } from "../calendar/store";
-import { ensureDefaultCalendars, subscribeIcs, importIcs, syncCalendarNow, deleteCalendar } from "../calendar/sources";
+import { ensureDefaultCalendars, subscribeIcs, importIcs, syncCalendarNow, deleteCalendar, removeCalendarForGood } from "../calendar/sources";
 import { isValidDate, addDays, daysBetween, weekStartOf, weekdayOf, dateKey, startOfDay, endOfDay } from "../calendar/dates";
 
 const calendar = new Hono<AppEnv>();
@@ -499,7 +499,8 @@ calendar.delete("/sources/:id", async (c) => {
   const userId = c.get("user").id;
   const cal = await ownedCalendar(c.env.DB, userId, c.req.param("id"));
   if (!cal) return c.json({ error: "not_found" }, 404);
-  await deleteCalendar(c.env.DB, cal.id);
+  // A person choosing "Remove" here means it gone, not "gone until the next sync".
+  await removeCalendarForGood(c.env.DB, userId, cal);
   return c.json({ ok: true });
 });
 

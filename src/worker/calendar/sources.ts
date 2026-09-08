@@ -127,6 +127,10 @@ async function mirrorGoogleCalendars(env: Env, userId: string, account: AccountR
     .prepare(`SELECT id, remote_id, color FROM calendars WHERE user_id = ? AND account_id = ? AND source = 'google'`)
     .bind(userId, account.id)
     .all<{ id: string; remote_id: string | null; color: string }>();
+  // Deliberately removed from the settings page: not Google's list to resurrect on the next pass.
+  const removed = new Set(
+    (await db.prepare(`SELECT remote_id FROM removed_calendars WHERE account_id = ?`).bind(account.id).all<{ remote_id: string }>()).results.map((r) => r.remote_id)
+  );
   const seen = new Set(remote.map((r) => r.remote_id));
   // The same shared calendar — a holidays feed, a team's calendar — reaches the user through every
   // account it is shared with, and used to land once per account: five copies of every holiday,
@@ -143,7 +147,7 @@ async function mirrorGoogleCalendars(env: Env, userId: string, account: AccountR
   let position = await nextPosition(db, userId);
   const stmts: D1PreparedStatement[] = [];
   for (const rc of remote) {
-    if (!rc.remote_id) continue;
+    if (!rc.remote_id || removed.has(rc.remote_id)) continue;
     const visible = mine.has(rc.remote_id) || !elsewhere.has(rc.remote_id) ? 1 : 0;
     stmts.push(
       db
@@ -518,4 +522,21 @@ export async function deleteCalendar(db: D1Database, id: string): Promise<void> 
     db.prepare(`DELETE FROM events WHERE calendar_id = ?`).bind(id),
     db.prepare(`DELETE FROM calendars WHERE id = ?`).bind(id),
   ]);
+}
+
+/**
+ * The settings page's "Remove calendar": unlike `deleteCalendar` on its own, a Google-sourced
+ * calendar is also tombstoned, so the next sync's `mirrorGoogleCalendars` — which otherwise
+ * re-lists and re-inserts anything on the account it does not already have a row for — leaves
+ * it gone instead of quietly bringing it back. ICS and local calendars have nothing that would
+ * resurrect them, so there is nothing to tombstone.
+ */
+export async function removeCalendarForGood(db: D1Database, userId: string, cal: CalendarRow): Promise<void> {
+  if (cal.source === "google" && cal.account_id && cal.remote_id) {
+    await db
+      .prepare(`INSERT INTO removed_calendars (id, user_id, account_id, remote_id, removed_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(account_id, remote_id) DO UPDATE SET removed_at = excluded.removed_at`)
+      .bind(uid(), userId, cal.account_id, cal.remote_id, now())
+      .run();
+  }
+  await deleteCalendar(db, cal.id);
 }
