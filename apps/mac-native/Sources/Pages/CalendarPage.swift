@@ -42,7 +42,7 @@ struct CalendarPage: View {
             "ArrowUp": { step(-1) }, "ArrowDown": { step(1) },
             "t": { goToday() }, "d": { pick("days") }, "w": { pick("week") }, "y": { pick("year") },
             "n": { create(day: cursor, start: 9 * 60, end: 10 * 60) },
-            "j": { router.go(.journal) }, "b": { router.go(.habits) },
+            "j": { router.go(.journal(nil)) }, "b": { router.go(.habits) },
             "PageUp": { cursor = CalDate.addingDays(-7, toKey: cursor, in: cal) }, "PageDown": { cursor = CalDate.addingDays(7, toKey: cursor, in: cal) },
         ], enabled: ui.region == .content && !sheet.isOpen && !dialogs.isOpen)
     }

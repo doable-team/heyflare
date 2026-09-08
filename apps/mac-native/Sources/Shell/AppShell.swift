@@ -189,8 +189,8 @@ struct PageHost: View {
         case .thread(let id, let peek): ThreadPageView(threadID: id, peek: peek)
         case .bundle(let id): BundlePage(bundleID: id)
         case .calendar: CalendarPage()
-        case .journal: ComingSoonPage(title: "Journal", body: "The journal lives on the web and the phone for now.")
-        case .habits: ComingSoonPage(title: "Habits", body: "Habits live on the web and the phone for now.")
+        case .journal(let date): if let date { JournalEntryPage(date: date) } else { JournalIndexPage() }
+        case .habits: HabitsPage()
         case .settings(let tab): SettingsPage(tab: tab)
         case .search(let q): SearchPage(query: q)
         }

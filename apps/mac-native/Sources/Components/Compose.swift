@@ -804,7 +804,19 @@ struct FlowLayout: Layout {
 @MainActor
 final class RichTextController {
     weak var textView: NSTextView?
-    var baseFont: NSFont { Geist.nsFont(size: 14, weight: 400) }
+    /// The composer writes at 14; the journal at 13 with the web's 1.7 line height.
+    var fontSize: CGFloat = 14
+    var lineHeightMultiple: CGFloat = 1
+    var baseFont: NSFont { Geist.nsFont(size: fontSize, weight: 400) }
+    /// Fired by the editor as the selection moves: the selected range's first rectangle, in
+    /// the editor's own coordinates, or nil when nothing is selected.
+    var onSelection: ((CGRect?) -> Void)?
+
+    var baseParagraph: NSParagraphStyle {
+        let p = NSMutableParagraphStyle()
+        p.lineHeightMultiple = lineHeightMultiple
+        return p
+    }
 
     func setHTML(_ html: String) {
         guard let tv = textView else { pendingHTML = html; return }
@@ -817,9 +829,15 @@ final class RichTextController {
     /// The editor re-measures its height after the content is replaced programmatically.
     var onContentSet: (() -> Void)?
 
-    func focus() {
+    /// Puts the cursor in the editor. The view can be asked before it has a window (the
+    /// editor is made, then placed, in separate passes), so the request waits for one.
+    func focus(attempt: Int = 0) {
         guard let tv = textView else { return }
-        tv.window?.makeFirstResponder(tv)
+        guard let window = tv.window else {
+            if attempt < 20 { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.focus(attempt: attempt + 1) } }
+            return
+        }
+        window.makeFirstResponder(tv)
         tv.setSelectedRange(NSRange(location: 0, length: 0))
     }
 
@@ -841,13 +859,18 @@ final class RichTextController {
                 if traits.contains(.bold) { weight = 700 }
                 if traits.contains(.italic) { italic = true }
             }
-            var font = Geist.nsFont(size: 14, weight: weight)
+            // A heading (h1–h3) keeps its weight and one extra point, as the journal draws it.
+            let heading = (attrs[.font] as? NSFont).map { $0.pointSize > 16 } ?? false
+            var font = Geist.nsFont(size: heading ? fontSize + 1 : fontSize, weight: heading ? max(weight, 600) : weight)
             if italic { font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask) }
             next[.font] = font
             next[.foregroundColor] = NSColor(W.foreground)
             if let u = attrs[.underlineStyle] { next[.underlineStyle] = u }
             if let l = attrs[.link] { next[.link] = l }
-            if let p = attrs[.paragraphStyle] as? NSParagraphStyle { next[.paragraphStyle] = p }
+            if let p = (attrs[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle {
+                p.lineHeightMultiple = lineHeightMultiple
+                next[.paragraphStyle] = p
+            } else { next[.paragraphStyle] = baseParagraph }
             out.setAttributes(next, range: range)
         }
         out.endEditing()
@@ -901,6 +924,28 @@ final class RichTextController {
 
     func toggleBold() { toggleTrait(.boldFontMask) }
     func toggleItalic() { toggleTrait(.italicFontMask) }
+
+    /// What the selection (or the typing point) carries, for a toolbar's pressed state.
+    func marks() -> (bold: Bool, italic: Bool, heading: Bool) {
+        guard let tv = textView else { return (false, false, false) }
+        let range = tv.selectedRange()
+        let font: NSFont?
+        if range.length > 0, let s = tv.textStorage, range.location < s.length { font = s.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont }
+        else { font = tv.typingAttributes[.font] as? NSFont }
+        guard let font else { return (false, false, false) }
+        let traits = NSFontManager.shared.traits(of: font)
+        return (traits.contains(.boldFontMask), traits.contains(.italicFontMask), font.pointSize > fontSize)
+    }
+
+    /// `formatBlock h2`: the paragraph under the selection becomes a heading, or stops being one.
+    func toggleHeading() {
+        guard let tv = textView, let storage = tv.textStorage else { return }
+        let range = (storage.string as NSString).paragraphRange(for: tv.selectedRange())
+        let on = marks().heading
+        let font = Geist.nsFont(size: on ? fontSize : fontSize + 1, weight: on ? 400 : 600)
+        if range.length > 0 { storage.addAttribute(.font, value: font, range: range); tv.didChangeText() }
+        tv.typingAttributes[.font] = font
+    }
     func toggleUnderline() {
         apply({ storage, range in
             let has = (storage.attribute(.underlineStyle, at: range.location, effectiveRange: nil) as? Int ?? 0) != 0
@@ -994,7 +1039,8 @@ struct RichTextEditor: NSViewRepresentable {
         tv.textContainer?.widthTracksTextView = true
         tv.delegate = context.coordinator
         tv.placeholder = placeholder
-        tv.typingAttributes = [.font: controller.baseFont, .foregroundColor: NSColor(W.foreground)]
+        tv.typingAttributes = [.font: controller.baseFont, .foregroundColor: NSColor(W.foreground), .paragraphStyle: controller.baseParagraph]
+        tv.defaultParagraphStyle = controller.baseParagraph
         scroll.documentView = tv
         controller.textView = tv
         let coordinator = context.coordinator
@@ -1024,6 +1070,16 @@ struct RichTextEditor: NSViewRepresentable {
             guard let tv = notification.object as? NSTextView else { return }
             parent.onEdit()
             measure(tv)
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let tv = notification.object as? NSTextView, let cb = parent.controller.onSelection else { return }
+            let range = tv.selectedRange()
+            guard range.length > 0, let lm = tv.layoutManager, let tc = tv.textContainer else { cb(nil); return }
+            let glyphs = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            var rect = lm.boundingRect(forGlyphRange: glyphs, in: tc)
+            rect.origin.x += tv.textContainerInset.width; rect.origin.y += tv.textContainerInset.height
+            cb(rect)
         }
 
         func measure(_ tv: NSTextView) {

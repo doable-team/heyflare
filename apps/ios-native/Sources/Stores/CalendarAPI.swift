@@ -695,19 +695,20 @@ enum CalendarAPI {
         try await send("GET", "/api/calendar/habits", query: ["from": from, "to": to], as: [CalHabit].self)
     }
 
-    static func createHabit(name: String, icon: String, days: [Int]) async throws -> CalHabit {
-        // A colour is required by the worker (`HEX` is validated) even though nothing here draws
-        // one, so every habit this client makes is sent the same neutral value.
+    static func createHabit(name: String, icon: String, days: [Int], color: String = "#111111") async throws -> CalHabit {
+        // A colour is required by the worker (`HEX` is validated); the phone never draws one
+        // and sends a neutral value, the Mac sends the shade the person picked.
         try await send("POST", "/api/calendar/habits",
-                       body: ["name": name, "icon": icon, "color": "#111111", "days": days],
+                       body: ["name": name, "icon": icon, "color": color, "days": days],
                        as: CalHabit.self)
     }
 
-    static func updateHabit(id: String, name: String? = nil, icon: String? = nil, days: [Int]? = nil) async throws -> CalHabit {
+    static func updateHabit(id: String, name: String? = nil, icon: String? = nil, days: [Int]? = nil, color: String? = nil) async throws -> CalHabit {
         var body: [String: Any] = [:]
         if let name { body["name"] = name }
         if let icon { body["icon"] = icon }
         if let days { body["days"] = days }
+        if let color { body["color"] = color }
         return try await send("PATCH", "/api/calendar/habits/\(id)", body: body, as: CalHabit.self)
     }
 

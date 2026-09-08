@@ -251,6 +251,8 @@ struct WTextField: View {
     var fontSize: CGFloat = 14
     var onSubmit: (() -> Void)?
     var autofocus = false
+    /// Fires when focus leaves the field: the web's inputs commit on blur, not only on Enter.
+    var onBlur: (() -> Void)?
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -266,6 +268,7 @@ struct WTextField: View {
         .foregroundStyle(W.foreground)
         .focused($focused)
         .onSubmit { onSubmit?() }
+        .onChange(of: focused) { was, now in if was && !now { onBlur?() } }
         .padding(.horizontal, 10)
         .frame(height: height)
         .background(focused ? W.background : W.input)

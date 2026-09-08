@@ -117,7 +117,7 @@ struct ProfileSection: View {
                 .padding(.horizontal, 8).padding(.bottom, 16)
                 SettingsRow(label: "Name") {
                     HStack(spacing: 8) {
-                        WTextField(placeholder: "", text: $name, onSubmit: { save(user) }).frame(width: 224)
+                        WTextField(placeholder: "", text: $name, onSubmit: { save(user) }, onBlur: { if name != user.name { save(user) } }).frame(width: 224)
                         SavedMark(show: saved)
                     }
                 }
@@ -163,7 +163,7 @@ struct PreferencesSection: View {
             }
             SettingsRow(label: "Undo send window", hint: "Seconds to change your mind after hitting Send. 0 turns it off.") {
                 HStack(spacing: 8) {
-                    WTextField(placeholder: "10", text: $undo, onSubmit: { saveUndo() }).frame(width: 80).multilineTextAlignment(.trailing)
+                    WTextField(placeholder: "10", text: $undo, onSubmit: { saveUndo() }, onBlur: { saveUndo() }).frame(width: 80).multilineTextAlignment(.trailing)
                     Text("sec").font(W.s13).foregroundStyle(W.mutedForeground)
                 }
             }
@@ -720,7 +720,7 @@ private struct CalendarSourceRow: View {
                 .buttonStyle(.plain)
                 .popAnchor("cal-color-\(source.id)")
                 .help("Colour")
-                WTextField(placeholder: "", text: $name, onSubmit: { rename() })
+                WTextField(placeholder: "", text: $name, onSubmit: { rename() }, onBlur: { rename() })
                     .frame(width: 180)
                 if !note.isEmpty { Text(note).font(W.xs).foregroundStyle(W.mutedForeground).lineLimit(1) }
                 Spacer(minLength: 8)

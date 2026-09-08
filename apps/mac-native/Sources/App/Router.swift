@@ -11,7 +11,7 @@ enum AppRoute: Hashable {
     case clips, collections, collection(String), files, labels, label(String)
     case drafts, scheduled
     case thread(String, peek: Bool), bundle(String)
-    case calendar, journal, habits
+    case calendar, journal(String?), habits
     case settings(String)
     case search(String)
 

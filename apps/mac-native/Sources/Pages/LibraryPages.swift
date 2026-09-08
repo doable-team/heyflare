@@ -165,6 +165,7 @@ struct ContactDetailPage: View {
     @Environment(Router.self) private var router
     @State private var store = ContactDetailStore()
     @State private var name = ""
+    @FocusState private var nameFocused: Bool
     @State private var notes = ""
     @State private var saveState = "idle"
     @State private var loaded = false
@@ -190,7 +191,10 @@ struct ContactDetailPage: View {
                     VStack(alignment: .leading, spacing: 4) {
                         TextField(String(c.email.split(separator: "@").first ?? ""), text: $name)
                             .textFieldStyle(.plain).font(W.font(24, 600)).tracking(-0.48).foregroundStyle(W.foreground)
+                            .focused($nameFocused)
                             .onSubmit { commitName(c) }
+                            // The web's input saves on blur too, not only on Enter.
+                            .onChange(of: nameFocused) { was, now in if was && !now { commitName(c) } }
                         HStack(spacing: 8) {
                             Text(c.email).font(W.sm).foregroundStyle(W.mutedForeground)
                             WBadge(String(c.email.split(separator: "@").last ?? ""), variant: .outline, muted: true)
@@ -720,6 +724,7 @@ private struct LabelRow: View {
     @Environment(Router.self) private var router
     @Environment(DialogState.self) private var dialogs
     @State private var name = ""
+    @FocusState private var labelFocused: Bool
     @State private var color = ""
     @State private var hovering = false
 
@@ -727,6 +732,7 @@ private struct LabelRow: View {
         HStack(spacing: 12) {
             ShadeButton(id: "shade-\(label.id)", color: $color).onChange(of: color) { _, c in if !c.isEmpty, c != label.color { patch(["color": c]) } }
             TextField("Label name", text: $name).textFieldStyle(.plain).font(W.font(14, 500)).foregroundStyle(W.foreground).onSubmit { commit() }
+                .focused($labelFocused).onChange(of: labelFocused) { was, now in if was && !now { commit() } }
             Button { router.go(.label(label.id)) } label: { HStack(spacing: 4) { Text("Threads"); Icon("arrowRight", size: 12) }.font(W.s13).foregroundStyle(W.mutedForeground) }.buttonStyle(.plain)
             WButton(icon: "trash2", variant: .ghost, size: .iconXs, muted: true, help: "Delete") {
                 dialogs.confirm(title: "Delete “\(label.name)”?", description: "It comes off every thread. The threads themselves stay put.", action: "Delete label") {

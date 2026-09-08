@@ -60,7 +60,7 @@ final class KeyBus {
 
     /// The web's `isTyping`: a text field or text view has focus.
     static func isTyping() -> Bool {
-        guard let responder = (NSApp.keyWindow ?? NSApp.mainWindow)?.firstResponder else { return false }
+        guard let responder = (NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first { $0.isVisible })?.firstResponder else { return false }
         if responder is NSTextView { return true }
         // Text fields, date pickers and the like: any control that eats keys.
         if responder is NSControl { return true }

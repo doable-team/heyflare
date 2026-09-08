@@ -26,7 +26,7 @@ struct NavItem: Identifiable, Hashable {
         case "/files": return .files
         case "/labels": return .labels
         case "/drafts": return .drafts
-        case "/journal": return .journal
+        case "/journal": return .journal(nil)
         case "/habits": return .habits
         case "/sent": return .sent
         case "/scheduled": return .scheduled
