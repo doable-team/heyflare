@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Check, ExternalLink, Loader2, Pencil, Plus, RefreshCw, Sparkles, Trash2, X } from "lucide-react";
+import { Check, ChevronsUpDown, ExternalLink, Loader2, Pencil, Plus, RefreshCw, Sparkles, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import type { AiMemoryKind, AiPreset } from "@shared/types";
-import { useAiMemory, useAiMutations, useAiSettings } from "../api";
+import { useAiMemory, useAiMutations, useAiSettings, useAiModels } from "../api";
 import { Section, Row, Danger } from "../pages/Settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Spinner } from "@/components/ui/spinner";
 import { fmtRelative } from "../lib/format";
 import { cn } from "@/lib/utils";
 
@@ -26,16 +29,22 @@ export function AiSection({ compact }: { compact?: boolean }) {
   const [model, setModel] = useState("");
   const [dirty, setDirty] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
+  const [modelsOpen, setModelsOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [modelQuery, setModelQuery] = useState("");
   useEffect(() => {
     if (!s || dirty) return;
     setPreset(s.preset);
     setBaseUrl(s.preset === "custom" ? s.base_url : "");
     setModel(s.model);
   }, [s, dirty]);
+  const models = useAiModels(modelsOpen, preset, baseUrl, key.trim());
   const inputCls = compact ? "h-11 text-[16px]" : undefined;
   const p = s?.presets.find((x) => x.id === preset) ?? s?.presets[0];
+  const modelOptions = models.data?.models?.length ? models.data.models : (p?.models ?? []);
   const choosePreset = (id: AiPreset["id"]) => {
     const np = s?.presets.find((x) => x.id === id);
+    setModelsOpen(false);
     setPreset(id);
     setModel(np?.default_model ?? "");
     if (id !== "custom") setBaseUrl("");
@@ -67,7 +76,7 @@ export function AiSection({ compact }: { compact?: boolean }) {
             {preset === "custom" && (
               <Field>
                 <FieldLabel htmlFor="ai-base">Base URL</FieldLabel>
-                <Input id="ai-base" value={baseUrl} onChange={(e) => { setBaseUrl(e.target.value); setDirty(true); }} placeholder="http://localhost:11434/v1" className={inputCls} />
+                <Input id="ai-base" value={baseUrl} onChange={(e) => { setBaseUrl(e.target.value); setModelsOpen(false); setDirty(true); }} placeholder="http://localhost:11434/v1" className={inputCls} />
                 <FieldDescription>Any OpenAI-compatible server: Ollama, LM Studio, Groq, Mistral, Together…</FieldDescription>
               </Field>
             )}
@@ -82,9 +91,58 @@ export function AiSection({ compact }: { compact?: boolean }) {
             </Field>
             <Field>
               <FieldLabel htmlFor="ai-model">Model</FieldLabel>
-              <Input id="ai-model" list="ai-models" value={model} onChange={(e) => { setModel(e.target.value); setDirty(true); }} placeholder={p?.default_model} className={inputCls} />
-              <datalist id="ai-models">{(p?.models ?? []).map((x) => <option key={x} value={x} />)}</datalist>
-              <FieldDescription>Type any model id the provider supports.</FieldDescription>
+              <Popover open={pickerOpen} onOpenChange={(o) => { setPickerOpen(o); if (o) setModelsOpen(true); else setModelQuery(""); }}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" role="combobox" aria-expanded={pickerOpen} className={cn("w-full justify-between font-normal", inputCls)} id="ai-model">
+                    <span className={cn("truncate", !model && "text-muted-foreground")}>{model || p?.default_model || "Select a model"}</span>
+                    <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-(--radix-popover-trigger-width) p-0">
+                  <Command loop>
+                    <CommandInput placeholder="Search models…" value={modelQuery} onValueChange={setModelQuery} />
+                    <CommandList className="max-h-64">
+                      {models.isFetching ? (
+                        <div className="flex items-center justify-center py-6 text-muted-foreground"><Spinner /></div>
+                      ) : (
+                        <>
+                          <CommandEmpty>{modelQuery ? "No matching model." : "No models listed by this endpoint."}</CommandEmpty>
+                          <CommandGroup>
+                            {modelOptions.map((x) => (
+                              <CommandItem key={x} value={x} onSelect={() => { setModel(x); setDirty(true); setPickerOpen(false); }}>
+                                <span className="flex-1 truncate">{x}</span>
+                                <Check className={cn("size-4", model === x ? "opacity-100" : "opacity-0")} />
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </>
+                      )}
+                      {modelQuery.trim() && !modelOptions.some((x) => x === modelQuery.trim()) && (
+                        <>
+                          <CommandSeparator />
+                          <CommandGroup forceMount>
+                            <CommandItem value={`use-${modelQuery}`} forceMount onSelect={() => { setModel(modelQuery.trim()); setDirty(true); setPickerOpen(false); }}>
+                              <Plus />
+                              <span className="truncate">Use “{modelQuery.trim()}”</span>
+                            </CommandItem>
+                          </CommandGroup>
+                        </>
+                      )}
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+              <FieldDescription className="flex items-center gap-1">
+                {models.isFetching ? (
+                  <><Loader2 className="size-3 animate-spin" /> Loading models…</>
+                ) : models.data?.error || (models.data?.models?.length === 0 && modelsOpen) ? (
+                  "Couldn't list models from this endpoint — search and pick “Use …” to set one by hand."
+                ) : models.data?.models?.length ? (
+                  `${modelOptions.length} models · search or enter your own`
+                ) : (
+                  "Pick a model, or search to enter any id the provider supports."
+                )}
+              </FieldDescription>
             </Field>
           </FieldGroup>
           <div className={cn("flex items-center gap-2 mt-4", compact && "flex-col items-stretch")}>
