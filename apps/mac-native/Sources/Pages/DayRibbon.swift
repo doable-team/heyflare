@@ -248,6 +248,8 @@ struct DayRibbonView: View {
             }
         }
         .frame(width: max(ribbon.length, 1), height: height, alignment: .topLeading)
+        // The space the spines read their drags in: the track itself, so x is ribbon offset.
+        .coordinateSpace(name: "ribbon")
         .contentShape(Rectangle())
         // Drag across the strip to draw out a new event; a plain click makes a half hour.
         .gesture(DragGesture(minimumDistance: 0).onChanged { v in
@@ -336,7 +338,7 @@ struct DayRibbonView: View {
     @ViewBuilder
     private var countdownsRow: some View {
         let today = CalDate.todayKey
-        let countdowns = store.timedEvents(from: 0, to: .greatestFiniteMagnitude).filter { $0.countdown && ($0.startDate ?? "") >= today }
+        let countdowns = store.allEvents().filter { $0.countdown && ($0.startDate ?? "") >= today }
             .sorted { ($0.startDate ?? "") < ($1.startDate ?? "") }.prefix(8)
         if !countdowns.isEmpty {
             ScrollView(.horizontal) {

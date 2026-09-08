@@ -375,6 +375,16 @@ final class CalendarStore {
         return out.sorted { $0.startsAt != $1.startsAt ? $0.startsAt < $1.startsAt : $0.endsAt > $1.endsAt }
     }
 
+    /// Every event held, once each, whatever its kind — for the countdown row.
+    func allEvents() -> [CalEventFull] {
+        var seen: Set<String> = []
+        var out: [CalEventFull] = []
+        for events in windows.values {
+            for e in events where !seen.contains(e.id) { seen.insert(e.id); out.append(e) }
+        }
+        return out
+    }
+
     /// Replaces a day's row after a write (its label, say) without a refetch.
     func adopt(day: CalDay) {
         for (k, rows) in dayRows {
