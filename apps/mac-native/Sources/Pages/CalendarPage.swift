@@ -437,10 +437,18 @@ final class ScrollController {
     @ObservationIgnored var onContentResize: ((CGSize, CGSize) -> Void)?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
 
+    /// No scroller at all, ever — for the week's hour scroll, which the gutter already reads.
+    var hidesScrollers = false
+
     func attach(_ sv: NSScrollView) {
         guard scrollView !== sv else { return }
         detach()
         scrollView = sv
+        if hidesScrollers {
+            sv.hasVerticalScroller = false
+            sv.hasHorizontalScroller = false
+            sv.verticalScroller?.alphaValue = 0
+        }
         sv.contentView.postsBoundsChangedNotifications = true
         sv.contentView.postsFrameChangedNotifications = true
         sv.documentView?.postsFrameChangedNotifications = true
@@ -1002,7 +1010,7 @@ private struct Track: View {
     @State private var sketch: (from: Double, to: Double)?
     @State private var now = Date()
     /// The column's own scroll box; it follows the row's shared hour and reports its own.
-    @State private var ctl = ScrollController()
+    @State private var ctl: ScrollController = { let c = ScrollController(); c.hidesScrollers = true; return c }()
 
     private var cal: Calendar { store.calendar }
     private var dayStart: Double { ribbon.from }
