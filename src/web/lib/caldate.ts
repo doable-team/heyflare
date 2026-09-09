@@ -318,6 +318,37 @@ export function layoutColumns<T extends { starts_at: number; ends_at: number }>(
   return out;
 }
 
+/**
+ * Where blocks are drawn once every one is at least `minPx` tall: within a column, a block whose
+ * true top falls under the short block above it is pushed down past that block (plus `gapPx`),
+ * keeping its true bottom, so a quarter-hour keeps its name and the meeting after it still ends
+ * on time. Columns come from true times (`layoutColumns`), so this never widens the layout.
+ */
+export function placeBlocks(
+  spans: { top: number; bottom: number }[],
+  slots: ColumnSlot[],
+  minPx: number,
+  gapPx: number,
+): { top: number; height: number }[] {
+  const out = spans.map((s) => ({ top: s.top, height: Math.max(s.bottom - s.top, minPx) }));
+  const byColumn = new Map<number, number[]>();
+  spans.forEach((_, i) => {
+    const col = slots[i]?.column ?? 0;
+    byColumn.set(col, [...(byColumn.get(col) ?? []), i]);
+  });
+  for (const idx of byColumn.values()) {
+    idx.sort((a, b) => spans[a].top - spans[b].top || spans[b].bottom - spans[a].bottom);
+    let prevBottom = -Infinity;
+    for (const i of idx) {
+      const top = Math.max(spans[i].top, prevBottom + gapPx);
+      const height = Math.max(spans[i].bottom - top, minPx);
+      out[i] = { top, height };
+      prevBottom = top + height;
+    }
+  }
+  return out;
+}
+
 /** Does this event touch `key` at all? Useful for slicing a range response into day columns. */
 export function overlapsDay(e: { starts_at: number; ends_at: number }, key: string): boolean {
   return e.starts_at < endOfDayMs(key) && Math.max(e.ends_at, e.starts_at + MIN_SLOT) > startOfDayMs(key);

@@ -112,6 +112,27 @@ enum CalDate {
         return out
     }
 
+    /// `placeBlocks` in caldate.ts: once every block is at least `minPx` tall, a block whose true
+    /// top falls under the short one above it (same column) is pushed down past it plus `gapPx`,
+    /// keeping its true bottom — a quarter-hour keeps its name and the next meeting still ends
+    /// on time. Columns come from true times, so this never widens the layout.
+    static func placeBlocks(_ spans: [(top: CGFloat, bottom: CGFloat)], slots: [(column: Int, columns: Int)], minPx: CGFloat, gapPx: CGFloat) -> [(top: CGFloat, height: CGFloat)] {
+        var out = spans.map { (top: $0.top, height: max($0.bottom - $0.top, minPx)) }
+        var byColumn: [Int: [Int]] = [:]
+        for i in spans.indices { byColumn[slots.indices.contains(i) ? slots[i].column : 0, default: []].append(i) }
+        for idx in byColumn.values {
+            let order = idx.sorted { a, b in spans[a].top != spans[b].top ? spans[a].top < spans[b].top : spans[a].bottom > spans[b].bottom }
+            var prevBottom = -CGFloat.infinity
+            for i in order {
+                let top = max(spans[i].top, prevBottom + gapPx)
+                let height = max(spans[i].bottom - top, minPx)
+                out[i] = (top, height)
+                prevBottom = top + height
+            }
+        }
+        return out
+    }
+
     /// The part of a timed event that falls on `day`, in minutes past that day's midnight —
     /// an event that crosses midnight is drawn to the bottom of its first column and from the
     /// top of its second, as `WeekView.tsx` clips it, instead of overflowing the grid.

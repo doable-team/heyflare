@@ -517,8 +517,9 @@ struct ScrollHook: NSViewRepresentable {
 enum WeekGeom {
     static let habits: CGFloat = 22
     static let header: CGFloat = 34
-    /// All 24 hours at one scale — 460/24 ≈ 19.2 to the hour, measured off HEY's own week.
-    static let body: CGFloat = 460
+    /// All 24 hours at one scale — 24 to the hour (raised from HEY's 19.2, at which a half-hour
+    /// meeting had no room for its own name).
+    static let body: CGFloat = 576
     static let tasks: CGFloat = 28
     /// The shortest a block is drawn — 25 minutes at this scale.
     static let floor: CGFloat = 8
@@ -985,7 +986,9 @@ private struct Track: View {
         }()
         // The floor in time is the week's 8pt at the *daytime* rate: a block in the fold is
         // drawn no shorter than that either, so the columns still match what is on screen.
-        let layout = CalDate.layoutColumns(rest, floorMs: Double(WeekGeom.floor / WeekGeom.pxPerHour) * 3_600_000)
+        // Columns split only on true overlap; the drawn minimum is handled by pushing, not widening.
+        let layout = CalDate.layoutColumns(rest, floorMs: 0)
+        let placed = CalDate.placeBlocks(rest.map { (top: posOf(max($0.startsAt, dayStart)), bottom: posOf(min($0.endsAt, dayEnd))) }, slots: layout, minPx: 16, gapPx: 2)
         let extra = pills.count - WeekGeom.allDayMax
         let nowMs = now.timeIntervalSince1970 * 1000
         ZStack(alignment: .topLeading) {
@@ -1009,26 +1012,27 @@ private struct Track: View {
                 Color.clear.overlay(alignment: .topTrailing) { MonthTurn(label: nextTurn).alignmentGuide(.trailing) { d in d.width / 2 }.padding(.top, 8) }
             }
             ForEach(Array(rest.enumerated()), id: \.element.id) { i, e in
-                let top = posOf(max(e.startsAt, dayStart))
-                let height = posOf(min(e.endsAt, dayEnd)) - top
+                let top = placed[i].top
+                let height = placed[i].height
                 EventBlock(event: e, height: height, floor: WeekGeom.floor, column: layout[i].column, columns: layout[i].columns, timeFormat: store.prefs.timeFormat, space: space, onPhoto: photo,
                            onTap: { onSetCursor(date); onEvent(e) },
                            onToggleDone: { toggleDone(e) },
                            onDrag: { mode, p0, p1, ended in onDrag(e, mode, p0, p1, ended) })
                     .offset(y: top)
-                    .zIndex(20)
+                    // Later events sit on top, so a short one keeps its title line.
+                    .zIndex(Double(20 + min(i, 40)))
             }
             if let g = ghost {
                 let top = posOf(max(g.startsAt, dayStart))
                 EventBlock(event: g, height: posOf(min(g.endsAt, dayEnd)) - top, floor: WeekGeom.floor, timeFormat: store.prefs.timeFormat, space: space, dragging: true, onPhoto: photo, onTap: { onEvent(g) })
                     .offset(y: top)
-                    .zIndex(35)
+                    .zIndex(90)
             }
             if let sketch {
                 let a = posOf(min(sketch.from, sketch.to)), b = posOf(max(sketch.from, sketch.to))
                 RoundedRectangle(cornerRadius: 3, style: .continuous).fill(W.foreground.opacity(0.05))
                     .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(W.foreground.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [3])))
-                    .frame(height: max(b - a, 8)).padding(.horizontal, 2).offset(y: a).allowsHitTesting(false).zIndex(30)
+                    .frame(height: max(b - a, 8)).padding(.horizontal, 2).offset(y: a).allowsHitTesting(false).zIndex(95)
             }
             // All-day things sit on the floor of the day — the ground it stands on, not a banner.
             if !pills.isEmpty {
@@ -1043,7 +1047,7 @@ private struct Track: View {
                 }
                 .padding(.horizontal, 4).padding(.bottom, 4)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                .zIndex(30)
+                .zIndex(80)
             }
             if today && nowMs >= dayStart && nowMs < dayEnd {
                 ZStack(alignment: .topLeading) {
@@ -1053,7 +1057,7 @@ private struct Track: View {
                 }
                 .offset(y: posOf(nowMs))
                 .allowsHitTesting(false)
-                .zIndex(40)
+                .zIndex(100)
             }
         }
         .frame(maxWidth: .infinity)
@@ -1261,8 +1265,10 @@ struct EventBlock: View {
     @State private var blockTop: CGFloat = 0
     @State private var hovering = false
 
-    private var h: CGFloat { max(height, floor) }
-    private var bare: Bool { h < 13 }
+    /// Never shorter than one line of type (16), and 2pt of air is left under every block.
+    private var h: CGFloat { max(height, floor, 16) }
+    private var drawn: CGFloat { max(h - 2, 14) }
+    private var bare: Bool { false }
     private var oneLine: Bool { h < 34 }
     private var roomy: Bool { h >= 64 }
     private var titleLines: Int { max(1, min(3, Int((h - 6 - 12) / 14))) }
@@ -1310,7 +1316,7 @@ struct EventBlock: View {
                 }
                 .foregroundStyle(s.ink)
                 .padding(.horizontal, 6).padding(.vertical, oneLine ? 0 : 3)
-                .frame(width: width, height: h, alignment: .topLeading)
+                .frame(width: width, height: drawn, alignment: .topLeading)
                 .background { ZStack { s.fill; if maybe { Hatch().stroke(Color.black.opacity(0.09), lineWidth: 3) } } }
                 .clipped()
                 .overlay { if maybe { RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(W.foreground.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [3])) } }

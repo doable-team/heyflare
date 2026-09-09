@@ -21,7 +21,7 @@ import {
   type EventPreview,
 } from "./dragEvent";
 import { heyTime, snap } from "./scale";
-import { addDays, daysBetween, isToday, layoutColumns, startOfDayMs, weekStartOf } from "../lib/caldate";
+import { addDays, daysBetween, isToday, layoutColumns, placeBlocks, startOfDayMs, weekStartOf } from "../lib/caldate";
 import { useEventMutations, useHabitMutations } from "../api";
 
 /**
@@ -62,9 +62,10 @@ const HEADER_PX = 34;
 /**
  * The timed body. All 24 hours live in here at one scale — 460/24 ≈ 19.2px per hour, measured off
  * HEY's own week view — so no row ever scrolls inside itself and every row is exactly as tall as
- * every other, which is what makes the stack cheap to scroll and to anchor.
+ * every other, which is what makes the stack cheap to scroll and to anchor. Raised from 460 to
+ * 576 (24px an hour): at 19px an hour a half-hour meeting had no room for its own name.
  */
-const BODY_PX = 460;
+const BODY_PX = 576;
 const PX_PER_MS = BODY_PX / DAY_MS;
 /**
  * The shortest a block is drawn in a week column — 25 minutes at this scale. Anything under it
@@ -72,6 +73,9 @@ const PX_PER_MS = BODY_PX / DAY_MS;
  * a 460px day; the alternative is to draw it as an hour and lie about what the day looks like.
  */
 const WEEK_FLOOR_PX = 8;
+/** One line of type: the shortest a block is drawn. `placeBlocks` keeps neighbours clear of it. */
+const MIN_BLOCK_PX = 16;
+const BLOCK_GAP_PX = 2;
 /** The "sometime this week" strip along the floor of the row. */
 const TASKS_PX = 28;
 
@@ -632,7 +636,12 @@ function Track({ date, first, day, drag }: { date: string; first: boolean; day: 
   // not the day's: at this scale FLOOR_PX would be 69 minutes of column, so a 1:30-1:45 lunch would
   // reserve room down to 2:39 and shoulder a 2:15 meeting into a second column for an overlap that
   // never happens. WEEK_FLOOR_PX keeps the lie down to 25 minutes.
-  const layout = useMemo(() => layoutColumns(rest, WEEK_FLOOR_PX / PX_PER_MS), [rest]);
+  // Columns split only on true overlap; the drawn minimum is handled by pushing, not widening.
+  const layout = useMemo(() => layoutColumns(rest, 0), [rest]);
+  const placed = useMemo(
+    () => placeBlocks(rest.map((e) => ({ top: posOf(Math.max(e.starts_at, dayStart)), bottom: posOf(Math.min(e.ends_at, dayStart + DAY_MS)) })), layout, MIN_BLOCK_PX, BLOCK_GAP_PX),
+    [rest, layout, posOf, dayStart],
+  );
 
   const box = useRef<HTMLDivElement>(null);
   const [sketch, setSketch] = useState<{ from: number; to: number } | null>(null);
@@ -688,18 +697,18 @@ function Track({ date, first, day, drag }: { date: string; first: boolean; day: 
       <DayPhotoBackdrop day={day} className="z-0" />
 
       {rest.map((e, i) => {
-        const top = posOf(Math.max(e.starts_at, dayStart));
-        const bottom = posOf(Math.min(e.ends_at, dayStart + DAY_MS));
+        const { top, height } = placed[i];
         return (
           <EventBlock
             key={e.id}
             onPhoto={hasPhoto(day)}
             e={e}
             top={top}
-            height={bottom - top}
+            height={height}
             column={layout[i].column}
             columns={layout[i].columns}
             floor={WEEK_FLOOR_PX}
+            z={20 + Math.min(i, 40)}
             format={settings.time_format}
             onClick={() => openEvent(e)}
             onToggleDone={() => setDone.mutate({ id: e.id, done: !e.done, date })}
@@ -725,7 +734,7 @@ function Track({ date, first, day, drag }: { date: string; first: boolean; day: 
 
       {sketch && (
         <div
-          className="pointer-events-none absolute inset-x-0.5 z-30 rounded-[3px] border border-dashed border-foreground/60 bg-foreground/5"
+          className="pointer-events-none absolute inset-x-0.5 z-[95] rounded-[3px] border border-dashed border-foreground/60 bg-foreground/5"
           style={{
             top: posOf(Math.min(sketch.from, sketch.to)),
             height: Math.max(posOf(Math.max(sketch.from, sketch.to)) - posOf(Math.min(sketch.from, sketch.to)), 8),
@@ -735,7 +744,7 @@ function Track({ date, first, day, drag }: { date: string; first: boolean; day: 
 
       {/* All-day things sit on the floor of the day — the ground it stands on, not a banner. */}
       {pills.length > 0 && (
-        <div className="pointer-events-auto absolute inset-x-1 bottom-1 z-30 flex flex-col gap-[2px]">
+        <div className="pointer-events-auto absolute inset-x-1 bottom-1 z-[80] flex flex-col gap-[2px]">
           {pills.slice(0, ALLDAY_MAX).map((e) => (
             <AllDayPill
               key={e.id}
@@ -750,7 +759,7 @@ function Track({ date, first, day, drag }: { date: string; first: boolean; day: 
       )}
 
       {today && now >= dayStart && now < dayStart + DAY_MS && (
-        <div className="pointer-events-none absolute inset-x-0 z-40" style={{ top: posOf(now) }}>
+        <div className="pointer-events-none absolute inset-x-0 z-[100]" style={{ top: posOf(now) }}>
           <div className="border-t border-dotted border-red-500" />
           <span className="absolute left-0 -top-[7px] bg-background/80 pr-1 text-[9px] leading-none tnum text-red-500">
             {heyTime(now, settings.time_format)}

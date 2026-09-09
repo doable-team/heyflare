@@ -104,6 +104,14 @@ const ICONS_PX = 64;
 export const FLOOR_PX = 22;
 /** Under this there is no room for type at all, and the block is just its bar of colour. */
 const BARE_PX = 13;
+/**
+ * The shortest a block is ever drawn, whatever the scale: one line of type. A quarter-hour
+ * used to be a bare bar of colour; now it keeps its name, and the event after it — drawn on
+ * top — covers only what runs past its true end.
+ */
+const MIN_DRAW_PX = 16;
+/** Air between one block and the next, so touching events read as two. */
+const GAP_PX = 2;
 
 /**
  * One timed event, absolutely positioned inside a day column, sized by its own duration.
@@ -126,6 +134,7 @@ export function EventBlock({
   onDragStart,
   dragging,
   floor = FLOOR_PX,
+  z,
 }: {
   e: CalEvent;
   top: number;
@@ -151,8 +160,10 @@ export function EventBlock({
    * `layoutColumns` as milliseconds, or the columns will not match what is on screen.
    */
   floor?: number;
+  /** Stacking order: later events go on top, so a short one keeps its title line. */
+  z?: number;
 }) {
-  const h = Math.max(height, floor);
+  const h = Math.max(height, floor, MIN_DRAW_PX);
   const bare = h < BARE_PX;
   const oneLine = h < ONE_LINE_PX;
   const roomy = h >= ICONS_PX;
@@ -173,7 +184,7 @@ export function EventBlock({
   const grab = handlePx(h);
 
   return (
-    <div className="absolute" style={{ top, height: h, width, left, zIndex: dragging ? 35 : 20 }} data-event={e.id}>
+    <div className="absolute" style={{ top, height: Math.max(h - GAP_PX, 14), width, left, zIndex: dragging ? 90 : (z ?? 20) }} data-event={e.id}>
       {e.circled && <InkCircle />}
       <button
         type="button"
