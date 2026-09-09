@@ -482,7 +482,7 @@ private struct Spine: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(perform: onTap)
-        .gesture(DragGesture(minimumDistance: EventDrag.slop, coordinateSpace: .named("ribbon-track")).onChanged { v in
+        .highPriorityGesture(DragGesture(minimumDistance: EventDrag.slop, coordinateSpace: .named("ribbon-track")).onChanged { v in
             guard event.writable else { return }
             if mode == nil {
                 let x = v.startLocation.x - left

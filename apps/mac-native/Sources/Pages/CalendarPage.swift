@@ -1300,7 +1300,7 @@ struct AllDayPill: View {
         .contentShape(Capsule())
         .onHover { hovering = $0 }
         .onTapGesture(perform: onTap)
-        .gesture(DragGesture(minimumDistance: EventDrag.slop, coordinateSpace: .named(space)).onChanged { v in
+        .highPriorityGesture(DragGesture(minimumDistance: EventDrag.slop, coordinateSpace: .named(space)).onChanged { v in
             guard let onDrag, event.writable else { return }
             onDrag(v.startLocation, v.location, false)
         }.onEnded { v in
@@ -1402,7 +1402,7 @@ struct EventBlock: View {
             .onHover { hovering = $0 }
             .onTapGesture(perform: onTap)
             // Press the block to move it, or either end to take that edge with you.
-            .gesture(DragGesture(minimumDistance: EventDrag.slop, coordinateSpace: .named(space)).onChanged { v in
+            .highPriorityGesture(DragGesture(minimumDistance: EventDrag.slop, coordinateSpace: .named(space)).onChanged { v in
                 guard let onDrag, event.writable else { return }
                 if mode == nil {
                     let atTop = (v.startLocation.y - blockTop) < grab
