@@ -39,7 +39,18 @@ struct AiTurn: Identifiable, Hashable {
     var tools: [AiToolRun] = []
     /// Drafts the assistant wrote and left for you to send.
     var drafts: [AiDraftCard] = []
+    /// Threads that rode along with a person's message (`[[context thread=…]]` blocks).
+    var context: [AiContextRef] = []
+    /// Drafts the assistant sent itself during this turn: draft id → thread id.
+    var sent: [String: String] = [:]
     var failed: String?
+}
+
+/// A thread attached to a message as context, as the web's `ContextChip`.
+struct AiContextRef: Hashable, Identifiable, Sendable {
+    let id: String
+    var subject: String
+    var from: String
 }
 
 struct AiToolRun: Identifiable, Hashable {
@@ -50,10 +61,32 @@ struct AiToolRun: Identifiable, Hashable {
 
     var isRunning: Bool { status == "running" }
 
-    /// The tool names the worker emits are snake_case identifiers; this is what a
-    /// person reads while they wait.
+    /// What a person reads while they wait: the worker's own summary when it sent one,
+    /// otherwise the web's `toolLabel` for the tool's name.
     var label: String {
-        summary.isEmpty ? name.replacingOccurrences(of: "_", with: " ").capitalized : summary
+        summary.isEmpty ? AiToolRun.toolLabel(name, input: nil) : summary
+    }
+
+    /// `AssistantChat.tsx` `toolLabel`: a stored `tool_use` block, in words.
+    static func toolLabel(_ name: String, input: [String: Any]?) -> String {
+        func s(_ key: String) -> String? { input?[key].map { "\($0)" } }
+        switch name {
+        case "search_mail": return "Searched mail for “\(s("query") ?? "")”"
+        case "list_threads": return "Listed \((s("bucket") ?? "").replacingOccurrences(of: "_", with: " "))"
+        case "read_thread": return "Read a thread"
+        case "list_screener": return "Checked the Screener"
+        case "screen_sender": return "Screened a sender → \((s("decision") ?? "").replacingOccurrences(of: "_", with: " "))"
+        case "thread_action": return "Organised · \((s("action") ?? "").replacingOccurrences(of: "_", with: " "))"
+        case "create_draft": return "Drafted “\(s("subject") ?? "a message")”"
+        case "send_draft": return "Sent a draft"
+        case "remember": return "Remembered: \(s("content") ?? "")"
+        case "forget": return "Forgot a memory entry"
+        case "find_contact": return "Looked up “\(s("query") ?? "")”"
+        case "save_clip": return "Saved a clip"
+        case "create_collection": return "Created collection “\(s("name") ?? "")”"
+        case "add_to_collection": return "Added to a collection"
+        default: return name.replacingOccurrences(of: "_", with: " ")
+        }
     }
 }
 
@@ -220,13 +253,17 @@ struct AiMemoryEntry: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
-private struct LearnResult: Decodable {
+/// `POST /api/ai/learn`: how many memories changed, or why the pass did nothing
+/// (`nothing_new`, `no_key`) — the web reads both to word its toast.
+struct LearnResult: Decodable, Sendable {
     var changed: Int
+    var skipped: String?
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         changed = (try? c.decode(Int.self, forKey: .changed)) ?? 0
+        skipped = try? c.decodeIfPresent(String.self, forKey: .skipped)
     }
-    enum CodingKeys: String, CodingKey { case changed }
+    enum CodingKeys: String, CodingKey { case changed, skipped }
 }
 
 // MARK: - Streaming
@@ -340,9 +377,10 @@ extension APIClient {
         try await delete("/api/ai/memory", scoped: false)
     }
 
-    /// Runs the learner now rather than waiting for the cron. Answers how many memories changed.
-    func aiLearnNow() async throws -> Int {
-        try await post("/api/ai/learn", as: LearnResult.self, scoped: false).changed
+    /// Runs the learner now rather than waiting for the cron. Answers how many memories
+    /// changed, and why nothing did when that is the case.
+    func aiLearnNow() async throws -> LearnResult {
+        try await post("/api/ai/learn", as: LearnResult.self, scoped: false)
     }
 
     /// Flattens one stored message into the text the phone draws.
@@ -358,6 +396,7 @@ extension APIClient {
 
         var text = ""
         var tools: [AiToolRun] = []
+        var context: [AiContextRef] = []
 
         if let plain = message["content"] as? String {
             text = plain
@@ -365,15 +404,20 @@ extension APIClient {
             for block in blocks {
                 switch block["type"] as? String {
                 case "text":
-                    // Context blocks are prefixed by the worker and are not the person's words.
+                    // Context blocks are prefixed by the worker and are not the person's words;
+                    // the web turns them back into the chips they were sent as.
                     let value = block["text"] as? String ?? ""
-                    if value.hasPrefix("[[context thread=") { continue }
+                    if value.hasPrefix("[[context thread=") {
+                        if let ref = contextRef(from: value) { context.append(ref) }
+                        continue
+                    }
                     text += (text.isEmpty ? "" : "\n\n") + value
                 case "tool_use":
+                    let name = block["name"] as? String ?? ""
                     tools.append(AiToolRun(
                         id: block["id"] as? String ?? UUID().uuidString,
-                        name: block["name"] as? String ?? "",
-                        summary: "",
+                        name: name,
+                        summary: AiToolRun.toolLabel(name, input: block["input"] as? [String: Any]),
                         status: "done"
                     ))
                 default:
@@ -384,7 +428,16 @@ extension APIClient {
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !tools.isEmpty else { return nil }
-        return AiTurn(id: id, role: role, text: trimmed, tools: tools)
+        return AiTurn(id: id, role: role, text: trimmed, tools: tools, context: context)
+    }
+
+    /// `[[context thread=ID]] Subject: … · From: …`, the first line of a context block.
+    private static func contextRef(from value: String) -> AiContextRef? {
+        let pattern = #"^\[\[context thread=([^\]]+)\]\] Subject: (.*?) · From: (.*?)(?:\n|$)"#
+        guard let re = try? NSRegularExpression(pattern: pattern, options: []),
+              let m = re.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)),
+              let idR = Range(m.range(at: 1), in: value), let subjectR = Range(m.range(at: 2), in: value), let fromR = Range(m.range(at: 3), in: value) else { return nil }
+        return AiContextRef(id: String(value[idR]), subject: String(value[subjectR]), from: String(value[fromR]))
     }
 
     /// Opens the chat stream and yields events as they arrive.

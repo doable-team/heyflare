@@ -77,7 +77,7 @@ enum Theme {
     }
 
     /// Unified-inbox account marks, in connection order. Monochrome by design.
-    static let accountGlyphs = ["●", "■", "▲", "◆", "✦", "✚", "✖"]
+    static let accountGlyphs = ["●", "■", "▲", "◆", "✦", "◐", "▼", "○"]
 
     static func glyph(forAccountIndex index: Int) -> String {
         guard index >= 0 else { return "●" }

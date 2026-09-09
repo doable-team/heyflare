@@ -8,7 +8,8 @@ struct PaperTrailPage: View {
     var body: some View {
         if app.accounts.isEmpty { ConnectGmailCard() } else {
             PageColumn {
-                let n = store.threads.count + store.bundles.count
+                // `threads.length`: the bundles are not counted.
+                let n = store.threads.count
                 let count = n > 0 ? "\(n)\(store.hasMore ? "+" : "") \(n == 1 && !store.hasMore ? "item" : "items"). " : ""
                 PageHeader(title: "Paper Trail", subtitle: "\(count)Receipts, confirmations, and the rest of the paperwork.")
                 ThreadListView(sections: [ListSection(threads: store.threads, bundles: store.bundles, emptyTitle: "No paperwork yet.", emptyBody: "Receipts and confirmations land here once you screen those senders into the Paper Trail.")],
@@ -89,12 +90,12 @@ struct BubbleUpPage: View {
                 else if list.isEmpty { EmptyStateView(icon: "arrowUpCircle", title: "Nothing scheduled to bubble up.", body: "Pick a thread, press z, choose a time.") }
                 ForEach(Array(list.enumerated()), id: \.element.id) { i, t in
                     BubbleRow(thread: t, focused: cursor == i, leaving: leaving.contains(t.id)) { cancel(t) }
+                        .id(t.id)
                 }
             }
             .task { await store.firstLoad(.bubbleUp) }
             .syncsWithMail { await store.refresh(.bubbleUp) }
-            .onKeys(["j": { cursor = min(cursor + 1, list.count - 1) }, "k": { cursor = max(cursor - 1, 0) }, "ArrowDown": { cursor = min(cursor + 1, list.count - 1) }, "ArrowUp": { cursor = max(cursor - 1, 0) },
-                     "Enter": { if list.indices.contains(cursor) { router.go(.thread(list[cursor].id, peek: false)) } }, "o": { if list.indices.contains(cursor) { router.go(.thread(list[cursor].id, peek: false)) } }])
+            .itemCursorKeys(ids: list.map(\.id), cursor: $cursor) { i in if list.indices.contains(i) { router.go(.thread(list[i].id, peek: false)) } }
         }
     }
 
@@ -123,14 +124,15 @@ private struct BubbleRow: View {
             Button { router.go(.thread(thread.id, peek: true)) } label: {
                 HStack(spacing: 8) {
                     Text(thread.displaySubject).font(W.sm).foregroundStyle(W.foreground).lineLimit(1)
-                    if app.accounts.count > 1 { AccountGlyph(glyph: app.glyph(for: thread.accountID)) }
+                    if app.accounts.count > 1 { AccountGlyph(glyph: app.glyph(for: thread.accountID), label: app.account(thread.accountID)?.email) }
                     Text("\(thread.lastFrom.name.isEmpty ? thread.lastFrom.email : thread.lastFrom.name)\(thread.snippet.isEmpty ? "" : " — \(thread.snippet)")").font(W.s13).foregroundStyle(W.mutedForeground).lineLimit(1)
                     Spacer(minLength: 0)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            WBadge(Fmt.relative(thread.bubbleUpAt ?? 0), icon: "arrowUpCircle", variant: .secondary, muted: true).help(Fmt.full(thread.bubbleUpAt ?? 0))
+            // `Badge variant="secondary" className="font-normal tnum"`: foreground, not muted.
+            SecondaryBadge(text: Fmt.relative(thread.bubbleUpAt ?? 0), icon: "arrowUpCircle").help(Fmt.full(thread.bubbleUpAt ?? 0))
             WButton(icon: "x", variant: .ghost, size: .iconSm, muted: true, help: "Cancel · back to the Imbox now", action: onCancel).opacity(hovering ? 1 : 0)
         }
         .padding(.horizontal, 8).frame(height: 44)
@@ -138,6 +140,7 @@ private struct BubbleRow: View {
         .rounded(W.radiusMd)
         .overlay(alignment: .leading) { if focused { Capsule().fill(W.foreground).frame(width: 2).padding(.vertical, 8) } }
         .opacity(leaving ? 0 : 1)
+        .animation(.easeOut(duration: 0.1), value: leaving)
         .onHover { hovering = $0 }
     }
 }
@@ -148,6 +151,13 @@ struct SearchPage: View {
     @Environment(Router.self) private var router
     @State private var text = ""
     @State private var store = SearchStore()
+    @FocusState private var focused: Bool
+
+    /// The words the results are highlighted for: lower-cased, split on whitespace, two
+    /// characters or longer.
+    private var words: [String] {
+        query.lowercased().split(whereSeparator: { $0.isWhitespace }).map(String.init).filter { $0.count > 1 }
+    }
 
     var body: some View {
         let n = store.threads.count
@@ -155,12 +165,19 @@ struct SearchPage: View {
             PageHeader(title: "Search", subtitle: !query.isEmpty && !store.searching ? "\(n)\(store.hasMore ? "+" : "") \(n == 1 ? "result" : "results") for “\(query)”" : "Subjects, names, and what they said.")
             HStack(spacing: 8) {
                 Icon("search", size: 16).foregroundStyle(W.mutedForeground)
-                WTextFieldPlain(placeholder: "Search subjects, people, and message text…", text: $text, autofocus: true, fontSize: 16)
+                TextField("Search subjects, people, and message text…", text: $text)
+                    .textFieldStyle(.plain)
+                    .font(W.font(16))
+                    .foregroundStyle(W.foreground)
+                    .focused($focused)
                     .onSubmit { router.replace(.search(text.trimmingCharacters(in: .whitespaces))) }
-                if !text.isEmpty { WButton(icon: "x", variant: .ghost, size: .iconXs, muted: true, help: "Clear") { text = ""; router.replace(.search("")) } }
+                if !text.isEmpty { WButton(icon: "x", variant: .ghost, size: .iconXs, muted: true, help: "Clear") { text = ""; router.replace(.search("")); focused = true } }
                 Kbd("↵")
             }
-            .padding(.horizontal, 12).frame(height: 44).background(W.muted).rounded(W.radiusMd)
+            .padding(.horizontal, 12).frame(height: 44).background(W.muted)
+            // `focus:ring-1 focus:ring-border`
+            .overlay(RoundedRectangle(cornerRadius: W.radiusMd, style: .continuous).strokeBorder(focused ? W.border : Color.clear, lineWidth: 1))
+            .rounded(W.radiusMd)
             .padding(.horizontal, 8).padding(.bottom, 24)
             if query.isEmpty {
                 HStack(spacing: 6) { Text("Tip:"); Kbd("⌘K"); Text("searches from anywhere.") }.font(W.s13).foregroundStyle(W.mutedForeground).frame(maxWidth: .infinity).padding(.top, 16)
@@ -170,10 +187,43 @@ struct SearchPage: View {
                                showBucket: true, emptyIcon: "search",
                                footer: AnyView(LoadMore(hasMore: store.hasMore, loading: store.loadingMore) { Task { await store.loadMore() } }),
                                onAct: { ids, _, removes in if removes { for id in ids { _ = store.remove(id) } } })
+                    .environment(\.searchTerms, words)
             }
         }
-        .onAppear { text = query }
+        .onAppear { text = query; DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { focused = true } }
+        // `useEffect(() => setText(q), [q])`: the field follows the route.
+        .onChange(of: query) { _, q in text = q }
         .task(id: query) { if !query.isEmpty { await store.run(query) } }
-        .onKeys(["Enter": { router.replace(.search(text.trimmingCharacters(in: .whitespaces))) }], priority: -2)
+    }
+}
+
+// MARK: - Shared list-page pieces
+
+/// `<Skeleton className="h-3 w-[70%]" />`: a bar sized to its container.
+struct PctSkeleton: View {
+    var pct: CGFloat = 1
+    var height: CGFloat = 12
+    var body: some View {
+        GeometryReader { g in SkeletonBlock(width: g.size.width * pct, height: height) }
+            .frame(height: height)
+    }
+}
+
+/// `Badge variant="secondary" className="font-normal"`: the wash with the page's own text
+/// colour (`text-secondary-foreground`), unlike `WBadge(muted:)` which goes muted.
+struct SecondaryBadge: View {
+    let text: String
+    var icon: String? = nil
+    var body: some View {
+        HStack(spacing: 4) {
+            if let icon { Icon(icon, size: 12) }
+            Text(text).lineLimit(1).monospacedDigit()
+        }
+        .font(W.font(12, 400))
+        .foregroundStyle(W.foreground)
+        .padding(.horizontal, 8)
+        .frame(height: 20)
+        .background(W.secondary)
+        .clipShape(Capsule())
     }
 }

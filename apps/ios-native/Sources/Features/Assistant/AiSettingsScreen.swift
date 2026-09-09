@@ -401,7 +401,7 @@ struct AiSettingsScreen: View {
         learning = true
         defer { learning = false }
         do {
-            let added = try await APIClient.shared.aiLearnNow()
+            let added = try await APIClient.shared.aiLearnNow().changed
             await store.load()
             Haptics.success()
             toasts.show(added == 0 ? "Nothing new to learn" : "Learned \(added) new thing\(added == 1 ? "" : "s")")

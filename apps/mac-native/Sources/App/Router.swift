@@ -11,9 +11,12 @@ enum AppRoute: Hashable {
     case clips, collections, collection(String), files, labels, label(String)
     case drafts, scheduled
     case thread(String, peek: Bool), bundle(String)
-    case calendar, journal(String?), habits
+    /// `/calendar?d=YYYY-MM-DD`: the day to reveal on open, or nil for today.
+    case calendar(String?), journal(String?), habits
     case settings(String)
     case search(String)
+    /// `/compose?to=&subject=`: the in-page composer.
+    case compose(to: String, subject: String)
 
     var title: String {
         switch self {
@@ -44,6 +47,7 @@ enum AppRoute: Hashable {
         case .habits: return "Habits"
         case .settings: return "Settings"
         case .search: return "Search"
+        case .compose: return "New message"
         }
     }
 
@@ -133,11 +137,23 @@ final class UIState {
     /// Keyboard focus region: the sidebar owns ↑↓↵ while it is focused.
     var region: Region = .content
     var sidebarFocusIndex = 0
-    var assistantOpen = false
+    // `assistantStore.ts`: `open`, `mode`, `width` and `conversationId` live in `hey.assistant`,
+    // so a relaunch reopens the panel on the same chat at the same width.
+    var assistantOpen = AssistantPrefs.load().open { didSet { saveAssistant() } }
     var assistantDocked = true
-    var assistantWidth: CGFloat = 400
-    var assistantConversationID: String?
+    var assistantWidth: CGFloat = AssistantPrefs.load().width { didSet { saveAssistant() } }
+    var assistantConversationID: String? = AssistantPrefs.load().conversationID { didSet { saveAssistant() } }
     var assistantContext: [ContextChip] = []
+    /// Bumped whenever something asks the assistant's input for focus (→ with the panel
+    /// already open, the FAB, a suggestion chip).
+    var assistantFocusRequest = 0
+
+    private func saveAssistant() {
+        AssistantPrefs(open: assistantOpen, width: assistantWidth, conversationID: assistantConversationID).save()
+    }
+
+    /// `clampWidth`: 320–720, 400 when unset.
+    static func clampAssistantWidth(_ w: CGFloat) -> CGFloat { AssistantPrefs.clamp(w) }
     /// The thread on screen, for the assistant's context chip.
     var currentThread: ContextChip?
     /// A view the page pins to the bottom of the content area (piles, the thread's action bar).
@@ -164,6 +180,8 @@ final class UIState {
         if let conversation { assistantConversationID = conversation }
         assistantOpen = true
         region = .assistant
+        // `Shell.tsx`: → with the panel already open puts the caret back in the box.
+        assistantFocusRequest += 1
     }
     func closeAssistant() {
         assistantOpen = false
@@ -171,8 +189,45 @@ final class UIState {
     }
     func toggleAssistant() { assistantOpen ? closeAssistant() : openAssistant() }
     func newChat() { assistantConversationID = nil; assistantContext = [] }
+    /// `assistant.addContext`: at most three chips, the newest kept (`slice(-3)`).
     func addContext(_ chip: ContextChip) {
-        if !assistantContext.contains(where: { $0.id == chip.id }) { assistantContext.append(chip) }
+        if assistantContext.contains(where: { $0.id == chip.id }) { return }
+        assistantContext = Array((assistantContext + [chip]).suffix(3))
+    }
+}
+
+/// `hey.assistant` in `localStorage`, as the web writes it.
+struct AssistantPrefs: Codable {
+    var open = false
+    var mode = "dock"
+    var width: CGFloat = 400
+    var conversationID: String?
+
+    enum CodingKeys: String, CodingKey { case open, mode, width, conversationID = "conversationId" }
+
+    init(open: Bool, width: CGFloat, conversationID: String?) {
+        self.open = open; self.width = width; self.conversationID = conversationID
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        open = (try? c.decode(Bool.self, forKey: .open)) ?? false
+        width = AssistantPrefs.clamp((try? c.decode(CGFloat.self, forKey: .width)) ?? 400)
+        conversationID = try? c.decodeIfPresent(String.self, forKey: .conversationID)
+    }
+
+    static func clamp(_ w: CGFloat) -> CGFloat { min(720, max(320, w.rounded())) }
+
+    static func load() -> AssistantPrefs {
+        if let raw = UserDefaults.standard.string(forKey: "hey.assistant"), let data = raw.data(using: .utf8),
+           let prefs = try? JSONDecoder().decode(AssistantPrefs.self, from: data) { return prefs }
+        return AssistantPrefs(open: false, width: 400, conversationID: nil)
+    }
+
+    func save() {
+        if let data = try? JSONEncoder().encode(self), let raw = String(data: data, encoding: .utf8) {
+            UserDefaults.standard.set(raw, forKey: "hey.assistant")
+        }
     }
 }
 

@@ -98,15 +98,17 @@ struct EventPreview: Equatable {
     var shown: CalEventFull { EventDrag.previewed(event, span) }
 }
 
-/// Commits a drag: the moved event goes to the server, the preview is held until the refetch
-/// agrees with it, and a refusal (Google can decline to move some events) is said out loud.
+/// Commits a drag: the moved event goes to the server, the preview is held until the loaded
+/// window has been fetched again (`refresh`, the view's own window — never a wipe of the
+/// store, which would blank every other week on screen), and a refusal (Google can decline
+/// to move some events) is said out loud.
 @MainActor
 enum DragCommit {
-    static func commit(_ p: EventPreview, store: CalendarStore, month: Date, clear: @escaping () -> Void) {
+    static func commit(_ p: EventPreview, refresh: @escaping () async -> Void, clear: @escaping () -> Void) {
         Task {
             do {
                 _ = try await CalendarAPI.updateEvent(id: p.event.id, scope: nil, input: EventDrag.patch(p.event, p.span))
-                await store.invalidate(around: month)
+                await refresh()
             } catch {
                 Toasts.shared.error((error as? APIError)?.errorDescription ?? "Couldn't move this event.")
             }

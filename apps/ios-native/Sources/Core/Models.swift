@@ -181,11 +181,15 @@ struct Account: Codable, Hashable, Identifiable, Sendable {
     var provider: String
     var domainID: String?
     var initialSyncDone: Bool
+    var initialSyncCount: Int
     var syncStatus: String
     var syncError: String?
     var lastSyncedAt: Double?
     var signature: String
     var avatarURL: String
+    /// When contact photos were last pulled; nil until the account is reconnected with the
+    /// People scope, which is what Settings prompts for.
+    var photosSyncedAt: Double?
 
     var isDomain: Bool { provider == "domain" }
 
@@ -194,10 +198,12 @@ struct Account: Codable, Hashable, Identifiable, Sendable {
         case displayName = "display_name"
         case domainID = "domain_id"
         case initialSyncDone = "initial_sync_done"
+        case initialSyncCount = "initial_sync_count"
         case syncStatus = "sync_status"
         case syncError = "sync_error"
         case lastSyncedAt = "last_synced_at"
         case avatarURL = "avatar_url"
+        case photosSyncedAt = "photos_synced_at"
     }
 
     init(from decoder: Decoder) throws {
@@ -208,11 +214,13 @@ struct Account: Codable, Hashable, Identifiable, Sendable {
         provider = (try? c.decode(String.self, forKey: .provider)) ?? "gmail"
         domainID = try? c.decodeIfPresent(String.self, forKey: .domainID)
         initialSyncDone = (try? c.decode(Bool.self, forKey: .initialSyncDone)) ?? true
+        initialSyncCount = (try? c.decode(Int.self, forKey: .initialSyncCount)) ?? 0
         syncStatus = (try? c.decode(String.self, forKey: .syncStatus)) ?? "idle"
         syncError = try? c.decodeIfPresent(String.self, forKey: .syncError)
         lastSyncedAt = try? c.decodeIfPresent(Double.self, forKey: .lastSyncedAt)
         signature = (try? c.decode(String.self, forKey: .signature)) ?? ""
         avatarURL = (try? c.decode(String.self, forKey: .avatarURL)) ?? ""
+        photosSyncedAt = try? c.decodeIfPresent(Double.self, forKey: .photosSyncedAt)
     }
 }
 
@@ -402,6 +410,8 @@ struct ThreadDetail: Codable, Hashable, Identifiable, Sendable {
     var messages: [Message]
     var collections: [CollectionRef]
     var clips: [Clip]
+    /// Threads folded into this one (`merged_threads`), for the "Includes merged: …" footnote.
+    var mergedThreads: [MergedRef]
     var senderBundled: Bool
 
     var id: String { summary.id }
@@ -411,8 +421,14 @@ struct ThreadDetail: Codable, Hashable, Identifiable, Sendable {
         var name: String
     }
 
+    struct MergedRef: Codable, Hashable, Identifiable, Sendable {
+        var id: String
+        var subject: String
+    }
+
     enum CodingKeys: String, CodingKey {
         case messages, collections, clips
+        case mergedThreads = "merged_threads"
         case senderBundled = "sender_bundled"
     }
 
@@ -422,6 +438,7 @@ struct ThreadDetail: Codable, Hashable, Identifiable, Sendable {
         messages = (try? c.decode([Message].self, forKey: .messages)) ?? []
         collections = (try? c.decode([CollectionRef].self, forKey: .collections)) ?? []
         clips = (try? c.decode([Clip].self, forKey: .clips)) ?? []
+        mergedThreads = (try? c.decode([MergedRef].self, forKey: .mergedThreads)) ?? []
         senderBundled = (try? c.decode(Bool.self, forKey: .senderBundled)) ?? false
     }
 
@@ -431,6 +448,7 @@ struct ThreadDetail: Codable, Hashable, Identifiable, Sendable {
         try c.encode(messages, forKey: .messages)
         try c.encode(collections, forKey: .collections)
         try c.encode(clips, forKey: .clips)
+        try c.encode(mergedThreads, forKey: .mergedThreads)
         try c.encode(senderBundled, forKey: .senderBundled)
     }
 }
@@ -443,6 +461,7 @@ struct Contact: Codable, Hashable, Identifiable, Sendable {
     var email: String
     var name: String
     var screenStatus: ScreenStatus
+    var screenedAt: Double?
     var firstSeenAt: Double
     var lastSeenAt: Double
     var messageCount: Int
@@ -450,13 +469,17 @@ struct Contact: Codable, Hashable, Identifiable, Sendable {
     var avatarURL: String
     var bundled: Bool
     var mixed: Bool?
+    /// `MergedContact.accounts`: every mailbox this person has written to, with that
+    /// mailbox's own decision about them.
+    var accounts: [ContactAccount]
 
     var address: Address { Address(email: email, name: name, avatarURL: avatarURL) }
 
     enum CodingKeys: String, CodingKey {
-        case id, email, name, notes, bundled, mixed
+        case id, email, name, notes, bundled, mixed, accounts
         case accountID = "account_id"
         case screenStatus = "screen_status"
+        case screenedAt = "screened_at"
         case firstSeenAt = "first_seen_at"
         case lastSeenAt = "last_seen_at"
         case messageCount = "message_count"
@@ -470,6 +493,7 @@ struct Contact: Codable, Hashable, Identifiable, Sendable {
         email = (try? c.decode(String.self, forKey: .email)) ?? ""
         name = (try? c.decode(String.self, forKey: .name)) ?? ""
         screenStatus = (try? c.decode(ScreenStatus.self, forKey: .screenStatus)) ?? .pending
+        screenedAt = try? c.decodeIfPresent(Double.self, forKey: .screenedAt)
         firstSeenAt = (try? c.decode(Double.self, forKey: .firstSeenAt)) ?? 0
         lastSeenAt = (try? c.decode(Double.self, forKey: .lastSeenAt)) ?? 0
         messageCount = (try? c.decode(Int.self, forKey: .messageCount)) ?? 0
@@ -477,6 +501,30 @@ struct Contact: Codable, Hashable, Identifiable, Sendable {
         avatarURL = (try? c.decode(String.self, forKey: .avatarURL)) ?? ""
         bundled = (try? c.decode(Bool.self, forKey: .bundled)) ?? false
         mixed = try? c.decodeIfPresent(Bool.self, forKey: .mixed)
+        accounts = (try? c.decode([ContactAccount].self, forKey: .accounts)) ?? []
+    }
+}
+
+/// One account's view of a person (`MergedContact.accounts[]`).
+struct ContactAccount: Codable, Hashable, Sendable {
+    var accountID: String
+    var contactID: String
+    var screenStatus: ScreenStatus
+    var bundled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case bundled
+        case accountID = "account_id"
+        case contactID = "contact_id"
+        case screenStatus = "screen_status"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        accountID = (try? c.decode(String.self, forKey: .accountID)) ?? ""
+        contactID = (try? c.decode(String.self, forKey: .contactID)) ?? ""
+        screenStatus = (try? c.decode(ScreenStatus.self, forKey: .screenStatus)) ?? .pending
+        bundled = (try? c.decode(Bool.self, forKey: .bundled)) ?? false
     }
 }
 
@@ -562,12 +610,14 @@ struct MailCollection: Codable, Hashable, Identifiable, Sendable {
     var description: String
     var threadCount: Int
     var fileCount: Int
+    var updatedAt: Double
 
     enum CodingKeys: String, CodingKey {
         case id, name, description
         case accountID = "account_id"
         case threadCount = "thread_count"
         case fileCount = "file_count"
+        case updatedAt = "updated_at"
     }
 
     init(from decoder: Decoder) throws {
@@ -578,6 +628,7 @@ struct MailCollection: Codable, Hashable, Identifiable, Sendable {
         description = (try? c.decode(String.self, forKey: .description)) ?? ""
         threadCount = (try? c.decode(Int.self, forKey: .threadCount)) ?? 0
         fileCount = (try? c.decode(Int.self, forKey: .fileCount)) ?? 0
+        updatedAt = (try? c.decode(Double.self, forKey: .updatedAt)) ?? 0
     }
 }
 
@@ -593,10 +644,12 @@ struct Draft: Codable, Hashable, Identifiable, Sendable {
     var bodyHTML: String
     var sendAt: Double?
     var status: String
+    /// Why the last send attempt failed, when `status` is "failed".
+    var error: String?
     var updatedAt: Double
 
     enum CodingKeys: String, CodingKey {
-        case id, to, cc, bcc, subject, status
+        case id, to, cc, bcc, subject, status, error
         case accountID = "account_id"
         case threadID = "thread_id"
         case replyToMessageID = "reply_to_message_id"
@@ -618,6 +671,7 @@ struct Draft: Codable, Hashable, Identifiable, Sendable {
         bodyHTML = (try? c.decode(String.self, forKey: .bodyHTML)) ?? ""
         sendAt = try? c.decodeIfPresent(Double.self, forKey: .sendAt)
         status = (try? c.decode(String.self, forKey: .status)) ?? "draft"
+        error = try? c.decodeIfPresent(String.self, forKey: .error)
         updatedAt = (try? c.decode(Double.self, forKey: .updatedAt)) ?? 0
     }
 }

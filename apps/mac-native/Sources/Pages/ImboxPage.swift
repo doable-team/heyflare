@@ -27,6 +27,9 @@ struct ImboxPage: View {
                 .padding(.horizontal, 8)
                 .padding(.bottom, 16)
 
+                // `<CalendarCover />`: the next three days, between the header and the Screener banner.
+                CalendarCoverView()
+
                 if store.data.screenerCount > 0 {
                     ScreenerBanner(count: store.data.screenerCount, senders: store.data.screenerSenders)
                         .padding(.bottom, 20)
@@ -43,7 +46,8 @@ struct ImboxPage: View {
                                         .padding(.horizontal, 8).padding(.top, 8)
                                         .frame(maxWidth: .infinity, minHeight: ui.viewportHeight * 0.2, alignment: .topLeading)
                                     ),
-                                    actions: newCount > 0 ? AnyView(WButton("Power through new", icon: "zap", variant: .ghost, size: .sm, muted: true, kbd: "o") { router.go(.powerThrough) }) : nil),
+                                    // `-mr-1`: the button's plate hangs 4px past the row's edge.
+                                    actions: newCount > 0 ? AnyView(WButton("Power through new", icon: "zap", variant: .ghost, size: .sm, muted: true, kbd: "o") { router.go(.powerThrough) }.padding(.trailing, -4)) : nil),
                         ListSection(title: "Previously seen", threads: store.data.seenThreads, bundles: store.data.bundles.filter { !$0.isOpen }, emptyTitle: "Nothing here yet.", emptyBody: "Once you open something, it settles down here."),
                     ],
                     loading: store.loading && !store.loaded,
@@ -116,7 +120,9 @@ struct ScreenerBanner: View {
 /// `SyncPill`: only while a sync is running or broken.
 struct SyncPill: View {
     @Environment(AppState.self) private var app
+    @Environment(Toasts.self) private var toasts
     @State private var syncing = false
+    @State private var reconnectHover = false
 
     var body: some View {
         let targets = app.scope == ServerConfig.allAccounts ? app.accounts : (app.scopedAccount.map { [$0] } ?? [])
@@ -127,9 +133,20 @@ struct SyncPill: View {
             HStack(spacing: 8) {
                 if error { Icon("refreshCw", size: 13) } else { Spinner(size: 13) }
                 if error {
-                    Text("Sync problem\(targets.count > 1 ? " (\(a.email))" : ""): \(a.syncError ?? "unknown").")
+                    HStack(spacing: 3) {
+                        Text("Sync problem\(targets.count > 1 ? " (\(a.email))" : ""): \(a.syncError?.isEmpty == false ? a.syncError! : "unknown").")
+                        if a.syncStatus == "disconnected" {
+                            // `<a href="/auth/google/start" className="underline underline-offset-2 hover:text-foreground">`
+                            Button { GoogleConnect.start(toasts: toasts) } label: {
+                                Text("Reconnect").underline().foregroundStyle(reconnectHover ? W.foreground : W.mutedForeground).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .onHover { reconnectHover = $0 }
+                        }
+                    }
                 } else {
-                    Text("Syncing\(targets.count > 1 ? " \(a.email)" : "")\(a.lastSyncedAt.map { " · \(Fmt.relative($0))" } ?? "")")
+                    // "Syncing · 1,234 messages · 2 minutes ago"
+                    Text("Syncing\(targets.count > 1 ? " \(a.email)" : "") · \(a.initialSyncCount.formatted()) messages\(a.lastSyncedAt.map { " · \(Fmt.relative($0))" } ?? "")").monospacedDigit()
                 }
                 WButton("Sync now", variant: .ghost, size: .xs, muted: true) {
                     syncing = true
@@ -147,17 +164,27 @@ struct ConnectGmailCard: View {
     @Environment(AppState.self) private var app
     @Environment(Toasts.self) private var toasts
     var body: some View {
-        VStack(spacing: 12) {
-            Icon("mail", size: 20).foregroundStyle(W.mutedForeground).frame(width: 40, height: 40).background(W.muted).rounded(W.radiusLg)
-            Text("Connect your Gmail\(app.user?.name.isEmpty == false ? ", \(app.user!.name.split(separator: " ").first ?? "")" : "")").font(W.font(18, 600)).foregroundStyle(W.foreground)
-            Text("Nobody reaches your Imbox until you say so. First-time senders wait in the Screener; newsletters go to The Feed; receipts to the Paper Trail. Nothing from the past is imported — heyflare starts from the moment you connect and checks Gmail every couple of minutes.")
-                .font(W.sm).foregroundStyle(W.mutedForeground).multilineTextAlignment(.center).frame(maxWidth: 448)
-            WButton("Connect Gmail", trailingIcon: "arrowRight") { GoogleConnect.start(toasts: toasts) }.padding(.top, 8)
-            Text("Tokens stay in your own Cloudflare account.").font(W.xs).foregroundStyle(W.mutedForeground)
+        // `<Empty className="border-0 py-10">` inside `max-w-2xl pt-10`: header (gap-2, the
+        // icon box `size-8 rounded-lg bg-muted` with a 16px mail icon and `mb-2`), then content
+        // (gap-2.5) 16 below.
+        VStack(spacing: 16) {
+            VStack(spacing: 8) {
+                Icon("mail", size: 16).foregroundStyle(W.mutedForeground).frame(width: 32, height: 32).background(W.muted).rounded(W.radiusLg).padding(.bottom, 8)
+                Text("Connect your Gmail\(app.user?.name.isEmpty == false ? ", \(app.user!.name.split(separator: " ").first ?? "")" : "")").font(W.font(18, 600)).foregroundStyle(W.foreground)
+                Text("Nobody reaches your Imbox until you say so. First-time senders wait in the Screener; newsletters go to The Feed; receipts to the Paper Trail. Nothing from the past is imported — heyflare starts from the moment you connect and checks Gmail every couple of minutes.")
+                    .font(W.sm).webLine(14, 22.75).foregroundStyle(W.mutedForeground).multilineTextAlignment(.center).frame(maxWidth: 448)
+            }
+            .frame(maxWidth: 384)
+            VStack(spacing: 10) {
+                WButton("Connect Gmail", trailingIcon: "arrowRight") { GoogleConnect.start(toasts: toasts) }
+                Text("Tokens stay in your own Cloudflare account.").font(W.xs).foregroundStyle(W.mutedForeground).padding(.top, 4)
+            }
+            .frame(maxWidth: 384)
         }
+        .padding(.vertical, 40).padding(.horizontal, 24)
         .frame(maxWidth: 672)
         .frame(maxWidth: .infinity)
-        .padding(.top, 80)
+        .padding(.top, 40)
     }
 }
 

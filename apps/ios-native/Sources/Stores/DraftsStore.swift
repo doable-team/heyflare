@@ -16,6 +16,8 @@ final class DraftsStore {
     var drafts: [Draft] = []
     var loading = true
     var error: String?
+    /// True once the first answer (or failure) has landed (the Mac skeleton keys on it).
+    var fresh = false
 
     /// Half-written mail only. Anything queued, in flight or failed on the way out belongs
     /// to `ScheduledScreen`, which is the only place that can call it back — the same split
@@ -38,10 +40,12 @@ final class DraftsStore {
             drafts = try await APIClient.shared.drafts()
             ContentCache.shared.store(drafts, for: .drafts)
             error = nil
+            fresh = true
         } catch is CancellationError {
             return
         } catch {
             self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription
+            fresh = true
         }
     }
 
@@ -80,6 +84,8 @@ final class ScheduledStore {
     private(set) var drafts: [Draft] = []
     private(set) var loading = true
     private(set) var error: String?
+    /// True once the first answer (or failure) has landed (the Mac skeleton keys on it).
+    private(set) var fresh = false
 
     /// Queued, in flight, or failed on the way out — the three states the web groups under
     /// "Scheduled". A failed send is still a message the sender believes is going out, so
@@ -87,10 +93,9 @@ final class ScheduledStore {
     /// nothing says it ever tried.
     private static let queuedStatuses: Set<String> = ["scheduled", "sending", "failed"]
 
+    /// In the order the server sends them, as the web's Scheduled page keeps it.
     var queued: [Draft] {
-        drafts
-            .filter { Self.queuedStatuses.contains($0.status) }
-            .sorted { ($0.sendAt ?? $0.updatedAt) < ($1.sendAt ?? $1.updatedAt) }
+        drafts.filter { Self.queuedStatuses.contains($0.status) }
     }
 
     init() {
@@ -106,10 +111,12 @@ final class ScheduledStore {
             drafts = try await APIClient.shared.drafts()
             ContentCache.shared.store(drafts, for: .drafts)
             error = nil
+            fresh = true
         } catch is CancellationError {
             return
         } catch {
             self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription
+            fresh = true
         }
     }
 

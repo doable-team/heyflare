@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import CoreImage.CIFilterBuiltins
 
 /// `Settings.tsx`: a page with line tabs.
@@ -13,7 +14,8 @@ struct SettingsPage: View {
         let current = tabs.contains { $0.0 == tab } ? tab : "profile"
         PageColumn {
             PageHeader(title: "Settings").padding(.horizontal, -8)
-            HStack(spacing: 0) {
+            // `TabsList variant="line"` puts `gap-1` between the triggers.
+            HStack(spacing: 4) {
                 ForEach(tabs, id: \.0) { t in
                     Button { router.replace(.settings(t.0)) } label: {
                         HStack(spacing: 6) { Icon(t.2, size: 14); Text(t.1) }
@@ -74,9 +76,12 @@ extension SettingsSection where Actions == EmptyView {
     }
 }
 
+/// `Row`: label and hint on the left, the control on the right, a rule underneath —
+/// `last:border-b-0`, so the closing row of a section passes `last`.
 struct SettingsRow<Content: View>: View {
     let label: String
     var hint: String? = nil
+    var last = false
     @ViewBuilder var content: () -> Content
     var body: some View {
         HStack(alignment: .center, spacing: 24) {
@@ -88,13 +93,74 @@ struct SettingsRow<Content: View>: View {
             content()
         }
         .padding(.horizontal, 8).padding(.vertical, 12)
-        .edgeLine(.bottom)
+        .edgeLine(.bottom, last ? Color.clear : W.border)
     }
 }
 
 struct SavedMark: View {
     let show: Bool
     var body: some View { HStack(spacing: 4) { Icon("check", size: 12); Text("Saved") }.font(W.xs).foregroundStyle(W.mutedForeground).opacity(show ? 1 : 0) }
+}
+
+/// shadcn `FieldDescription`: text-sm, muted.
+private struct FieldDesc: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View { Text(text).font(W.sm).webLine(14).foregroundStyle(W.mutedForeground).fixedSize(horizontal: false, vertical: true) }
+}
+
+/// A Lucide icon that turns while something is pending (`animate-spin`), still otherwise.
+private struct SpinIcon: View {
+    let name: String
+    var size: CGFloat = 14
+    let spinning: Bool
+    @State private var angle: Double = 0
+    var body: some View {
+        Icon(name, size: size)
+            .rotationEffect(.degrees(angle))
+            .onChange(of: spinning, initial: true) { _, on in
+                if on { withAnimation(.linear(duration: 1).repeatForever(autoreverses: false)) { angle = 360 } }
+                else { withAnimation(.linear(duration: 0)) { angle = 0 } }
+            }
+    }
+}
+
+/// The Edit / Details chevron: `rotate-180` while open, over 100ms.
+private struct OpenChevron: View {
+    let open: Bool
+    var body: some View {
+        Icon("chevronDown", size: 14).rotationEffect(.degrees(open ? 180 : 0)).animation(.easeOut(duration: 0.1), value: open)
+    }
+}
+
+/// `CopyButton`: the copy glyph swaps to a check for 1.2s.
+private struct CopyButton: View {
+    let text: String
+    @State private var ok = false
+    var body: some View {
+        WButton(icon: ok ? "check" : "copy", variant: .ghost, size: .iconXs, muted: true, help: "Copy") {
+            Platform.copy(text)
+            ok = true
+            Task { try? await Task.sleep(for: .seconds(1.2)); ok = false }
+        }
+    }
+}
+
+/// `<a class="underline underline-offset-2 hover:text-foreground">` inside a muted line.
+private struct InlineLink: View {
+    let label: String
+    var action: () -> Void
+    @State private var hovering = false
+    var body: some View {
+        Button(action: action) { Text(label).underline().foregroundStyle(hovering ? W.foreground : W.mutedForeground) }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+    }
+}
+
+/// `text-xs` (12) is `.font(W.xs)`; where the web wants 13 it is `.font(W.s13)`.
+private func friendly(_ error: Error) -> String {
+    (error as? APIError)?.errorDescription ?? error.localizedDescription
 }
 
 // MARK: - Profile
@@ -115,26 +181,30 @@ struct ProfileSection: View {
                     }
                 }
                 .padding(.horizontal, 8).padding(.bottom, 16)
+                // Saves on blur, as the web's input does; Enter is just a keystroke there.
                 SettingsRow(label: "Name") {
                     HStack(spacing: 8) {
-                        WTextField(placeholder: "", text: $name, onSubmit: { save(user) }, onBlur: { if name != user.name { save(user) } }).frame(width: 224)
+                        WTextField(placeholder: "", text: $name, onBlur: { if name.trimmingCharacters(in: .whitespaces) != user.name { save(user) } }).frame(width: 224)
                         SavedMark(show: saved)
                     }
                 }
-                SettingsRow(label: "Email", hint: "Used to log in. Can't be changed here.") {
+                SettingsRow(label: "Email", hint: "Used to log in. Can't be changed here.", last: true) {
                     Text(user.email).font(W.sm).foregroundStyle(W.mutedForeground).padding(.horizontal, 10).frame(width: 224, height: 32, alignment: .leading).background(W.input.opacity(0.5)).rounded(W.radiusMd)
                 }
             }
             .onAppear { name = user.name }
+            // The field follows the user wherever the change came from, as the web's effect does.
+            .onChange(of: user.name) { _, n in name = n }
         }
     }
 
     private func save(_ user: User) {
         let n = name.trimmingCharacters(in: .whitespaces)
-        guard n != user.name else { return }
         Task {
-            do { let u = try await APIClient.shared.updateMe(name: n); await app.adopt(user: u); saved = true; try? await Task.sleep(for: .seconds(2)); saved = false }
-            catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+            // The web's mutation has no error handler here: a failure leaves the field as typed.
+            if let u = try? await APIClient.shared.updateMe(name: n) {
+                await app.adopt(user: u); saved = true; try? await Task.sleep(for: .seconds(2)); saved = false
+            }
         }
     }
 }
@@ -153,7 +223,7 @@ struct PreferencesSection: View {
             SettingsRow(label: "Theme", hint: "System follows your device.") {
                 WToggleGroup(options: [ToggleOption(id: "system", label: "System", icon: "monitor"), ToggleOption(id: "light", label: "Light", icon: "sun"), ToggleOption(id: "dark", label: "Dark", icon: "moon")], value: Binding(get: { settings.theme ?? "system" }, set: { patch(["theme": $0]) }))
             }
-            SettingsRow(label: "Show previews in lists", hint: "The first line of each message next to the subject.") {
+            SettingsRow(label: "Show previews in lists", hint: "The first line of each message next to the subject.", last: true) {
                 WSwitch(on: Binding(get: { settings.showPreviews != false }, set: { patch(["showPreviews": $0]) }))
             }
         }
@@ -161,9 +231,14 @@ struct PreferencesSection: View {
             SettingsRow(label: "Default place for new senders", hint: "Pre-selected when you say yes in the Screener.") {
                 WToggleGroup(options: [ToggleOption(id: "imbox", label: "Imbox", icon: "inbox"), ToggleOption(id: "feed", label: "The Feed", icon: "rss"), ToggleOption(id: "paper_trail", label: "Paper Trail", icon: "fileText")], value: Binding(get: { settings.defaultScreenTarget ?? "imbox" }, set: { patch(["defaultScreenTarget": $0]) }))
             }
-            SettingsRow(label: "Undo send window", hint: "Seconds to change your mind after hitting Send. 0 turns it off.") {
+            SettingsRow(label: "Undo send window", hint: "Seconds to change your mind after hitting Send. 0 turns it off.", last: true) {
                 HStack(spacing: 8) {
-                    WTextField(placeholder: "10", text: $undo, onSubmit: { saveUndo() }, onBlur: { saveUndo() }).frame(width: 80).multilineTextAlignment(.trailing)
+                    // Clamped to 0…60 on every keystroke, saved on blur — the web's number input.
+                    WTextField(placeholder: "10", text: $undo, onBlur: { saveUndo() }).frame(width: 80).multilineTextAlignment(.trailing)
+                        .onChange(of: undo) { _, v in
+                            let n = max(0, min(60, Int(v) ?? 0))
+                            if String(n) != v { undo = String(n) }
+                        }
                     Text("sec").font(W.s13).foregroundStyle(W.mutedForeground)
                 }
             }
@@ -181,7 +256,7 @@ struct PreferencesSection: View {
                 let u = try await APIClient.shared.updateMe(settings: all)
                 await app.adopt(user: u)
                 saved = true; try? await Task.sleep(for: .seconds(2)); saved = false
-            } catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+            } catch { Toasts.shared.error(friendly(error)) }
         }
     }
 }
@@ -192,27 +267,57 @@ struct AccountsSection: View {
     @Environment(AppState.self) private var app
     @Environment(Router.self) private var router
     @Environment(Toasts.self) private var toasts
+    @Environment(DialogState.self) private var dialogs
 
     var body: some View {
-        let gmail = app.accounts.filter { !$0.isDomain }
+        let remote = app.accounts.filter { !$0.isDomain }
         let boxes = app.accounts.filter(\.isDomain)
-        SettingsSection(title: "Gmail accounts", description: "What's connected, and how it signs off.", actions: {
-            if app.googleConfigured { WButton("Connect Gmail", icon: "plus", variant: .ghost, size: .sm, muted: true) { GoogleConnect.start(toasts: toasts) } }
+        SettingsSection(title: "Connected accounts", description: "What's connected, and how it signs off.", actions: {
+            HStack(spacing: 4) {
+                if app.googleConfigured { WButton("Connect Gmail", icon: "plus", variant: .ghost, size: .sm, muted: true) { GoogleConnect.start(toasts: toasts) } }
+                if app.microsoftConfigured { WButton("Connect Outlook", icon: "plus", variant: .ghost, size: .sm, muted: true) { GoogleConnect.start(toasts: toasts, provider: "microsoft") } }
+                WButton("Add mailbox", icon: "plus", variant: .ghost, size: .sm, muted: true) { addImap() }
+            }
         }) {
-            if gmail.isEmpty { Text("No Gmail connected yet.").font(W.s13).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 8) }
-            ForEach(gmail) { AccountBlock(account: $0) }
+            if !app.googleConfigured || !app.microsoftConfigured { oauthNotice }
+            if remote.isEmpty { Text("Nothing connected yet.").font(W.s13).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 8) }
+            ForEach(remote) { AccountBlock(account: $0, last: $0.id == remote.last?.id) }
         }
+        ConnectorCredentialsSection()
         SettingsSection(title: "Domain mailboxes", description: "Addresses on your own domains.", actions: {
             WButton("New mailbox", icon: "plus", variant: .ghost, size: .sm, muted: true) { router.replace(.settings("domains")) }
         }) {
             if boxes.isEmpty { Text("No mailboxes yet. Add a domain first.").font(W.s13).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 8) }
-            ForEach(boxes) { AccountBlock(account: $0) }
+            ForEach(boxes) { AccountBlock(account: $0, last: $0.id == boxes.last?.id) }
+        }
+    }
+
+    /// Which providers still lack an OAuth client, and where to add one.
+    private var oauthNotice: some View {
+        let neither = !app.googleConfigured && !app.microsoftConfigured
+        let who = neither ? "Gmail and Outlook need" : !app.googleConfigured ? "Gmail needs" : "Outlook needs"
+        let pronoun = neither ? "they" : "it"
+        return (Text("\(who) an OAuth client before \(pronoun) can be connected — add the credentials under ")
+                + Text("Provider credentials").font(W.font(13, 700))
+                + Text(" below. IMAP mailboxes need no setup."))
+            .font(W.s13).foregroundStyle(W.mutedForeground)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(W.muted60).rounded(W.radiusMd)
+            .padding(.horizontal, 8).padding(.bottom, 12)
+    }
+
+    private func addImap() {
+        dialogs.present("add-imap", width: 448) {
+            AddImapForm(onDone: { dialogs.dismiss("add-imap"); Task { await app.refreshAccounts() } }, onCancel: { dialogs.dismiss("add-imap") })
         }
     }
 }
 
 struct AccountBlock: View {
     let account: Account
+    var last = false
     @Environment(AppState.self) private var app
     @Environment(DialogState.self) private var dialogs
     @Environment(Toasts.self) private var toasts
@@ -220,10 +325,14 @@ struct AccountBlock: View {
     @State private var displayName = ""
     @State private var signature = ""
     @State private var saved = false
+    @State private var saving = false
     @State private var syncing = false
+    @State private var resetting = false
 
+    /// `statusOf` in Settings.tsx.
     private var status: (label: String, spin: Bool) {
         if account.isDomain { return ("Mailbox · receives via Cloudflare", false) }
+        if account.provider == "imap" && account.syncStatus == "idle" { return ("Mailbox · IMAP", false) }
         if account.syncStatus == "disconnected" { return ("Disconnected", false) }
         if account.syncStatus == "error" { return ("Sync error", false) }
         if !account.initialSyncDone { return ("Connecting", true) }
@@ -231,11 +340,10 @@ struct AccountBlock: View {
         return ("Synced", false)
     }
     private var dirty: Bool { signature != account.signature || displayName != account.displayName }
-    /// `Settings.tsx`: Outlook is handled like Gmail (synced, resettable, disconnectable);
-    /// IMAP is synced too but its server settings are edited on the web.
+    /// `isGmail` on the web: Outlook is handled like Gmail (synced, resettable, disconnectable).
+    /// An IMAP mailbox is a "Mailbox" — deleted rather than disconnected, its servers edited here.
     private var isGmail: Bool { account.provider == "gmail" || account.provider == "outlook" }
     private var isImap: Bool { account.provider == "imap" }
-    private var synced: Bool { isGmail || isImap }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -243,64 +351,428 @@ struct AccountBlock: View {
                 WAvatar(email: account.email, name: account.displayName, src: account.avatarURL, size: 24)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 8) {
-                        if app.accounts.count > 1 { AccountGlyph(glyph: app.glyph(for: account.id)) }
+                        if app.accounts.count > 1 { AccountGlyph(glyph: app.glyph(for: account.id), label: account.email) }
                         Text(account.email).font(W.font(14, 500)).lineLimit(1)
                         WBadge(isGmail ? "Gmail" : "Mailbox", variant: .outline, muted: true)
                     }
                     HStack(spacing: 6) {
                         if status.spin { Spinner(size: 11) }
                         Text(status.label)
-                        if synced, let at = account.lastSyncedAt { Text("· \(Fmt.relative(at))") }
+                        if isGmail, let at = account.lastSyncedAt { Text("· \(Fmt.relative(at))") }
                         if let e = account.syncError, !e.isEmpty { Text("· \(e)") }
-                        if account.syncStatus == "disconnected", !isImap { Button("Reconnect") { GoogleConnect.start(toasts: toasts, loginHint: account.email, provider: account.provider == "outlook" ? "microsoft" : "google") }.buttonStyle(.plain).underline() }
+                        // `/auth/google/start`, for any provider, with no hint — as the web links it.
+                        if account.syncStatus == "disconnected" { InlineLink(label: "Reconnect") { GoogleConnect.start(toasts: toasts) } }
                     }
                     .font(W.xs).monospacedDigit().foregroundStyle(W.mutedForeground)
+                    if isGmail && account.syncStatus != "disconnected" && account.photosSyncedAt == nil {
+                        HStack(spacing: 8) {
+                            Text("Reconnect Gmail to enable contact photos.")
+                            InlineLink(label: "Reconnect") { GoogleConnect.start(toasts: toasts, loginHint: account.email) }
+                        }
+                        .font(W.xs).foregroundStyle(W.mutedForeground)
+                    }
                 }
                 Spacer()
-                if synced {
+                if isGmail {
                     WButton("Sync", icon: "refreshCw", variant: .ghost, size: .sm, muted: true) {
                         syncing = true
-                        Task { defer { syncing = false }; do { let n = try await APIClient.shared.syncNow(accountID: account.id); toasts.show("Synced\(n.map { " · \($0) new" } ?? "")"); Mail.invalidate() } catch { toasts.error((error as? APIError)?.errorDescription ?? error.localizedDescription) } }
+                        Task { defer { syncing = false }; do { let n = try await APIClient.shared.syncNow(accountID: account.id); toasts.show("Synced\(n.map { " · \($0) new" } ?? "")"); Mail.invalidate() } catch { toasts.error(friendly(error)) } }
                     }
                     .disabled(syncing)
                 }
-                WButton("Edit", trailingIcon: "chevronDown", variant: .ghost, size: .sm, muted: true) { open.toggle() }
+                Button { open.toggle() } label: { HStack(spacing: 4) { Text("Edit"); OpenChevron(open: open) } }
+                    .buttonStyle(.web(.ghost, .sm, muted: true))
             }
-            .padding(.horizontal, 8).frame(height: 48)
+            .padding(.horizontal, 8).frame(minHeight: 48)
             if open {
-                VStack(alignment: .leading, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 6) { FieldLabel("Display name"); WTextField(placeholder: "Shown as the sender name", text: $displayName).frame(maxWidth: 384) }
-                    VStack(alignment: .leading, spacing: 6) { FieldLabel("Signature"); WTextArea(placeholder: "HTML allowed. Added under new messages.", text: $signature, minHeight: 72, fontSize: 12, mono: true) }
+                VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 6) { FieldLabel("Display name"); WTextField(placeholder: "Shown as the sender name", text: $displayName).frame(maxWidth: 384) }
+                        VStack(alignment: .leading, spacing: 6) { FieldLabel("Signature"); WTextArea(placeholder: "HTML allowed. Added under new messages.", text: $signature, minHeight: 72, fontSize: 12, mono: true) }
+                    }
                     HStack(spacing: 8) {
-                        WButton("Save", size: .sm) { save() }.disabled(!dirty)
+                        WButton("Save", size: .sm) { save() }.disabled(!dirty || saving)
                         SavedMark(show: saved && !dirty)
                         Spacer()
-                        if isImap { Text("Server settings are edited on the web.").font(W.xs).foregroundStyle(W.mutedForeground) }
-                        if synced {
-                            WButton("Start fresh", icon: "refreshCw", variant: .ghost, size: .sm, muted: true) {
-                                dialogs.confirm(title: "Start fresh with \(account.email)?", description: "This deletes everything heyflare has synced for this account — threads, contacts, screener decisions, clips, drafts. Gmail itself is untouched. New mail from now on will go through the Screener.", action: "Start fresh") {
-                                    Task { do { let e = try await APIClient.shared.resetAccount(account.id); if let e { toasts.error("Reset done, but the first sync failed: \(e)") } else { toasts.show("Starting fresh — watching for new mail from now on") }; await app.refreshAccounts(); Mail.invalidate() } catch { toasts.error(error.localizedDescription) } }
-                                }
-                            }
+                        if isImap {
+                            WButton("Server settings", icon: "slidersHorizontal", variant: .ghost, size: .sm, muted: true) { editImap() }
                         }
-                        WButton(synced ? "Disconnect" : "Delete mailbox", icon: synced ? "unplug" : "trash2", variant: .ghost, size: .sm, muted: true) {
-                            dialogs.confirm(title: synced ? "Disconnect \(account.email)?" : "Delete \(account.email)?", description: synced ? "This removes the account and all of its synced mail from heyflare. Nothing changes at the provider." : "This deletes the mailbox and every message stored in it. Mail sent to this address will bounce (or land in the domain's catch-all).", action: synced ? "Disconnect" : "Delete mailbox") {
-                                Task { do { try await APIClient.shared.deleteAccount(account.id); await app.refreshAccounts(); Mail.invalidate() } catch { toasts.error(error.localizedDescription) } }
+                        if isGmail {
+                            WButton("Start fresh", icon: "refreshCw", variant: .ghost, size: .sm, muted: true) {
+                                dialogs.confirm(title: "Start fresh with \(account.email)?", description: "This deletes everything heyflare has synced for this account — threads, contacts, screener decisions, clips, drafts. Gmail itself is untouched. New mail from now on will go through the Screener.", action: "Start fresh") { reset() }
+                            }
+                            .disabled(resetting)
+                        }
+                        WButton(isGmail ? "Disconnect" : "Delete mailbox", icon: isGmail ? "unplug" : "trash2", variant: .ghost, size: .sm, muted: true) {
+                            dialogs.confirm(title: isGmail ? "Disconnect \(account.email)?" : "Delete \(account.email)?", description: isGmail ? "This removes the account and all of its synced mail from heyflare. Nothing changes in Gmail." : "This deletes the mailbox and every message stored in it. Mail sent to this address will bounce (or land in the domain's catch-all).", action: isGmail ? "Disconnect" : "Delete mailbox") {
+                                Task { do { try await APIClient.shared.deleteAccount(account.id); await app.refreshAccounts(); Mail.invalidate() } catch { toasts.error(friendly(error)) } }
                             }
                         }
                     }
+                    .padding(.top, 12)
                 }
                 .padding(.leading, 44).padding(.trailing, 8).padding(.top, 8).padding(.bottom, 16)
             }
         }
-        .edgeLine(.bottom)
+        .edgeLine(.bottom, last ? Color.clear : W.border)
         .onAppear { displayName = account.displayName; signature = account.signature }
+        .onChange(of: account.displayName) { _, v in displayName = v }
+        .onChange(of: account.signature) { _, v in signature = v }
     }
 
     private func save() {
+        saving = true
         Task {
+            defer { saving = false }
             do { _ = try await APIClient.shared.updateAccount(account.id, displayName: displayName, signature: signature); await app.refreshAccounts(); saved = true; try? await Task.sleep(for: .seconds(2)); saved = false }
-            catch { toasts.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+            catch { toasts.error(friendly(error)) }
+        }
+    }
+
+    private func reset() {
+        resetting = true
+        Task {
+            defer { resetting = false }
+            do {
+                let e = try await APIClient.shared.resetAccount(account.id)
+                if let e { toasts.error("Reset done, but the first sync failed: \(e)") } else { toasts.show("Starting fresh — watching for new mail from now on") }
+                await app.refreshAccounts(); Mail.invalidate()
+            } catch { toasts.error(friendly(error)) }
+        }
+    }
+
+    private func editImap() {
+        dialogs.present("edit-imap-\(account.id)", width: 448) {
+            EditImapForm(account: account, onDone: { dialogs.dismiss("edit-imap-\(account.id)"); Task { await app.refreshAccounts() } }, onCancel: { dialogs.dismiss("edit-imap-\(account.id)") })
+        }
+    }
+}
+
+/// `EditImapDialog`: change an IMAP mailbox's server settings or password without losing its
+/// synced mail.
+private struct EditImapForm: View {
+    let account: Account
+    var onDone: () -> Void
+    var onCancel: () -> Void
+    @State private var imapHost = ""
+    @State private var smtpHost = ""
+    @State private var imapPort = "993"
+    @State private var smtpPort = "465"
+    @State private var password = ""
+    @State private var loaded = false
+    @State private var saving = false
+    @State private var testing = false
+
+    var body: some View {
+        FormDialog(title: "Edit \(account.email)", description: "Checked against both servers before anything is saved. Your mail is kept.") {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    FieldLabel("Password")
+                    WTextField(placeholder: "Leave blank to keep the current one", text: $password, secure: true)
+                    FieldDesc("Set this when your provider's app password has been rotated.")
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    FieldLabel("IMAP server")
+                    HStack(spacing: 8) { WTextField(placeholder: "", text: $imapHost); WTextField(placeholder: "", text: $imapPort).frame(width: 96) }
+                    FieldDesc("993 for implicit TLS, or 143 for STARTTLS.")
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    FieldLabel("SMTP server")
+                    HStack(spacing: 8) { WTextField(placeholder: "", text: $smtpHost); WTextField(placeholder: "", text: $smtpPort).frame(width: 96) }
+                    FieldDesc("465 for implicit TLS, 587 for STARTTLS. Port 25 is blocked by Cloudflare.")
+                }
+                HStack {
+                    Button { test() } label: { HStack(spacing: 4) { if testing { Spinner(size: 14) }; Text("Test stored credentials") } }
+                        .buttonStyle(.web(.outline, .sm)).disabled(testing)
+                }
+            }
+        } footer: {
+            WButton("Cancel", variant: .ghost, action: onCancel)
+            Button { submit() } label: { HStack(spacing: 6) { if saving { Spinner(size: 16) }; Text("Save") } }
+                .buttonStyle(.web(.default, .default)).disabled(!loaded || saving)
+        }
+        .task {
+            do {
+                let r = try await APIClient.shared.imapSettings(accountID: account.id)
+                imapHost = r.imapHost; imapPort = String(r.imapPort); smtpHost = r.smtpHost; smtpPort = String(r.smtpPort)
+                loaded = true
+            } catch { Toasts.shared.error(friendly(error)) }
+        }
+    }
+
+    private func submit() {
+        let ip = Int(imapPort) ?? 993, sp = Int(smtpPort) ?? 465
+        var body: [String: Any] = [
+            "imap_host": imapHost.trimmingCharacters(in: .whitespaces), "imap_port": ip, "imap_security": ip == 143 ? "starttls" : "tls",
+            "smtp_host": smtpHost.trimmingCharacters(in: .whitespaces), "smtp_port": sp, "smtp_security": sp == 587 ? "starttls" : "tls",
+        ]
+        let pw = password.trimmingCharacters(in: .whitespaces)
+        if !pw.isEmpty { body["password"] = pw }
+        saving = true
+        Task {
+            defer { saving = false }
+            do { _ = try await APIClient.shared.updateImapAccount(account.id, body); Toasts.shared.show("\(account.email) updated"); onDone() }
+            catch { Toasts.shared.show("Couldn't connect", description: friendly(error), kind: .error, duration: 12) }
+        }
+    }
+
+    private func test() {
+        testing = true
+        Task {
+            defer { testing = false }
+            do {
+                let r = try await APIClient.shared.testImapAccount(account.id)
+                if r.ok { Toasts.shared.show("Both servers answered") } else { Toasts.shared.error(r.error ?? "Failed") }
+            } catch { Toasts.shared.error(friendly(error)) }
+        }
+    }
+}
+
+/// Common providers, so nobody has to look up host names. "Other" leaves the fields blank for
+/// a cPanel-style webmail host, which is usually mail.<your-domain>.
+private struct ImapPreset {
+    let id: String
+    let label: String
+    let imapHost: String
+    let smtpHost: String
+    var note: String? = nil
+
+    static let all: [ImapPreset] = [
+        ImapPreset(id: "zoho", label: "Zoho Mail (personal @zohomail.com)", imapHost: "imap.zoho.com", smtpHost: "smtp.zoho.com", note: "Enable IMAP under Settings → Mail Accounts, and use an app password if two-factor is on. IMAP needs a paid plan — the free plan is browser-only."),
+        ImapPreset(id: "zoho-pro", label: "Zoho Mail (your own domain)", imapHost: "imappro.zoho.com", smtpHost: "smtppro.zoho.com", note: "Organisation accounts on a custom domain use the 'pro' servers. On a non-US data centre swap .com for .eu, .in or .com.au."),
+        ImapPreset(id: "fastmail", label: "Fastmail", imapHost: "imap.fastmail.com", smtpHost: "smtp.fastmail.com", note: "Create an app password in Fastmail under Settings → Privacy & Security."),
+        ImapPreset(id: "migadu", label: "Migadu", imapHost: "imap.migadu.com", smtpHost: "smtp.migadu.com"),
+        ImapPreset(id: "other", label: "Other / webmail", imapHost: "", smtpHost: "", note: "For cPanel-style hosting this is usually mail.yourdomain.com on 993 and 465."),
+    ]
+}
+
+/// `AddImapDialog`: any mailbox that speaks IMAP and SMTP.
+private struct AddImapForm: View {
+    var onDone: () -> Void
+    var onCancel: () -> Void
+    @State private var preset = "zoho"
+    @State private var email = ""
+    @State private var name = ""
+    @State private var password = ""
+    @State private var imapHost = "imap.zoho.com"
+    @State private var smtpHost = "smtp.zoho.com"
+    @State private var imapPort = "993"
+    @State private var smtpPort = "465"
+    @State private var advanced = false
+    @State private var busy = false
+
+    private var ready: Bool { !email.trimmingCharacters(in: .whitespaces).isEmpty && !password.isEmpty && !imapHost.trimmingCharacters(in: .whitespaces).isEmpty && !smtpHost.trimmingCharacters(in: .whitespaces).isEmpty }
+    private var note: String? { ImapPreset.all.first { $0.id == preset }?.note }
+
+    var body: some View {
+        FormDialog(title: "Add a mailbox", description: "Connect any mailbox that speaks IMAP and SMTP — Zoho, Fastmail, Migadu or your own webmail.") {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    FieldLabel("Provider")
+                    WSelect(id: "imap-preset", options: ImapPreset.all.map { WSelectOption($0.id, $0.label) }, value: Binding(get: { preset }, set: { pick($0) }), fullWidth: true, filled: true)
+                    if let note { FieldDesc(note) }
+                }
+                VStack(alignment: .leading, spacing: 8) { FieldLabel("Email address"); WTextField(placeholder: "you@example.com", text: $email, onSubmit: { if ready { submit() } }) }
+                VStack(alignment: .leading, spacing: 8) { FieldLabel("Display name"); WTextField(placeholder: "Sanjay", text: $name, onSubmit: { if ready { submit() } }) }
+                VStack(alignment: .leading, spacing: 8) {
+                    FieldLabel("Password")
+                    WTextField(placeholder: "App password", text: $password, secure: true, onSubmit: { if ready { submit() } })
+                    FieldDesc("Stored encrypted on your server and never shown again. Use an app-specific password where your provider offers one.")
+                }
+                HStack(alignment: .center, spacing: 8) {
+                    WSwitch(on: $advanced)
+                    VStack(alignment: .leading, spacing: 2) {
+                        FieldLabel("Server settings")
+                        FieldDesc("Only needed for a host that is not in the list above.")
+                    }
+                }
+                if advanced {
+                    VStack(alignment: .leading, spacing: 8) {
+                        FieldLabel("IMAP server")
+                        HStack(spacing: 8) { WTextField(placeholder: "imap.example.com", text: $imapHost); WTextField(placeholder: "", text: $imapPort).frame(width: 96) }
+                        FieldDesc("993 for implicit TLS, or 143 for STARTTLS.")
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        FieldLabel("SMTP server")
+                        HStack(spacing: 8) { WTextField(placeholder: "smtp.example.com", text: $smtpHost); WTextField(placeholder: "", text: $smtpPort).frame(width: 96) }
+                        FieldDesc("465 for implicit TLS, or 587 for STARTTLS. Port 25 is blocked by Cloudflare and cannot be used.")
+                    }
+                }
+            }
+        } footer: {
+            WButton("Cancel", variant: .ghost, action: onCancel)
+            Button { submit() } label: { HStack(spacing: 6) { if busy { Spinner(size: 16) }; Text("Connect") } }
+                .buttonStyle(.web(.default, .default)).disabled(!ready || busy)
+        }
+    }
+
+    private func pick(_ id: String) {
+        guard let p = ImapPreset.all.first(where: { $0.id == id }) else { return }
+        preset = id
+        imapHost = p.imapHost; smtpHost = p.smtpHost
+        imapPort = "993"; smtpPort = "465"
+    }
+
+    private func submit() {
+        // 143 and 587 mean STARTTLS; anything else is implicit TLS — the web's port handlers.
+        let ip = Int(imapPort) ?? 993, sp = Int(smtpPort) ?? 465
+        let body: [String: Any] = [
+            "email": email.trimmingCharacters(in: .whitespaces).lowercased(),
+            "display_name": name.trimmingCharacters(in: .whitespaces),
+            "imap_host": imapHost.trimmingCharacters(in: .whitespaces), "imap_port": ip, "imap_security": ip == 143 ? "starttls" : "tls",
+            "smtp_host": smtpHost.trimmingCharacters(in: .whitespaces), "smtp_port": sp, "smtp_security": sp == 587 ? "starttls" : "tls",
+            "password": password,
+        ]
+        busy = true
+        Task {
+            defer { busy = false }
+            do { let a = try await APIClient.shared.createImapAccount(body); Toasts.shared.show("\(a.email) is connected"); onDone() }
+            catch { Toasts.shared.show("Couldn't connect", description: friendly(error), kind: .error, duration: 12) }
+        }
+    }
+}
+
+// MARK: - Provider credentials
+
+private struct ProviderMeta {
+    let name: String
+    let hint: String
+    let secret: String
+    static func of(_ provider: String) -> ProviderMeta {
+        provider == "microsoft"
+            ? ProviderMeta(name: "Microsoft", hint: "Application (client) ID and a client secret from your Entra app registration.", secret: "MS_CLIENT_SECRET")
+            : ProviderMeta(name: "Google", hint: "Client ID and secret from the Google Cloud OAuth client.", secret: "GOOGLE_CLIENT_SECRET")
+    }
+}
+
+/// `ConnectorCredentialsSection`: the OAuth apps heyflare uses to connect Gmail and Outlook.
+private struct ConnectorCredentialsSection: View {
+    @State private var rows: [OAuthCredentialStatus] = []
+    @State private var loading = true
+
+    var body: some View {
+        SettingsSection(title: "Provider credentials", description: "The OAuth apps heyflare uses to connect Gmail and Outlook. Rotate a secret here without redeploying.") {
+            if loading {
+                SkeletonBlock(height: 64).padding(.horizontal, 8).padding(.vertical, 8)
+            } else {
+                ForEach(rows) { c in CredentialRow(c: c, last: c.id == rows.last?.id, reload: load) }
+            }
+        }
+        .task { await load() }
+    }
+
+    private func load() async {
+        do { rows = try await APIClient.shared.oauthCredentials() } catch { Toasts.shared.error(friendly(error)) }
+        loading = false
+    }
+}
+
+private struct CredentialRow: View {
+    let c: OAuthCredentialStatus
+    var last = false
+    var reload: () async -> Void
+    @Environment(AppState.self) private var app
+    @State private var takingOver = false
+    @State private var clientID = ""
+    @State private var secret = ""
+    @State private var dirty = false
+    @State private var saving = false
+
+    private var meta: ProviderMeta { ProviderMeta.of(c.provider) }
+    // A Worker secret is used by default, but you can take over here — otherwise a deployment
+    // set up with `wrangler secret put` could never rotate an expiring secret without the CLI.
+    private var managed: Bool { c.source == "env" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text(meta.name).font(W.font(14, 500))
+                if c.configured { WBadge("Connected", variant: .secondary) } else { WBadge("Not set", variant: .outline) }
+                if managed { WBadge("Worker secret", variant: .outline) }
+                if c.overriding { WBadge("Overriding Worker secret", variant: .outline) }
+            }
+            .padding(.bottom, 8)
+            if managed && !takingOver {
+                VStack(alignment: .leading, spacing: 8) {
+                    (Text("Currently using the ") + Text(meta.secret).font(W.mono(12)) + Text(" Worker secret. Rotate it with ") + Text("wrangler secret put").font(W.mono(12)) + Text(", or manage it here instead."))
+                        .font(W.s13).foregroundStyle(W.mutedForeground).fixedSize(horizontal: false, vertical: true)
+                    WButton("Manage here instead", variant: .outline, size: .sm) { takingOver = true; clientID = c.clientID }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        FieldLabel("Client ID")
+                        WTextField(placeholder: "", text: $clientID).onChange(of: clientID) { _, _ in dirty = true }
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        FieldLabel("Client secret")
+                        WTextField(placeholder: c.secretHint.isEmpty ? "Client secret" : "Stored · \(c.secretHint)", text: $secret, secure: true).onChange(of: secret) { _, _ in dirty = true }
+                        HStack(alignment: .top, spacing: 8) {
+                            FieldDesc("\(meta.hint) Encrypted on your server and never shown again.")
+                            if !c.secretHint.isEmpty {
+                                Button("Remove") { removeSecret() }.buttonStyle(.plain).underline().font(W.sm).foregroundStyle(W.mutedForeground)
+                            }
+                        }
+                    }
+                    if managed && takingOver {
+                        Text("Saving will use these credentials instead of the Worker secret. Enter both a client ID and a secret.")
+                            .font(W.s13).fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(W.muted60).rounded(W.radiusMd)
+                    }
+                    HStack(spacing: 8) {
+                        Button { submit() } label: { HStack(spacing: 4) { if saving { Spinner(size: 14) }; Text("Save") } }
+                            .buttonStyle(.web(.default, .sm)).disabled(saving || (!dirty && secret.isEmpty))
+                        if takingOver { WButton("Cancel", variant: .ghost, size: .sm) { takingOver = false; secret = ""; dirty = false } }
+                        if c.overriding { WButton("Use the Worker secret", variant: .ghost, size: .sm) { revert() }.disabled(saving) }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 8).padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .edgeLine(.bottom, last ? Color.clear : W.border)
+        .onAppear { clientID = c.clientID }
+        // Without edits in flight, the field follows the server; with them, it keeps the typing.
+        .onChange(of: c.clientID) { _, v in if !dirty { clientID = v } }
+    }
+
+    private func finish() async {
+        await reload()
+        // `googleConfigured` / `microsoftConfigured` come with `/api/me`, which the web invalidates too.
+        await app.loadSession()
+    }
+
+    private func submit() {
+        saving = true
+        Task {
+            defer { saving = false }
+            do {
+                let s = secret.trimmingCharacters(in: .whitespaces)
+                _ = try await APIClient.shared.saveOAuthCredential(provider: c.provider, clientID: clientID.trimmingCharacters(in: .whitespaces), clientSecret: s.isEmpty ? nil : .some(s))
+                Toasts.shared.show("\(meta.name) credentials saved"); secret = ""; dirty = false; takingOver = false
+                await finish()
+            } catch { Toasts.shared.error(friendly(error)) }
+        }
+    }
+
+    private func revert() {
+        saving = true
+        Task {
+            defer { saving = false }
+            do {
+                _ = try await APIClient.shared.saveOAuthCredential(provider: c.provider, overrideEnv: false)
+                Toasts.shared.show("Using the Worker secret for \(meta.name) again"); takingOver = false
+                await finish()
+            } catch { Toasts.shared.error(friendly(error)) }
+        }
+    }
+
+    private func removeSecret() {
+        Task {
+            do { _ = try await APIClient.shared.saveOAuthCredential(provider: c.provider, clientSecret: .some(nil)); Toasts.shared.show("Secret removed"); await finish() }
+            catch { Toasts.shared.error(friendly(error)) }
         }
     }
 }
@@ -321,9 +793,10 @@ struct DomainsSection: View {
             if loading { VStack(spacing: 8) { SkeletonBlock(height: 32); SkeletonBlock(width: 400, height: 32) }.padding(.horizontal, 8) }
             if let error { Text(error).font(W.s13).foregroundStyle(W.mutedForeground).padding(.horizontal, 8) }
             if !loading && domains.isEmpty && error == nil {
-                Text("No domains yet. Add one that lives on your Cloudflare account, then create mailboxes like you@yourdomain.com.").font(W.s13).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 8)
+                (Text("No domains yet. Add one that lives on your Cloudflare account, then create mailboxes like ") + Text("you@yourdomain.com").font(W.mono(12)) + Text("."))
+                    .font(W.s13).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 8)
             }
-            ForEach(domains) { d in DomainBlock(domain: d, reload: load) }
+            ForEach(domains) { d in DomainBlock(domain: d, last: d.id == domains.last?.id, reload: load) }
         }
         .task { await load() }
     }
@@ -331,7 +804,7 @@ struct DomainsSection: View {
     private func load() async {
         loading = true
         defer { loading = false }
-        do { domains = try await APIClient.shared.domains(); error = nil } catch { self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription }
+        do { domains = try await APIClient.shared.domains(); error = nil } catch { self.error = friendly(error) }
     }
 
     private func addDomain() {
@@ -347,26 +820,27 @@ private struct AddDomainForm: View {
     @State private var name = ""
     @State private var error: String?
     @State private var busy = false
-    /// The worker answers 409 `mx_in_use` when the domain's mail goes elsewhere; then the
-    /// takeover has to be spelled out and ticked, as on the web.
-    @State private var mxInUse = false
+    /// The worker answers 409 `mx_in_use` when the domain's mail goes elsewhere, naming the
+    /// hosts; then the takeover has to be spelled out and ticked, as on the web.
+    @State private var mx: [String]?
     @State private var confirm = false
     var body: some View {
         FormDialog(title: "Add a domain", description: "The domain must be on your Cloudflare account with Cloudflare nameservers.") {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
                     FieldLabel("Domain")
                     WTextField(placeholder: "example.com", text: $name, onSubmit: { submit() }, autofocus: true)
-                        .onChange(of: name) { _, _ in mxInUse = false; confirm = false }
-                    if let error { Text(error).font(W.xs) }
+                        .onChange(of: name) { _, _ in mx = nil; confirm = false }
+                    if let error { Text(error).font(W.sm).webLine(14).foregroundStyle(W.foreground).fixedSize(horizontal: false, vertical: true) }
                 }
-                if mxInUse {
+                if let mx {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(alignment: .top, spacing: 8) {
                             Icon("triangleAlert", size: 16).padding(.top, 2)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("This will take over ALL mail for \(name.trimmingCharacters(in: .whitespaces).lowercased()).").font(W.font(14, 500))
-                                Text("It currently goes to another provider. Enabling Cloudflare Email Routing replaces those MX records, so mail stops arriving there.").font(W.s13).foregroundStyle(W.mutedForeground)
+                                (Text("It currently goes to ") + hosts(mx) + Text(". Enabling Cloudflare Email Routing replaces those MX records, so mail stops arriving there."))
+                                    .font(W.s13).foregroundStyle(W.mutedForeground).fixedSize(horizontal: false, vertical: true)
                             }
                         }
                         HStack(alignment: .top, spacing: 8) {
@@ -379,33 +853,42 @@ private struct AddDomainForm: View {
             }
         } footer: {
             WButton("Cancel", variant: .ghost, action: onCancel)
-            WButton(mxInUse ? "Take over domain" : "Add domain") { submit() }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || busy || (mxInUse && !confirm))
+            WButton(mx != nil ? "Take over domain" : "Add domain") { submit() }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || busy || (mx != nil && !confirm))
         }
     }
+
+    /// The MX hosts in mono, comma-separated; "another provider" when the worker named none.
+    private func hosts(_ mx: [String]) -> Text {
+        guard !mx.isEmpty else { return Text("another provider") }
+        return mx.enumerated().reduce(Text("")) { acc, pair in
+            acc + Text(pair.element).font(W.mono(12)) + Text(pair.offset < mx.count - 1 ? ", " : "")
+        }
+    }
+
     private func submit() {
-        guard !(mxInUse && !confirm) else { return }
+        guard !name.trimmingCharacters(in: .whitespaces).isEmpty, !(mx != nil && !confirm) else { return }
         busy = true
+        error = nil
         Task {
             defer { busy = false }
             do {
-                var body: [String: Any] = ["name": name.trimmingCharacters(in: .whitespaces).lowercased()]
-                if mxInUse { body["confirm"] = true }
-                let d = try await APIClient.shared.post("/api/domains", body: body, as: MailDomain.self, scoped: false)
+                let d = try await APIClient.shared.createDomain(name: name.trimmingCharacters(in: .whitespaces).lowercased(), confirm: mx != nil ? confirm : nil)
                 Toasts.shared.show(d.status == "active" ? "\(d.name) is receiving mail" : "\(d.name) added — finish the setup steps")
                 onDone()
-            } catch let e as APIError {
-                if case .server(let code, _) = e, code == "mx_in_use" { mxInUse = true; confirm = false; error = nil }
-                else { self.error = e.errorDescription }
-            } catch { self.error = error.localizedDescription }
+            } catch let e as DomainMxInUse {
+                mx = e.mx; confirm = false
+            } catch { self.error = friendly(error) }
         }
     }
 }
 
 private struct DomainBlock: View {
     let domain: MailDomain
+    var last = false
     var reload: () async -> Void
     @Environment(DialogState.self) private var dialogs
     @Environment(AppState.self) private var app
+    /// Open from the start while there is something to do: not yet active, or no mailbox.
     @State private var open = false
     @State private var verifying = false
 
@@ -423,76 +906,138 @@ private struct DomainBlock: View {
                     Text("\(domain.mailboxes.count) mailbox\(domain.mailboxes.count == 1 ? "" : "es")\(domain.error.map { " · \($0)" } ?? "")").font(W.xs).monospacedDigit().foregroundStyle(W.mutedForeground)
                 }
                 Spacer()
-                WButton("Verify", icon: "refreshCw", variant: .ghost, size: .sm, muted: true) {
-                    verifying = true
-                    Task { defer { verifying = false }; do { let r = try await APIClient.shared.verifyDomain(domain.id); Toasts.shared.show(r.status == "active" ? "\(domain.name) is receiving mail" : "\(domain.name): \(r.error ?? "still pending")"); await reload() } catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) } }
+                HStack(spacing: 4) {
+                    Button { verify() } label: { HStack(spacing: 4) { SpinIcon(name: "refreshCw", spinning: verifying); Text("Verify") } }
+                        .buttonStyle(.web(.ghost, .sm, muted: true)).disabled(verifying)
+                    Button { open.toggle() } label: { HStack(spacing: 4) { Text("Details"); OpenChevron(open: open) } }
+                        .buttonStyle(.web(.ghost, .sm, muted: true))
                 }
-                .disabled(verifying)
-                WButton("Details", trailingIcon: "chevronDown", variant: .ghost, size: .sm, muted: true) { open.toggle() }
             }
             .padding(.horizontal, 8).padding(.vertical, 8)
-            if open {
-                VStack(alignment: .leading, spacing: 20) {
-                    if domain.routing != "enabled", !domain.instructions.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Set up receiving").font(W.font(12, 500)).foregroundStyle(W.mutedForeground)
-                            ForEach(Array(domain.instructions.filter { !$0.hasPrefix("Outbound") }.enumerated()), id: \.offset) { i, s in
-                                HStack(alignment: .top, spacing: 8) { Text("\(i + 1).").monospacedDigit(); Text(s) }.font(W.s13).foregroundStyle(W.foreground90)
-                            }
-                        }
+            if open { details }
+        }
+        .edgeLine(.bottom, last ? Color.clear : W.border)
+        .onAppear { open = domain.status != "active" || domain.mailboxes.isEmpty }
+    }
+
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            if domain.routing != "enabled", !domain.instructions.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Set up receiving").font(W.font(12, 500)).foregroundStyle(W.mutedForeground)
+                    ForEach(Array(domain.instructions.filter { !$0.hasPrefix("Outbound") }.enumerated()), id: \.offset) { i, s in
+                        HStack(alignment: .top, spacing: 8) { Text("\(i + 1).").monospacedDigit(); Text(s) }.font(W.s13).foregroundStyle(W.foreground90)
                     }
-                    if domain.routing != "enabled", !domain.dns.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("DNS records Cloudflare adds when Email Routing is enabled").font(W.font(12, 500)).foregroundStyle(W.mutedForeground)
-                            VStack(spacing: 0) {
-                                ForEach(Array(domain.dns.enumerated()), id: \.offset) { _, r in
-                                    HStack(spacing: 12) {
-                                        Text(r.type).frame(width: 56, alignment: .leading)
-                                        Text(r.name).lineLimit(1).frame(width: 160, alignment: .leading)
-                                        Text(r.content).lineLimit(1).help(r.content)
-                                        Spacer()
-                                        Text(r.priority.map { "\($0)" } ?? "").frame(width: 40)
-                                        WButton(icon: "copy", variant: .ghost, size: .iconXs, muted: true, help: "Copy") { Platform.copy(r.content) }
-                                    }
-                                    .font(W.mono(12)).padding(.horizontal, 8).frame(height: 28)
-                                }
-                            }
-                            .padding(.vertical, 4).background(W.muted40).rounded(W.radiusMd)
-                        }
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("Mailboxes").font(W.font(12, 500)).foregroundStyle(W.mutedForeground)
-                            Spacer()
-                            WButton("New mailbox", icon: "plus", variant: .ghost, size: .sm, muted: true) { newMailbox() }
-                        }
-                        if domain.mailboxes.isEmpty { Text("No mailboxes yet. Create one to start receiving.").font(W.s13).foregroundStyle(W.mutedForeground).padding(.vertical, 4) }
-                        ForEach(domain.mailboxes) { m in
-                            HStack(spacing: 10) {
-                                WAvatar(email: m.email, name: m.displayName, src: m.avatarURL, size: 20)
-                                Text(m.email).font(W.sm).lineLimit(1)
-                                if !m.displayName.isEmpty { Text("· \(m.displayName)").font(W.sm).foregroundStyle(W.mutedForeground) }
-                                if domain.catchAllAccountID == m.id { WBadge("catch-all", variant: .secondary, muted: true) }
-                            }
-                            .frame(height: 36)
-                        }
-                        if !domain.mailboxes.isEmpty { Text("Signatures, display names and deletion live under Accounts.").font(W.xs).foregroundStyle(W.mutedForeground).padding(.top, 4) }
-                    }
-                    Text(domain.sending == "cloudflare" ? "Outbound mail from these mailboxes goes through Cloudflare Email Sending." : domain.sending == "resend" ? "Outbound mail from these mailboxes goes through Resend. Make sure \(domain.name) is verified there." : "Outbound isn't configured yet, so these mailboxes can receive but not send. Enable Cloudflare Email Sending (Workers Paid) and add the send_email binding, or set a RESEND_API_KEY secret — see README → Custom domain mailboxes.")
-                        .font(W.s13).foregroundStyle(W.mutedForeground)
-                    HStack { Spacer(); WButton("Remove domain", icon: "trash2", variant: .ghost, size: .sm, muted: true) {
-                        dialogs.confirm(title: "Remove \(domain.name)?", description: "Deletes every mailbox on it and all of their mail from heyflare. Email Routing on Cloudflare is left as it is.", action: "Remove domain") {
-                            Task {
-                                do { try await APIClient.shared.delete("/api/domains/\(domain.id)", scoped: false) } catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
-                                await reload(); await app.refreshAccounts()
-                            }
-                        }
-                    } }
                 }
-                .padding(.leading, 36).padding(.trailing, 8).padding(.bottom, 20)
+            }
+            if domain.routing != "enabled", !domain.dns.isEmpty { dnsTable }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Mailboxes").font(W.font(12, 500)).foregroundStyle(W.mutedForeground)
+                    Spacer()
+                    WButton("New mailbox", icon: "plus", variant: .ghost, size: .sm, muted: true) { newMailbox() }
+                }
+                if domain.mailboxes.isEmpty { Text("No mailboxes yet. Create one to start receiving.").font(W.s13).foregroundStyle(W.mutedForeground).padding(.vertical, 4) }
+                ForEach(domain.mailboxes) { m in
+                    HStack(spacing: 10) {
+                        WAvatar(email: m.email, name: m.displayName, src: m.avatarURL, size: 20)
+                        Text(m.email).font(W.sm).lineLimit(1)
+                        if !m.displayName.isEmpty { Text("· \(m.displayName)").font(W.sm).foregroundStyle(W.mutedForeground) }
+                        if domain.catchAllAccountID == m.id { WBadge("catch-all", variant: .secondary, muted: true) }
+                    }
+                    .frame(height: 36)
+                }
+                if !domain.mailboxes.isEmpty { Text("Signatures, display names and deletion live under Accounts.").font(W.xs).foregroundStyle(W.mutedForeground).padding(.top, 4) }
+            }
+            HStack(alignment: .center, spacing: 24) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Catch-all mailbox").font(W.sm)
+                    Text("Where mail to unknown addresses on \(domain.name) goes. Off means it bounces.").font(W.xs).foregroundStyle(W.mutedForeground)
+                }
+                Spacer()
+                WSelect(id: "catch-all-\(domain.id)",
+                        options: [WSelectOption("none", "Off (bounce)")] + domain.mailboxes.map { WSelectOption($0.id, $0.email) },
+                        value: Binding(get: { domain.catchAllAccountID ?? "none" }, set: { setCatchAll($0) }),
+                        size: .sm, minWidth: 160, align: .end)
+            }
+            sendingNote
+            HStack { Spacer(); WButton("Remove domain", icon: "trash2", variant: .ghost, size: .sm, muted: true) {
+                dialogs.confirm(title: "Remove \(domain.name)?", description: "Deletes every mailbox on it and all of their mail from heyflare. Email Routing on Cloudflare is left as it is.", action: "Remove domain") {
+                    Task {
+                        do { try await APIClient.shared.delete("/api/domains/\(domain.id)", scoped: false) } catch { Toasts.shared.error(friendly(error)) }
+                        await reload(); await app.refreshAccounts()
+                    }
+                }
+            } }
+        }
+        .padding(.leading, 36).padding(.trailing, 8).padding(.bottom, 20)
+    }
+
+    /// The web's `Table`: a 28pt muted header, 24pt mono rows, Type 64 / Name ≤160 /
+    /// Content ≤260 / Prio 56 / copy 32, every cell `px-2`.
+    private var dnsTable: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("DNS records Cloudflare adds when Email Routing is enabled").font(W.font(12, 500)).foregroundStyle(W.mutedForeground)
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    dnsHead("Type").frame(width: 64, alignment: .leading)
+                    dnsHead("Name").frame(width: 160, alignment: .leading)
+                    dnsHead("Content").frame(maxWidth: 260, alignment: .leading)
+                    Spacer(minLength: 0)
+                    dnsHead("Prio").frame(width: 56, alignment: .leading)
+                    Color.clear.frame(width: 32)
+                }
+                .frame(height: 28)
+                ForEach(Array(domain.dns.enumerated()), id: \.offset) { _, r in
+                    HStack(spacing: 0) {
+                        dnsCell(r.type).frame(width: 64, alignment: .leading)
+                        dnsCell(r.name).frame(width: 160, alignment: .leading)
+                        dnsCell(r.content).help(r.content).frame(maxWidth: 260, alignment: .leading)
+                        Spacer(minLength: 0)
+                        dnsCell(r.priority.map { "\($0)" } ?? "").frame(width: 56, alignment: .leading)
+                        CopyButton(text: r.content).frame(width: 32)
+                    }
+                    .frame(height: 24)
+                }
+            }
+            .background(W.muted40).rounded(W.radiusMd)
+        }
+    }
+
+    private func dnsHead(_ s: String) -> some View { Text(s).font(W.xs).foregroundStyle(W.mutedForeground).padding(.horizontal, 8) }
+    private func dnsCell(_ s: String) -> some View { Text(s).font(W.mono(12)).monospacedDigit().lineLimit(1).truncationMode(.tail).padding(.horizontal, 8) }
+
+    private var sendingNote: some View {
+        Group {
+            if domain.sending == "cloudflare" {
+                Text("Outbound mail from these mailboxes goes through Cloudflare Email Sending.")
+            } else if domain.sending == "resend" {
+                Text("Outbound mail from these mailboxes goes through Resend. Make sure \(domain.name) is verified there.")
+            } else {
+                Text("Outbound isn't configured yet, so these mailboxes can receive but not send. Enable Cloudflare Email Sending (Workers Paid) and add the ")
+                    + Text("send_email").font(W.mono(12))
+                    + Text(" binding, or set a ")
+                    + Text("RESEND_API_KEY").font(W.mono(12))
+                    + Text(" secret — see README → Custom domain mailboxes.")
             }
         }
-        .edgeLine(.bottom)
+        .font(W.s13).foregroundStyle(W.mutedForeground).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func verify() {
+        verifying = true
+        Task {
+            defer { verifying = false }
+            do { let r = try await APIClient.shared.verifyDomain(domain.id); Toasts.shared.show(r.status == "active" ? "\(domain.name) is receiving mail" : "\(domain.name): \(r.error ?? "still pending")"); await reload() }
+            catch { Toasts.shared.error(friendly(error)) }
+        }
+    }
+
+    private func setCatchAll(_ v: String) {
+        Task {
+            do { _ = try await APIClient.shared.setDomainCatchAll(domain.id, accountID: v == "none" ? nil : v); await reload() }
+            catch { Toasts.shared.error(friendly(error)) }
+        }
     }
 
     private func newMailbox() {
@@ -508,97 +1053,112 @@ private struct NewMailboxForm: View {
     var onCancel: () -> Void
     @State private var local = ""
     @State private var name = ""
+    /// A domain's first mailbox is the catch-all unless untickd.
+    @State private var catchAll = false
     @State private var busy = false
+
+    /// `pattern="[A-Za-z0-9._+\-]{1,64}"` — checked by the browser on Enter, not on the button.
+    private var validLocal: Bool { local.range(of: "^[A-Za-z0-9._+\\-]{1,64}$", options: .regularExpression) != nil }
+
     var body: some View {
         FormDialog(title: "New mailbox on \(domain.name)", description: "Mail to this address lands in your unified Imbox like any other account.") {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
                     FieldLabel("Address")
                     HStack(spacing: 0) {
                         WTextFieldPlain(placeholder: "hello", text: $local, autofocus: true).padding(.leading, 10)
+                            .onSubmit { if !local.trimmingCharacters(in: .whitespaces).isEmpty && validLocal { submit() } }
                         Text("@\(domain.name)").font(W.sm).foregroundStyle(W.mutedForeground).padding(.trailing, 10)
                     }
                     .frame(height: 32).background(W.input).rounded(W.radiusMd)
-                    Text("Letters, numbers, dots, dashes, plus or underscores.").font(W.xs).foregroundStyle(W.mutedForeground)
+                    FieldDesc("Letters, numbers, dots, dashes, plus or underscores.")
                 }
-                VStack(alignment: .leading, spacing: 6) { FieldLabel("Display name"); WTextField(placeholder: "Farhan", text: $name) }
+                VStack(alignment: .leading, spacing: 8) { FieldLabel("Display name"); WTextField(placeholder: "Farhan", text: $name) }
+                HStack(alignment: .center, spacing: 8) {
+                    WSwitch(on: $catchAll)
+                    VStack(alignment: .leading, spacing: 2) {
+                        FieldLabel("Catch-all")
+                        FieldDesc("Also receive mail sent to any other address on \(domain.name).")
+                    }
+                }
             }
         } footer: {
             WButton("Cancel", variant: .ghost, action: onCancel)
-            WButton("Create mailbox") {
-                busy = true
-                Task { defer { busy = false }; do { let a = try await APIClient.shared.createMailbox(domainID: domain.id, localPart: local.trimmingCharacters(in: .whitespaces).lowercased(), displayName: name.trimmingCharacters(in: .whitespaces)); Toasts.shared.show("\(a.email) is ready"); onDone() } catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) } }
-            }
-            .disabled(local.trimmingCharacters(in: .whitespaces).isEmpty || busy)
+            WButton("Create mailbox") { submit() }.disabled(local.trimmingCharacters(in: .whitespaces).isEmpty || busy)
+        }
+        .onAppear { catchAll = domain.mailboxes.isEmpty }
+    }
+
+    private func submit() {
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                let a = try await APIClient.shared.createMailbox(domainID: domain.id, localPart: local.trimmingCharacters(in: .whitespaces).lowercased(), displayName: name.trimmingCharacters(in: .whitespaces), catchAll: catchAll)
+                Toasts.shared.show("\(a.email) is ready"); onDone()
+            } catch { Toasts.shared.error(friendly(error)) }
         }
     }
 }
 
 // MARK: - Calendar
 
-/// `CalendarSettingsSection.tsx`: the calendars list grouped by who owns them, then the
-/// calendar-wide preferences. Connecting, disconnecting or subscribing to a new source still
-/// happens on the web — those are one-time flows through Google's own consent screen — but
-/// everything about a calendar heyflare already has (shown, coloured, named, made default,
-/// synced, removed) is exactly what the web offers, writing to the same `/api/calendar` the
-/// web does, which is what makes it "synced" rather than a second copy of the setting.
+/// `CalendarSettingsSection.tsx`: the calendars list grouped by who owns them, the
+/// subscribe-and-import block, then the calendar-wide preferences. Everything writes to the
+/// same `/api/calendar` the web does, which is what makes it "synced" rather than a second copy
+/// of the setting; Google's consent screen itself runs in the browser, opened from here.
 struct CalendarSettingsSection: View {
+    @Environment(Router.self) private var router
     @State private var calendars: [CalSource] = []
     @State private var accounts: [CalGoogleAccount] = []
     @State private var loading = true
     @State private var error: String?
-    @State private var syncingAll = false
     @State private var creating = false
+    /// Which connect button is waiting for its link; `newAccount` for the calendar-only one.
+    @State private var pending: String?
 
+    private static let newAccount = "__new__"
     private var local: [CalSource] { calendars.filter { $0.source == "local" } }
     private var ics: [CalSource] { calendars.filter { $0.source == "ics" } }
     private var orphans: [CalSource] { calendars.filter { c in c.source == "google" && !accounts.contains { $0.id == c.accountID } } }
 
     var body: some View {
-        SettingsSection(title: "Calendars", description: "Untick to hide, without deleting.", actions: {
-            WButton(syncingAll ? "Syncing…" : "Sync all", icon: "refreshCw", variant: .ghost, size: .sm, muted: true) {
-                syncingAll = true
-                Task {
-                    defer { syncingAll = false }
-                    do { try await CalendarAPI.syncSources() } catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
-                    await load(); CalendarBus.shared.changed()
-                }
-            }
-            .disabled(syncingAll)
-        }) {
+        SettingsSection(title: "Calendars", description: "Untick to hide, without deleting.") {
             if loading {
-                SkeletonRows(rows: 2)
+                VStack(spacing: 8) { SkeletonBlock(height: 32); SkeletonBlock(width: 500, height: 32).frame(maxWidth: .infinity, alignment: .leading) }.padding(.horizontal, 8)
             } else if let error {
-                Text(error).font(W.s13).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 8)
+                Text(error).font(W.s13).foregroundStyle(W.mutedForeground).padding(.horizontal, 8)
             } else {
                 if accounts.isEmpty {
-                    Text("No Google account connected. Connect one for mail under Accounts, or a calendar-only one on the web.")
-                        .font(W.xs).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.bottom, 12)
+                    HStack(spacing: 0) {
+                        Text("No Google account yet — connect one for mail under ")
+                        InlineLink(label: "Accounts") { router.replace(.settings("accounts")) }
+                        Text(", or for calendar below.")
+                    }
+                    .font(W.xs).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 6).padding(.bottom, 12)
                 }
                 ForEach(accounts) { a in
-                    CalendarAccountGroup(account: a, calendars: calendars.filter { $0.accountID == a.id }, onChange: refreshOne)
+                    // An account we hold no mail scope for stays that way: reconnecting it must not
+                    // quietly ask for mail the owner never granted.
+                    CalendarAccountGroup(account: a, calendars: calendars.filter { $0.accountID == a.id }, busy: pending == a.id, onConnect: { open(a.id, accountID: a.id, calendarOnly: !a.mail) }, onChange: refreshOne)
                 }
                 if !orphans.isEmpty {
                     CalendarGroupBlock(title: "Google Calendar", hint: "account no longer connected", calendars: orphans, onChange: refreshOne)
                 }
-                CalendarGroupBlock(title: "In heyflare", calendars: local, onChange: refreshOne, empty: "None yet.") {
-                    WButton("New calendar", icon: "plus", variant: .outline, size: .sm) {
-                        creating = true
-                        Task {
-                            defer { creating = false }
-                            do { let c = try await CalendarAPI.createSource(name: "New calendar", color: "#111111"); calendars.append(c); Toasts.shared.show("Calendar added") }
-                            catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
-                        }
-                    }
-                    .disabled(creating)
+                CalendarGroupBlock(title: "In heyflare", calendars: local, onChange: refreshOne, empty: "None yet.", last: ics.isEmpty) {
+                    WButton("New calendar", icon: "plus", variant: .outline, size: .sm) { createCalendar() }.disabled(creating)
                 }
                 if !ics.isEmpty {
-                    CalendarGroupBlock(title: "Subscribed links", calendars: ics, onChange: refreshOne)
+                    CalendarGroupBlock(title: "Subscribed links", calendars: ics, onChange: refreshOne, last: true)
                 }
-                Text("Subscribing to a link, importing a .ics file, and connecting a new Google account are on the web for now.")
-                    .font(W.xs).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.top, 8)
             }
+            WButton(pending == Self.newAccount ? "Opening…" : "Connect a calendar-only account", icon: "calendarPlus", variant: .outline, size: .sm, help: "Asks Google for calendar access only, never mail") {
+                open(Self.newAccount, accountID: nil, calendarOnly: true)
+            }
+            .disabled(pending == Self.newAccount)
+            .padding(.horizontal, 8).padding(.top, 12)
         }
+        SubscribeSection(calendars: calendars)
         CalendarPreferencesSection()
         .task { await load() }
         // A removal, a new default or a sync elsewhere changes this list too.
@@ -611,49 +1171,133 @@ struct CalendarSettingsSection: View {
         do {
             let r = try await CalendarAPI.sourcesFull()
             calendars = r.calendars; accounts = r.accounts; error = nil
-        } catch { self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription }
+        } catch { self.error = friendly(error) }
     }
 
     private func refreshOne(_ c: CalSource) {
         if let i = calendars.firstIndex(where: { $0.id == c.id }) { calendars[i] = c }
     }
+
+    private func createCalendar() {
+        creating = true
+        Task {
+            defer { creating = false }
+            do { let c = try await CalendarAPI.createSource(name: "New calendar", color: "#111111"); calendars.append(c); Toasts.shared.show("Calendar added") }
+            catch { Toasts.shared.error(friendly(error)) }
+        }
+    }
+
+    /// The consent screen has to run where the user's Google session lives: the real browser.
+    private func open(_ key: String, accountID: String?, calendarOnly: Bool) {
+        pending = key
+        Task {
+            defer { pending = nil }
+            do {
+                let url = try await CalendarAPI.googleConnectLink(accountID: accountID, calendarOnly: calendarOnly)
+                NSWorkspace.shared.open(url)
+                Toasts.shared.show("Finish in your browser, then come back.")
+            } catch { Toasts.shared.error(friendly(error)) }
+        }
+    }
 }
 
-/// One Google account: its calendars, and what disconnecting or reconnecting would do — read
-/// only here, since the OAuth handoff itself still runs on the web.
+/// One Google account: the address, what it's connected for, its actions — then its calendars.
 private struct CalendarAccountGroup: View {
     let account: CalGoogleAccount
     let calendars: [CalSource]
+    let busy: Bool
+    let onConnect: () -> Void
     let onChange: (CalSource) -> Void
+    @Environment(DialogState.self) private var dialogs
+    @State private var disconnecting = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Text(account.email).font(W.font(13, 500)).lineLimit(1)
-                Text(account.calendar ? calendarCount(calendars.count) : account.mail ? "mail only" : "not connected").font(W.xs).foregroundStyle(W.mutedForeground)
-                Spacer()
-                if !account.calendar { Text("Connect on the web").font(W.xs).foregroundStyle(W.mutedForeground) }
-            }
-            .padding(.horizontal, 8).frame(height: 32).edgeLine(.bottom)
-            if let err = account.syncError, !err.isEmpty { Text("Last sync failed: \(err)").font(W.xs).padding(.horizontal, 8).padding(.top, 4) }
-            if let err = account.calendarError, !err.isEmpty {
-                Text("has not been used in project|is disabled".firstMatch(in: err) != nil
-                     ? "The Calendar API is off for this Google Cloud project. Turn it on and the calendars appear on the next pass."
-                     : "Couldn't read this account's calendars.")
-                    .font(W.xs).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.top, 4)
-            }
+            header
+            // Without the scope there is nothing to list and the button above says so; with it,
+            // an empty account gets one quiet line rather than a gap.
             if account.calendar || !calendars.isEmpty {
-                ForEach(calendars) { c in CalendarSourceRow(source: c, onChange: onChange).padding(.leading, 20) }
+                if calendars.isEmpty {
+                    Text("No calendars yet.").font(W.xs).foregroundStyle(W.mutedForeground).padding(.leading, 24).padding(.trailing, 8).padding(.vertical, 6)
+                } else {
+                    ForEach(calendars) { c in CalendarSourceRow(source: c, last: c.id == calendars.last?.id, onChange: onChange).padding(.leading, 24).padding(.trailing, 8) }
+                }
             }
         }
         .padding(.bottom, 12)
     }
 
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text(account.email).font(W.font(13, 500)).lineLimit(1)
+                Text(account.calendar ? calendarCount(calendars.count) : account.mail ? "mail only" : "not connected").font(W.xs).foregroundStyle(W.mutedForeground)
+                Spacer()
+                HStack(spacing: 4) {
+                    Button(action: onConnect) {
+                        HStack(spacing: 4) {
+                            Icon(account.calendar ? "refreshCw" : "calendarPlus", size: 14)
+                            Text(busy ? "Opening…" : account.calendar ? "Reconnect" : "Connect calendar")
+                        }
+                    }
+                    .buttonStyle(.web(.outline, .sm)).disabled(busy)
+                    .help(account.calendar ? "Runs Google's consent screen again — fixes an expired or revoked grant" : "")
+                    if account.calendar {
+                        WButton("Disconnect", icon: "calendarX2", variant: .ghost, size: .sm, muted: true) { confirmDisconnect() }.disabled(disconnecting)
+                    }
+                }
+            }
+            if let err = account.syncError, !err.isEmpty { Text("Last sync failed: \(err)").font(W.xs).padding(.top, 4) }
+            if let err = account.calendarError, !err.isEmpty { CalendarErrorNote(message: err) }
+        }
+        .padding(.horizontal, 8).padding(.vertical, 6).edgeLine(.bottom)
+    }
+
     private func calendarCount(_ n: Int) -> String { n == 1 ? "1 calendar" : "\(n) calendars" }
+
+    private func confirmDisconnect() {
+        let count = calendars.count
+        dialogs.confirm("cal-disconnect-\(account.id)", title: "Disconnect \(account.email)'s calendar?", description: "Removes \(count > 0 ? calendarCount(count) : "this account's calendars") and every event on them from heyflare. Nothing changes in Google, its mail stays connected, and you can connect the calendar again later.", action: "Disconnect calendar") {
+            disconnecting = true
+            Task {
+                defer { disconnecting = false }
+                do { try await CalendarAPI.disconnectGoogle(accountID: account.id); Toasts.shared.show("\(account.email)'s calendar disconnected"); CalendarBus.shared.changed() }
+                catch { Toasts.shared.error(friendly(error)) }
+            }
+        }
+    }
 }
 
-private extension String {
-    func firstMatch(in text: String) -> Range<String.Index>? { text.range(of: self, options: [.regularExpression, .caseInsensitive]) }
+/// Why an account has the calendar scope but no calendars. Google's most common answer by far
+/// is that the Calendar API is switched off in the Cloud project, and it puts the exact enable
+/// link in the message — so pull that out and make it a link rather than leaving a wall of JSON.
+private struct CalendarErrorNote: View {
+    let message: String
+
+    private var disabled: Bool { message.range(of: "has not been used in project|is disabled", options: [.regularExpression, .caseInsensitive]) != nil }
+    private var link: URL? {
+        guard let r = message.range(of: #"https://console\.(?:developers|cloud)\.google\.com/[^\s"\\)]+"#, options: .regularExpression) else { return nil }
+        return URL(string: String(message[r]))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if disabled {
+                Text("The Calendar API is off for this Google Cloud project. Turn it on and the calendars appear on the next pass.")
+                if let link {
+                    Button("Enable the Google Calendar API") { NSWorkspace.shared.open(link) }.buttonStyle(.plain).underline().padding(.top, 4)
+                }
+            } else {
+                Text("Couldn't read this account's calendars.")
+                Text(String(message.prefix(300))).foregroundStyle(W.mutedForeground).padding(.top, 2)
+            }
+        }
+        .font(W.xs).fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(W.muted40).border1(W.border, radius: W.radiusMd).rounded(W.radiusMd)
+        .padding(.top, 4)
+    }
 }
 
 /// A plain heading over a list of calendars, for the groups no Google account owns.
@@ -663,28 +1307,56 @@ private struct CalendarGroupBlock<Trailing: View>: View {
     let calendars: [CalSource]
     let onChange: (CalSource) -> Void
     var empty: String = ""
+    var last = false
     @ViewBuilder var trailing: () -> Trailing
 
-    init(title: String, hint: String? = nil, calendars: [CalSource], onChange: @escaping (CalSource) -> Void, empty: String = "", @ViewBuilder trailing: @escaping () -> Trailing = { EmptyView() }) {
-        self.title = title; self.hint = hint; self.calendars = calendars; self.onChange = onChange; self.empty = empty; self.trailing = trailing
+    init(title: String, hint: String? = nil, calendars: [CalSource], onChange: @escaping (CalSource) -> Void, empty: String = "", last: Bool = false, @ViewBuilder trailing: @escaping () -> Trailing = { EmptyView() }) {
+        self.title = title; self.hint = hint; self.calendars = calendars; self.onChange = onChange; self.empty = empty; self.last = last; self.trailing = trailing
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Text(title).font(W.font(12, 500)).foregroundStyle(W.mutedForeground)
-                if let hint { Text(hint).font(W.xs).foregroundStyle(W.mutedForeground.opacity(0.8)) }
+                if let hint { Text(hint).font(W.xs).foregroundStyle(W.mutedForeground.opacity(0.8)).lineLimit(1) }
                 Spacer()
                 trailing()
             }
-            .padding(.horizontal, 8).frame(height: 32).edgeLine(.bottom)
+            .padding(.horizontal, 8).padding(.vertical, 6).edgeLine(.bottom)
             if calendars.isEmpty {
-                if !empty.isEmpty { Text(empty).font(W.xs).foregroundStyle(W.mutedForeground).padding(.horizontal, 20).padding(.vertical, 6) }
+                if !empty.isEmpty { Text(empty).font(W.xs).foregroundStyle(W.mutedForeground).padding(.leading, 24).padding(.trailing, 8).padding(.vertical, 6) }
             } else {
-                ForEach(calendars) { c in CalendarSourceRow(source: c, onChange: onChange).padding(.leading, 20) }
+                ForEach(calendars) { c in CalendarSourceRow(source: c, last: c.id == calendars.last?.id, onChange: onChange).padding(.leading, 24).padding(.trailing, 8) }
             }
         }
-        .padding(.bottom, 12)
+        .padding(.bottom, last ? 0 : 12)
+    }
+}
+
+/// The calendar's name, drawn as the web's quiet input: `h-7`, no border, transparent until
+/// hovered (`hover:bg-input`) or focused (`focus-visible:bg-background`), Enter blurs, Escape
+/// puts the old name back.
+private struct QuietTextField: View {
+    @Binding var text: String
+    var onCommit: () -> Void
+    var onEscape: () -> Void
+    @FocusState private var focused: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        TextField("", text: $text)
+            .textFieldStyle(.plain)
+            .font(W.sm)
+            .foregroundStyle(W.foreground)
+            .focused($focused)
+            .onSubmit { focused = false }
+            .onExitCommand { onEscape(); focused = false }
+            .onChange(of: focused) { was, now in if was && !now { onCommit() } }
+            .padding(.horizontal, 6)
+            .frame(height: 28)
+            .background(focused ? W.background : (hovering ? W.input : Color.clear))
+            .rounded(W.radiusMd)
+            .onHover { hovering = $0 }
     }
 }
 
@@ -692,13 +1364,17 @@ private struct CalendarGroupBlock<Trailing: View>: View {
 /// visibility, not existence, exactly as the web's row explains it.
 private struct CalendarSourceRow: View {
     let source: CalSource
+    var last = false
     let onChange: (CalSource) -> Void
 
     @State private var name = ""
     @State private var syncing = false
+    @State private var swatchHover = false
     @Environment(DialogState.self) private var dialogs
     @Environment(PopLayerState.self) private var pops
 
+    // The account's email is on the group header, so a row only carries what tells it apart: a
+    // feed's address, a local calendar's size, and when a synced one last came down.
     private var note: String {
         let where_ = source.source == "ics" ? (source.url ?? "") : (source.source == "local" ? (source.eventCount.map { "\($0) event\($0 == 1 ? "" : "s")" } ?? "") : "")
         let synced = source.source != "local" ? source.lastSyncedAt.map { Fmt.relative($0) } ?? "" : ""
@@ -706,66 +1382,71 @@ private struct CalendarSourceRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 WCheckbox(checked: source.visible) { apply(visible: !source.visible) }
                     .help("Shown in the calendar")
-                Button {
-                    pops.toggle("cal-color-\(source.id)", side: .bottom, align: .start) {
-                        PopCard(width: 208) { ColorRamp(current: source.color) { hex in apply(color: hex) } }
-                    }
-                } label: {
-                    Circle().fill(Color(hex: source.color)).frame(width: 14, height: 14).overlay(Circle().strokeBorder(W.border, lineWidth: 1))
+                swatch
+                HStack(spacing: 8) {
+                    QuietTextField(text: $name, onCommit: { rename() }, onEscape: { name = source.name })
+                        .frame(minWidth: 128, maxWidth: .infinity)
+                    if !note.isEmpty { Text(note).font(W.xs).monospacedDigit().foregroundStyle(W.mutedForeground).lineLimit(1).layoutPriority(1).help(source.source == "ics" ? (source.url ?? "") : "") }
                 }
-                .buttonStyle(.plain)
-                .popAnchor("cal-color-\(source.id)")
-                .help("Colour")
-                WTextField(placeholder: "", text: $name, onSubmit: { rename() }, onBlur: { rename() })
-                    .frame(width: 180)
-                if !note.isEmpty { Text(note).font(W.xs).foregroundStyle(W.mutedForeground).lineLimit(1) }
-                Spacer(minLength: 8)
-                if source.writable {
-                    Button { apply(isDefault: true) } label: {
-                        HStack(spacing: 4) {
-                            Circle().strokeBorder(W.mutedForeground, lineWidth: 1).background(Circle().fill(source.isDefault ? W.foreground : .clear).padding(3)).frame(width: 12, height: 12)
-                            Text("Default").font(W.xs).foregroundStyle(W.mutedForeground)
+                .frame(maxWidth: .infinity)
+                HStack(spacing: 4) {
+                    if source.writable {
+                        Button { apply(isDefault: true) } label: {
+                            HStack(spacing: 6) {
+                                Circle().strokeBorder(W.mutedForeground, lineWidth: 1).background(Circle().fill(source.isDefault ? W.foreground : .clear).padding(3)).frame(width: 14, height: 14)
+                                Text("Default").font(W.xs).foregroundStyle(W.mutedForeground)
+                            }
                         }
+                        .buttonStyle(.plain)
+                        .help("New events go here")
+                        .padding(.trailing, 4)
                     }
-                    .buttonStyle(.plain)
-                    .help("New events go here")
-                }
-                if source.source != "local" {
-                    WButton(icon: "refreshCw", variant: .ghost, size: .iconSm, muted: true, help: "Sync") {
-                        syncing = true
-                        Task {
-                            defer { syncing = false }
-                            let r = try? await CalendarAPI.syncSource(id: source.id)
-                            if let err = r?.error { Toasts.shared.error(err) } else { Toasts.shared.show("\(source.name) is up to date") }
-                            if let fresh = try? await CalendarAPI.sources().first(where: { $0.id == source.id }) { onChange(fresh) }
-                            CalendarBus.shared.changed()
-                        }
+                    if source.source != "local" {
+                        Button { sync() } label: { SpinIcon(name: "refreshCw", size: 16, spinning: syncing) }
+                            .buttonStyle(.web(.ghost, .iconSm, muted: true)).help("Sync").disabled(syncing)
                     }
-                    .disabled(syncing)
-                }
-                WButton(icon: "trash2", variant: .ghost, size: .iconSm, muted: true, help: "Remove") {
-                    dialogs.confirm("remove-cal-\(source.id)", title: "Remove \(source.name)?", description: removeCopy, action: "Remove calendar") {
-                        Task {
-                            do { try await CalendarAPI.removeSource(id: source.id); CalendarBus.shared.changed(); Toasts.shared.show("\(source.name) removed") }
-                            catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+                    WButton(icon: "trash2", variant: .ghost, size: .iconSm, muted: true, help: "Remove") {
+                        dialogs.confirm("remove-cal-\(source.id)", title: "Remove \(source.name)?", description: removeCopy, action: "Remove calendar") {
+                            Task {
+                                do { try await CalendarAPI.removeSource(id: source.id); CalendarBus.shared.changed(); Toasts.shared.show("\(source.name) removed") }
+                                catch { Toasts.shared.error(friendly(error)) }
+                            }
                         }
                     }
                 }
             }
-            if let err = source.syncError, !err.isEmpty { Text("Last sync failed: \(err)").font(W.xs).padding(.leading, 22) }
+            if let err = source.syncError, !err.isEmpty { Text("Last sync failed: \(err)").font(W.xs).padding(.leading, 24) }
         }
-        .padding(.vertical, 4).edgeLine(.bottom)
+        .padding(.vertical, 6).edgeLine(.bottom, last ? Color.clear : W.border)
         .onAppear { name = source.name }
         .onChange(of: source.name) { _, n in name = n }
     }
 
+    /// `size-4 rounded-full border border-border hover:ring-2 hover:ring-ring ring-offset-1`.
+    private var swatch: some View {
+        Button {
+            pops.toggle("cal-color-\(source.id)", side: .bottom, align: .start) {
+                PopCard(width: 240, padding: 10) { ColorRamp(current: source.color) { hex in apply(color: hex) } }
+            }
+        } label: {
+            Circle().fill(Color(hex: source.color)).frame(width: 16, height: 16)
+                .overlay(Circle().strokeBorder(W.border, lineWidth: 1))
+                .overlay(Circle().strokeBorder(W.ring, lineWidth: 2).padding(-3).opacity(swatchHover ? 1 : 0))
+                .animation(.easeOut(duration: 0.15), value: swatchHover)
+        }
+        .buttonStyle(.plain)
+        .onHover { swatchHover = $0 }
+        .popAnchor("cal-color-\(source.id)")
+        .help("Colour")
+    }
+
     private var removeCopy: String {
         switch source.source {
-        case "google": return "Removes it and its events from heyflare for good. Google Calendar is untouched; to see it here again, reconnect the account's calendar access."
+        case "google": return "Removes it and its events from heyflare for good. Google Calendar is untouched; to see it here again, reconnect the account’s calendar access."
         case "ics": return "Stops following the link and deletes the events it brought in. The feed is untouched."
         default: return "Deletes the calendar and every event on it. There's no undo."
         }
@@ -776,7 +1457,20 @@ private struct CalendarSourceRow: View {
         guard !v.isEmpty, v != source.name else { name = source.name; return }
         Task {
             do { onChange(try await CalendarAPI.updateSource(id: source.id, name: v)) }
-            catch { name = source.name; Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+            catch { name = source.name; Toasts.shared.error(friendly(error)) }
+        }
+    }
+
+    private func sync() {
+        syncing = true
+        Task {
+            defer { syncing = false }
+            do {
+                let r = try await CalendarAPI.syncSource(id: source.id)
+                if let err = r.error { Toasts.shared.error(err) } else { Toasts.shared.show("\(source.name) is up to date") }
+                if let fresh = try? await CalendarAPI.sources().first(where: { $0.id == source.id }) { onChange(fresh) }
+                CalendarBus.shared.changed()
+            } catch { Toasts.shared.error(friendly(error)) }
         }
     }
 
@@ -784,14 +1478,14 @@ private struct CalendarSourceRow: View {
         pops.closeAll()
         Task {
             do { onChange(try await CalendarAPI.updateSource(id: source.id, color: color)) }
-            catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+            catch { Toasts.shared.error(friendly(error)) }
         }
     }
 
     private func apply(visible: Bool) {
         Task {
             do { onChange(try await CalendarAPI.updateSource(id: source.id, visible: visible)); CalendarBus.shared.changed() }
-            catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+            catch { Toasts.shared.error(friendly(error)) }
         }
     }
 
@@ -800,13 +1494,14 @@ private struct CalendarSourceRow: View {
             // The worker clears the old default; the bus makes the list re-read so only one
             // row says Default.
             do { onChange(try await CalendarAPI.updateSource(id: source.id, isDefault: isDefault)); CalendarBus.shared.changed() }
-            catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+            catch { Toasts.shared.error(friendly(error)) }
         }
     }
 }
 
 /// The web's 12-swatch ramp: muted, saturated hues built to carry white text, greys on the
-/// first row for anyone who wants the calendar to stay monochrome.
+/// first row for anyone who wants the calendar to stay monochrome. `w-60 p-2.5`; the padding
+/// is the popover's.
 private struct ColorRamp: View {
     static let ramp = ["#111111", "#3d3d3d", "#5c5c5c", "#8a8a8a", "#3d6c56", "#3d5a6c", "#3d3e6c", "#613d6c", "#6c3d47", "#6c4b3d", "#6c633d", "#3d686c"]
     let current: String
@@ -814,95 +1509,198 @@ private struct ColorRamp: View {
     @State private var hex = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
                 ForEach(Self.ramp, id: \.self) { c in
                     Button { onPick(c) } label: {
                         Circle().fill(Color(hex: c))
-                            .overlay(Circle().strokeBorder(W.ring, lineWidth: current.lowercased() == c ? 2 : 0))
+                            .overlay(Circle().strokeBorder(W.border, lineWidth: 1))
+                            .overlay(Circle().strokeBorder(W.ring, lineWidth: 2).padding(-3).opacity(current.lowercased() == c ? 1 : 0))
                             .frame(width: 24, height: 24)
                     }
                     .buttonStyle(.plain)
                 }
             }
             HStack(spacing: 6) {
-                WTextField(placeholder: "#767676", text: $hex, mono: true, height: 28, fontSize: 12)
+                WTextField(placeholder: "#767676", text: $hex, mono: true, height: 28, fontSize: 12, onSubmit: { if isValid { onPick(hex.lowercased()) } })
                 WButton("Use", variant: .outline, size: .sm) { if isValid { onPick(hex.lowercased()) } }.disabled(!isValid)
             }
-            if !hex.isEmpty && !isValid { Text("Six hex digits, like #767676.").font(W.font(11)).foregroundStyle(W.mutedForeground) }
+            .padding(.top, 10)
+            if !isValid { Text("Six hex digits, like #767676.").font(W.font(11)).foregroundStyle(W.mutedForeground).padding(.top, 6) }
         }
-        .padding(10)
         .onAppear { hex = current }
+        .onChange(of: current) { _, c in hex = c }
     }
 
     private var isValid: Bool { hex.range(of: "^#[0-9a-fA-F]{6}$", options: .regularExpression) != nil }
 }
 
+/// `SubscribeBlock`: follow an `.ics` link, or bring a file's events into a calendar of your own.
+private struct SubscribeSection: View {
+    let calendars: [CalSource]
+    @State private var url = ""
+    @State private var name = ""
+    @State private var err = ""
+    @State private var dest = ""
+    @State private var subscribing = false
+    @State private var importing = false
+    @State private var creating = false
+
+    private var writable: [CalSource] { calendars.filter(\.writable) }
+
+    var body: some View {
+        SettingsSection(title: "Subscribe to a calendar link") {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 8) {
+                    WTextField(placeholder: "https://example.com/calendar.ics", text: $url, onSubmit: { submit() })
+                        .onChange(of: url) { _, _ in err = "" }
+                    WTextField(placeholder: "Name (optional)", text: $name).frame(width: 176)
+                    WButton("Subscribe", icon: "link2", variant: .outline, size: .sm) { submit() }.disabled(url.trimmingCharacters(in: .whitespaces).isEmpty || subscribing)
+                }
+                if !err.isEmpty { Text(err).font(W.s13).fixedSize(horizontal: false, vertical: true).padding(.top, 6) }
+                Text("Read-only, refreshed about once an hour.").font(W.xs).foregroundStyle(W.mutedForeground).padding(.top, 6)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Import an .ics file into a calendar").font(W.font(12, 500)).foregroundStyle(W.mutedForeground)
+                    HStack(spacing: 8) {
+                        WSelect(id: "ics-dest", options: writable.map { WSelectOption($0.id, $0.name) }, value: $dest, size: .sm, width: 224, placeholder: "No calendar to import into", disabled: writable.isEmpty)
+                        WButton(importing ? "Importing…" : "Choose a file", icon: "upload", variant: .outline, size: .sm) { pick() }.disabled(dest.isEmpty || importing)
+                        WButton("New calendar", icon: "plus", variant: .ghost, size: .sm, muted: true) { create() }.disabled(creating)
+                    }
+                    .padding(.top, 8)
+                }
+                .padding(.top, 12)
+                .edgeLine(.top)
+                .padding(.top, 16)
+            }
+            .padding(.horizontal, 8)
+        }
+        .onAppear { keepDest() }
+        .onChange(of: writable.map(\.id)) { _, _ in keepDest() }
+    }
+
+    /// Keep the destination pointing at a calendar that still exists; default to the default one.
+    private func keepDest() {
+        if writable.contains(where: { $0.id == dest }) { return }
+        dest = writable.isEmpty ? "" : (writable.first { $0.isDefault } ?? writable[0]).id
+    }
+
+    private func submit() {
+        let u = url.trimmingCharacters(in: .whitespaces)
+        guard !u.isEmpty, !subscribing else { return }
+        err = ""
+        subscribing = true
+        Task {
+            defer { subscribing = false }
+            do {
+                let n = name.trimmingCharacters(in: .whitespaces)
+                let c = try await CalendarAPI.subscribe(url: u, name: n.isEmpty ? nil : n)
+                Toasts.shared.show("Subscribed to \(c.name)"); url = ""; name = ""
+                CalendarBus.shared.changed()
+            } catch { err = feedMessage(error) }
+        }
+    }
+
+    /// `bad_feed`/`bad_url` reach the client as the bare code; say what actually went wrong.
+    private func feedMessage(_ e: Error) -> String {
+        if let api = e as? APIError, case .server(let code, _) = api {
+            if code == "bad_url" { return "That link should start with https:// or webcal://." }
+            if code == "bad_feed" { return "That link didn't return a calendar. Open it in a browser to check it's an .ics feed." }
+        }
+        let m = friendly(e)
+        return m.isEmpty ? "That link couldn't be subscribed to." : m
+    }
+
+    private func pick() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [UTType(filenameExtension: "ics") ?? .calendarEvent, .calendarEvent]
+        guard panel.runModal() == .OK, let file = panel.url else { return }
+        importing = true
+        Task {
+            defer { importing = false }
+            guard let text = (try? String(contentsOf: file, encoding: .utf8)) ?? (try? String(contentsOf: file, encoding: .isoLatin1)) else {
+                Toasts.shared.error("That file couldn't be read."); return
+            }
+            do {
+                let n = try await CalendarAPI.importICS(text, calendarID: dest.isEmpty ? nil : dest)
+                Toasts.shared.show("Imported \(n) event\(n == 1 ? "" : "s")")
+                CalendarBus.shared.changed()
+            } catch { Toasts.shared.error(friendly(error)) }
+        }
+    }
+
+    private func create() {
+        creating = true
+        Task {
+            defer { creating = false }
+            do { let c = try await CalendarAPI.createSource(name: "New calendar", color: "#111111"); dest = c.id; Toasts.shared.show("Calendar added"); CalendarBus.shared.changed() }
+            catch { Toasts.shared.error(friendly(error)) }
+        }
+    }
+}
+
 /// `CalendarPreferences` from the web: week start, time format, default view, the night
-/// collapse and its hours, declined events, timezone. Considered "desk work" on the phone and
-/// left read-only there; the Mac is a desk too, so this is the second client that can change it.
+/// collapse and its hours, declined events, timezone. Each change lands on screen at once and
+/// is put back if the server refuses it.
 private struct CalendarPreferencesSection: View {
     @State private var prefs: CalPrefs?
     @State private var loadError: String?
-    @State private var saving = false
+
+    private static let device = "__device__"
 
     var body: some View {
         SettingsSection(title: "Calendar preferences") {
             if let s = prefs {
                 SettingsRow(label: "Week starts on") {
-                    WToggleGroup(options: [ToggleOption(id: "0", label: "Sunday"), ToggleOption(id: "1", label: "Monday")], value: Binding(get: { String(s.weekStart < 0 ? 0 : s.weekStart) }, set: { save(["week_start": Int($0) ?? 0]) }))
+                    WToggleGroup(options: [ToggleOption(id: "0", label: "Sunday"), ToggleOption(id: "1", label: "Monday")], value: Binding(get: { String(s.weekStart < 0 ? 0 : s.weekStart) }, set: { v in save(["week_start": Int(v) ?? 0]) { $0.weekStart = Int(v) ?? 0 } }))
                 }
                 SettingsRow(label: "Time format") {
-                    WToggleGroup(options: [ToggleOption(id: "12", label: "12-hour"), ToggleOption(id: "24", label: "24-hour")], value: Binding(get: { s.timeFormat.isEmpty ? "12" : s.timeFormat }, set: { save(["time_format": $0]) }))
+                    WToggleGroup(options: [ToggleOption(id: "12", label: "12-hour"), ToggleOption(id: "24", label: "24-hour")], value: Binding(get: { s.timeFormat.isEmpty ? "12" : s.timeFormat }, set: { v in save(["time_format": v]) { $0.timeFormat = v } }))
                 }
                 SettingsRow(label: "Default view") {
-                    WToggleGroup(options: [ToggleOption(id: "days", label: "Day"), ToggleOption(id: "week", label: "Week"), ToggleOption(id: "year", label: "Year")], value: Binding(get: { s.defaultView }, set: { save(["default_view": $0]) }))
+                    WSelect(id: "cal-view", options: [WSelectOption("days", "Day"), WSelectOption("week", "Week"), WSelectOption("year", "Year")], value: Binding(get: { s.defaultView }, set: { v in save(["default_view": v]) { $0.defaultView = v } }), size: .sm, minWidth: 144, align: .end)
                 }
                 SettingsRow(label: "Collapse the night", hint: "Folds the sleeping hours into one band you can click open.") {
-                    WSwitch(on: Binding(get: { s.collapseNight }, set: { save(["collapse_night": $0]) }))
+                    WSwitch(on: Binding(get: { s.collapseNight }, set: { v in save(["collapse_night": v]) { $0.collapseNight = v } }))
                 }
                 SettingsRow(label: "Night runs from") {
                     HStack(spacing: 8) {
-                        hourPicker(s.nightStart, disabled: !s.collapseNight, format: s.timeFormat) { save(["night_start": $0]) }
+                        hourPicker("night-start", s.nightStart, disabled: !s.collapseNight, format: s.timeFormat) { h in save(["night_start": h]) { $0.nightStart = h } }
                         Text("to").font(W.s13).foregroundStyle(W.mutedForeground)
-                        hourPicker(s.nightEnd, disabled: !s.collapseNight, format: s.timeFormat) { save(["night_end": $0]) }
+                        hourPicker("night-end", s.nightEnd, disabled: !s.collapseNight, format: s.timeFormat) { h in save(["night_end": h]) { $0.nightEnd = h } }
                     }
                 }
                 SettingsRow(label: "Show events you've declined") {
-                    WSwitch(on: Binding(get: { s.showDeclined }, set: { save(["show_declined": $0]) }))
+                    WSwitch(on: Binding(get: { s.showDeclined }, set: { v in save(["show_declined": v]) { $0.showDeclined = v } }))
                 }
-                SettingsRow(label: "Timezone") {
-                    Button {
-                        // Kept to the current zone plus the device's: a full IANA list belongs to a
-                        // proper search field, which this row does not have room for.
-                    } label: {
-                        Text(s.timezone.isEmpty ? "Same as this Mac (\(TimeZone.current.identifier))" : s.timezone.replacingOccurrences(of: "_", with: " "))
-                            .font(W.sm)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(W.mutedForeground)
-                    .help("Change the timezone on the web for the full list")
+                SettingsRow(label: "Timezone", last: true) {
+                    WSelect(id: "cal-tz", options: zones(current: s.timezone), value: Binding(get: { s.timezone.isEmpty ? Self.device : s.timezone }, set: { v in
+                        let tz = v == Self.device ? "" : v
+                        save(["timezone": tz]) { $0.timezone = tz }
+                    }), size: .sm, minWidth: 224, align: .end, maxHeight: 288)
                 }
             } else {
                 if let loadError { Text(loadError).font(W.s13).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 8) }
-                else { SkeletonRows(rows: 3) }
+                else { VStack(spacing: 8) { SkeletonBlock(height: 32); SkeletonBlock(width: 376, height: 32).frame(maxWidth: .infinity, alignment: .leading) }.padding(.horizontal, 8) }
             }
         }
         .task {
             do { prefs = try await CalendarAPI.settings() }
-            catch { loadError = (error as? APIError)?.errorDescription ?? error.localizedDescription }
+            catch { loadError = friendly(error) }
         }
     }
 
-    @ViewBuilder
-    private func hourPicker(_ hour: Int, disabled: Bool, format: String, onPick: @escaping (Int) -> Void) -> some View {
-        Menu {
-            ForEach(0..<24, id: \.self) { h in Button(hourLabel(h, format)) { onPick(h) } }
-        } label: {
-            Text(hourLabel(hour, format)).font(W.sm)
-        }
-        .frame(width: 92)
-        .disabled(disabled)
+    /// "Same as this device (…)" first, then every zone the system knows, underscores as
+    /// spaces; a stored zone the system does not list still shows up, so it can be seen and changed.
+    private func zones(current: String) -> [WSelectOption] {
+        var all = TimeZone.knownTimeZoneIdentifiers
+        if !current.isEmpty, !all.contains(current) { all.insert(current, at: 0) }
+        return [WSelectOption(Self.device, "Same as this device (\(TimeZone.current.identifier))")] + all.map { WSelectOption($0, $0.replacingOccurrences(of: "_", with: " ")) }
+    }
+
+    private func hourPicker(_ id: String, _ hour: Int, disabled: Bool, format: String, onPick: @escaping (Int) -> Void) -> some View {
+        WSelect(id: id, options: (0..<24).map { WSelectOption(String($0), hourLabel($0, format)) }, value: Binding(get: { String(hour) }, set: { onPick(Int($0) ?? 0) }), size: .sm, width: 96, align: .end, disabled: disabled)
     }
 
     private func hourLabel(_ h: Int, _ format: String) -> String {
@@ -911,100 +1709,119 @@ private struct CalendarPreferencesSection: View {
         return "\(h % 12 == 0 ? 12 : h % 12) \(suffix)"
     }
 
-    private func save(_ patch: [String: Any]) {
-        guard !saving else { return }
-        saving = true
+    /// Optimistic: the row shows the new value at once and reverts if the server says no.
+    private func save(_ patch: [String: Any], _ mutate: (inout CalPrefs) -> Void) {
+        guard var next = prefs else { return }
+        let before = prefs
+        mutate(&next)
+        prefs = next
         Task {
-            defer { saving = false }
             do { prefs = try await CalendarAPI.applySettings(patch); CalendarBus.shared.changed() }
-            catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+            catch { prefs = before; Toasts.shared.error(friendly(error)) }
         }
     }
 }
 
 // MARK: - AI
 
+/// `AiSettingsSection.tsx`: provider, key and model as a vertical form; the two behaviour
+/// switches; then everything the assistant remembers.
 struct AiSection: View {
     @State private var store = AiSettingsStore()
     @State private var preset = ""
     @State private var baseURL = ""
     @State private var key = ""
     @State private var model = ""
+    @State private var saving = false
     @State private var testing = false
-    @State private var result: String?
     @State private var memory: [AiMemoryEntry] = []
-    @State private var memoryKind: AiMemoryKind = .fact
-    @State private var memoryDraft = ""
     @Environment(PopLayerState.self) private var pops
     @Environment(DialogState.self) private var dialogs
+    @Environment(UIState.self) private var ui
 
-    private var chosen: AiPreset? { store.settings?.presets.first { $0.id == preset } }
+    private var chosen: AiPreset? { store.settings?.presets.first { $0.id == preset } ?? store.settings?.presets.first }
+    /// The web's `dirty`: anything typed since the last save or load. Read against the stored
+    /// settings so a reload never marks its own values as edits.
+    private var dirty: Bool {
+        guard let s = store.settings else { return false }
+        return !key.isEmpty || preset != s.preset || model != s.model || (preset == "custom" && baseURL != s.baseURL)
+    }
 
     var body: some View {
         if let s = store.settings {
-            SettingsSection(title: "Assistant", description: "Bring your own key. It is stored on your server, never on this Mac.") {
-                SettingsRow(label: "Provider") {
-                    Button {
-                        pops.toggle("ai-preset", side: .bottom, align: .end) {
-                            PopCard(width: 224) { ForEach(s.presets) { p in MenuItem(p.label, checked: p.id == preset) { preset = p.id; baseURL = p.baseURL; if !p.models.contains(model) { model = p.defaultModel } } } }
+            SettingsSection(title: "AI assistant", description: "Bring your own key. Mail is only sent to the provider when you use an AI feature.") {
+                if !s.serverReady {
+                    Text("SESSION_SECRET isn't set on the server, so keys can't be stored yet.")
+                        .font(W.s13).fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(W.muted60).rounded(W.radiusMd)
+                        .padding(.horizontal, 8).padding(.bottom, 12)
+                }
+                VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            FieldLabel("Provider")
+                            WSelect(id: "ai-preset", options: s.presets.map { WSelectOption($0.id, $0.label) }, value: Binding(get: { preset }, set: { choosePreset($0) }), fullWidth: true)
+                            if let p = chosen, p.id != "custom" { FieldDesc("Endpoint: \(p.baseURL)") }
                         }
-                    } label: { HStack(spacing: 6) { Text(chosen?.label ?? preset).font(W.sm); Icon("chevronDown", size: 14).foregroundStyle(W.mutedForeground) }.padding(.horizontal, 10).frame(height: 32).background(W.input).rounded(W.radiusMd).contentShape(Rectangle()) }
-                    .buttonStyle(.plain).popAnchor("ai-preset")
+                        if preset == "custom" {
+                            VStack(alignment: .leading, spacing: 8) {
+                                FieldLabel("Base URL")
+                                WTextField(placeholder: "http://localhost:11434/v1", text: $baseURL)
+                                FieldDesc("Any OpenAI-compatible server: Ollama, LM Studio, Groq, Mistral, Together…")
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            FieldLabel("API key")
+                            WTextField(placeholder: s.keyHint.isEmpty ? (chosen?.keyPlaceholder.isEmpty == false ? chosen!.keyPlaceholder : "API key") : "Stored · \(s.keyHint)", text: $key, secure: true)
+                            HStack(spacing: 8) {
+                                FieldDesc("Stored encrypted on your server and never shown again.")
+                                if let u = chosen?.keyURL, let url = URL(string: u) {
+                                    Button { NSWorkspace.shared.open(url) } label: { HStack(spacing: 4) { Text("Get a key").underline(); Icon("externalLink", size: 12) } }
+                                        .buttonStyle(.plain).font(W.sm).foregroundStyle(W.mutedForeground)
+                                }
+                                if !s.keyHint.isEmpty {
+                                    Button("Remove key") { removeKey() }.buttonStyle(.plain).underline().font(W.sm).foregroundStyle(W.mutedForeground)
+                                }
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            FieldLabel("Model")
+                            modelField(chosen?.models ?? [])
+                            FieldDesc("Type any model id the provider supports.")
+                        }
+                    }
+                    HStack(spacing: 8) {
+                        Button { save() } label: { HStack(spacing: 4) { if saving { Spinner(size: 14) } else { Icon("check", size: 14) }; Text("Save") } }
+                            .buttonStyle(.web(.default, .sm)).disabled(saving || (!dirty && key.isEmpty))
+                        Button { test() } label: { HStack(spacing: 4) { if testing { Spinner(size: 14) } else { Icon("sparkles", size: 14) }; Text("Test connection") } }
+                            .buttonStyle(.web(.outline, .sm)).disabled(testing || !s.configured || dirty)
+                        if s.configured && !dirty {
+                            HStack(spacing: 0) {
+                                Text("Ready · ")
+                                Button("open the assistant") { ui.openAssistant() }.buttonStyle(.plain).underline()
+                            }
+                            .font(W.xs).foregroundStyle(W.mutedForeground)
+                        }
+                    }
+                    .padding(.top, 16)
                 }
-                SettingsRow(label: "Base URL") { WTextField(placeholder: "https://", text: $baseURL).frame(width: 320) }
-                SettingsRow(label: "API key", hint: s.keyHint.isEmpty ? nil : "Ends in \(s.keyHint). Paste a new one to replace it.") { WTextField(placeholder: chosen?.keyPlaceholder ?? "sk-…", text: $key, secure: true).frame(width: 320) }
-                SettingsRow(label: "Model") {
-                    if let models = chosen?.models, !models.isEmpty {
-                        Button {
-                            pops.toggle("ai-model", side: .bottom, align: .end) { PopCard(width: 256) { ForEach(models, id: \.self) { m in MenuItem(m, checked: m == model) { model = m } } } }
-                        } label: { HStack(spacing: 6) { Text(model).font(W.sm); Icon("chevronDown", size: 14).foregroundStyle(W.mutedForeground) }.padding(.horizontal, 10).frame(height: 32).background(W.input).rounded(W.radiusMd).contentShape(Rectangle()) }
-                        .buttonStyle(.plain).popAnchor("ai-model")
-                    } else { WTextField(placeholder: "model", text: $model).frame(width: 320) }
-                }
-                HStack(spacing: 8) {
-                    if let result { Text(result).font(W.s13).foregroundStyle(W.mutedForeground).lineLimit(2) }
-                    Spacer()
-                    WButton(testing ? "Testing…" : "Test", variant: .outline, size: .sm) { test() }.disabled(testing || !s.configured)
-                    WButton("Save", size: .sm) { save() }
-                }
-                .padding(.horizontal, 8).padding(.top, 12)
-                if !s.serverReady { Text("The server has no AI secret configured; keys cannot be stored until it does.").font(W.s13).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.top, 8) }
+                .padding(.horizontal, 8)
+                .frame(maxWidth: 512, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             SettingsSection(title: "Behaviour") {
-                SettingsRow(label: "Learn my writing style from sent mail", hint: s.lastLearnedAt.map { "Last learned \(Fmt.relative($0))" }) {
-                    HStack(spacing: 8) {
-                        WButton("Learn now", variant: .ghost, size: .sm, muted: true) { Task { do { let n = try await APIClient.shared.aiLearnNow(); Toasts.shared.show(n == 0 ? "Nothing new to learn" : "Learned \(n) thing\(n == 1 ? "" : "s")"); await store.load(); await loadMemory() } catch { Toasts.shared.error(error.localizedDescription) } } }
-                        WSwitch(on: Binding(get: { s.learn }, set: { v in Task { try? await store.apply(["learn": v]) } }))
-                    }
+                SettingsRow(label: "Learn from my mail", hint: "Reads what you send to learn your tone, sign-offs and recurring facts. Runs in the background, at most twice a day.") {
+                    WSwitch(on: Binding(get: { s.learn }, set: { v in toggle(["learn": v]) }))
                 }
-                SettingsRow(label: "Let the assistant send mail without asking") { WSwitch(on: Binding(get: { s.autoSend }, set: { v in Task { try? await store.apply(["auto_send": v]) } })) }
+                SettingsRow(label: "Send mail without asking", hint: "Off: the assistant only prepares drafts and you press Send. On: it may send when you clearly ask it to.", last: true) {
+                    WSwitch(on: Binding(get: { s.autoSend }, set: { v in toggle(["auto_send": v]) }))
+                }
             }
-            SettingsSection(title: "Memory", description: "What the assistant knows about you and how you write.", actions: {
-                WButton("Forget everything", variant: .ghost, size: .sm, muted: true) { dialogs.confirm(title: "Forget everything the assistant learned?", action: "Forget") { Task { try? await APIClient.shared.clearAiMemory(); memory = [] } } }.disabled(memory.isEmpty)
-            }) {
-                ForEach(AiMemoryKind.allCases, id: \.self) { k in
-                    let rows = memory.filter { $0.kind == k }
-                    if !rows.isEmpty {
-                        Text(k.label).font(W.font(12, 500)).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).frame(height: 32)
-                        ForEach(rows) { e in
-                            HStack(alignment: .top, spacing: 8) {
-                                Text(e.content).font(W.s13).textSelection(.enabled)
-                                Spacer()
-                                WButton(icon: "x", variant: .ghost, size: .iconXs, muted: true) { Task { try? await APIClient.shared.deleteAiMemory(e.id); memory.removeAll { $0.id == e.id } } }
-                            }
-                            .padding(.horizontal, 8).padding(.vertical, 6).edgeLine(.bottom)
-                        }
-                    }
-                }
-                if memory.isEmpty { Text("Nothing remembered yet. Turn on learning, or add something below.").font(W.s13).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 8) }
-                HStack(spacing: 8) {
-                    Button { pops.toggle("mem-kind", side: .bottom, align: .start) { PopCard(width: 176) { ForEach(AiMemoryKind.allCases, id: \.self) { k in MenuItem(k.label, checked: k == memoryKind) { memoryKind = k } } } } } label: { HStack(spacing: 6) { Text(memoryKind.label).font(W.sm); Icon("chevronDown", size: 14).foregroundStyle(W.mutedForeground) }.padding(.horizontal, 10).frame(height: 32).background(W.input).rounded(W.radiusMd).contentShape(Rectangle()) }.buttonStyle(.plain).popAnchor("mem-kind")
-                    WTextField(placeholder: "Something the assistant should know", text: $memoryDraft, onSubmit: { addMemory() })
-                    WButton("Add", size: .sm) { addMemory() }.disabled(memoryDraft.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-                .padding(.horizontal, 8).padding(.top, 12)
-            }
-            .onAppear { seed(s) }
+            MemorySection(memory: $memory, lastLearned: s.lastLearnedAt, onLearned: { await store.load() })
+            .onChange(of: s.preset) { _, _ in resync(s) }
+            .onChange(of: s.model) { _, _ in resync(s) }
         } else if let error = store.error {
             Text(error).font(W.s13).foregroundStyle(W.mutedForeground)
         } else {
@@ -1012,32 +1829,213 @@ struct AiSection: View {
             // which would cancel the memory fetch mid-flight.
             SkeletonRows(rows: 4)
         }
-        Color.clear.frame(height: 0).task { await store.load(); if let s = store.settings { seed(s) }; await loadMemory() }
+        Color.clear.frame(height: 0).task { await store.load(); if let s = store.settings { resync(s) }; await loadMemory() }
     }
 
-    private func seed(_ s: AiSettings) {
-        if preset.isEmpty {
-            preset = s.preset.isEmpty ? (s.presets.first?.id ?? "") : s.preset
-            baseURL = s.baseURL.isEmpty ? (chosen?.baseURL ?? "") : s.baseURL
-            model = s.model.isEmpty ? (chosen?.defaultModel ?? "") : s.model
+    /// A free-text model id with the preset's known models a click away, the web's `datalist`.
+    @ViewBuilder
+    private func modelField(_ models: [String]) -> some View {
+        ZStack(alignment: .trailing) {
+            WTextField(placeholder: chosen?.defaultModel ?? "", text: $model)
+            if !models.isEmpty {
+                WButton(icon: "chevronDown", variant: .ghost, size: .iconXs, muted: true, help: "Suggestions") {
+                    pops.toggle("ai-models", side: .bottom, align: .end) {
+                        PopCard(width: 256) { ForEach(models, id: \.self) { m in MenuItem(m, checked: m == model) { model = m } } }
+                    }
+                }
+                .popAnchor("ai-models")
+                .padding(.trailing, 4)
+            }
         }
     }
+
+    /// The web's effect: while nothing is being edited, the form shows what the server holds.
+    private func resync(_ s: AiSettings) {
+        guard !dirty || preset.isEmpty else { return }
+        preset = s.preset.isEmpty ? (s.presets.first?.id ?? "") : s.preset
+        baseURL = preset == "custom" ? s.baseURL : ""
+        model = s.model
+    }
+
+    private func choosePreset(_ id: String) {
+        let p = store.settings?.presets.first { $0.id == id }
+        preset = id
+        model = p?.defaultModel ?? ""
+        if id != "custom" { baseURL = "" }
+    }
+
     private func loadMemory() async { memory = (try? await APIClient.shared.aiMemory()) ?? [] }
+
     private func save() {
+        saving = true
         Task {
-            var patch: [String: Any] = ["preset": preset, "base_url": baseURL, "model": model]
-            if !key.isEmpty { patch["api_key"] = key }
-            do { try await store.apply(patch); key = ""; Toasts.shared.success("AI settings saved") } catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
+            defer { saving = false }
+            var patch: [String: Any] = ["preset": preset, "model": model]
+            if preset == "custom" { patch["base_url"] = baseURL }
+            let k = key.trimmingCharacters(in: .whitespaces)
+            if !k.isEmpty { patch["api_key"] = k }
+            do { try await store.apply(patch); key = ""; if let s = store.settings { resync(s) }; Toasts.shared.show("AI settings saved") }
+            catch { Toasts.shared.error(friendly(error)) }
         }
     }
+
+    private func removeKey() {
+        Task {
+            do { try await store.apply(["api_key": NSNull()]); Toasts.shared.show("Key removed") }
+            catch { Toasts.shared.error(friendly(error)) }
+        }
+    }
+
     private func test() {
         testing = true
-        Task { defer { testing = false }; do { let r = try await APIClient.shared.testAiSettings(); result = r.ok ? "OK — \(r.model ?? "") replied: \(r.reply ?? "")" : (r.error ?? "The provider did not answer.") } catch { result = (error as? APIError)?.errorDescription ?? error.localizedDescription } }
+        Task {
+            defer { testing = false }
+            do {
+                let r = try await APIClient.shared.testAiSettings()
+                if r.ok { Toasts.shared.show("Connected · \(r.model ?? "") said “\(r.reply ?? "")”") } else { Toasts.shared.error(r.error ?? "Failed") }
+            } catch { Toasts.shared.error(friendly(error)) }
+        }
     }
-    private func addMemory() {
-        let t = memoryDraft.trimmingCharacters(in: .whitespaces)
-        guard !t.isEmpty else { return }
-        Task { do { let e = try await APIClient.shared.addAiMemory(kind: memoryKind, content: t); memory.insert(e, at: 0); memoryDraft = "" } catch { Toasts.shared.error(error.localizedDescription) } }
+
+    /// A refused switch snaps back: the settings are re-read either way, and the refusal is said.
+    private func toggle(_ patch: [String: Any]) {
+        Task {
+            do { try await store.apply(patch) }
+            catch { Toasts.shared.error(friendly(error)); await store.load() }
+        }
+    }
+}
+
+/// `MemorySection`: what the assistant knows, by kind, each line editable in place.
+private struct MemorySection: View {
+    @Binding var memory: [AiMemoryEntry]
+    let lastLearned: Double?
+    var onLearned: () async -> Void
+    @State private var learning = false
+    @State private var adding = ""
+    @State private var addKind: AiMemoryKind = .preference
+    @State private var addBusy = false
+    @Environment(DialogState.self) private var dialogs
+
+    private var description: String {
+        "What the assistant knows about you. \(memory.count) \(memory.count == 1 ? "entry" : "entries")\(lastLearned.map { " · learned \(Fmt.relative($0))" } ?? "")."
+    }
+
+    var body: some View {
+        SettingsSection(title: "Memory", description: description, actions: {
+            HStack(spacing: 4) {
+                Button { learn() } label: { HStack(spacing: 4) { SpinIcon(name: "refreshCw", spinning: learning); Text("Learn now") } }
+                    .buttonStyle(.web(.ghost, .sm, muted: true)).disabled(learning)
+                if !memory.isEmpty { WButton("Forget everything", icon: "trash2", variant: .ghost, size: .sm, muted: true) { forget() } }
+            }
+        }) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(AiMemoryKind.allCases, id: \.self) { k in
+                    let rows = memory.filter { $0.kind == k }
+                    if !rows.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(k.label).font(W.font(12, 500)).foregroundStyle(W.mutedForeground).padding(.bottom, 4)
+                            ForEach(rows) { e in
+                                MemoryRow(entry: e, last: e.id == rows.last?.id, onUpdate: { updated in if let i = memory.firstIndex(where: { $0.id == updated.id }) { memory[i] = updated } }, onDelete: { memory.removeAll { $0.id == e.id } })
+                            }
+                        }
+                        .padding(.bottom, 16)
+                    }
+                }
+                if memory.isEmpty { Text("Nothing yet. Chat with the assistant, send some mail, or add a note below.").font(W.s13).foregroundStyle(W.mutedForeground).padding(.bottom, 12) }
+                HStack(spacing: 8) {
+                    WSelect(id: "mem-kind", options: AiMemoryKind.allCases.map { WSelectOption($0.rawValue, $0.label) }, value: Binding(get: { addKind.rawValue }, set: { addKind = AiMemoryKind(rawValue: $0) ?? .preference }), width: 144)
+                    WTextField(placeholder: "Add a note, e.g. “Sign replies with just Farhan”", text: $adding, onSubmit: { add() })
+                    WButton("Add", icon: "plus", variant: .outline, size: .sm) { add() }.disabled(adding.trimmingCharacters(in: .whitespaces).isEmpty || addBusy)
+                }
+            }
+            .padding(.horizontal, 8)
+        }
+    }
+
+    private func learn() {
+        learning = true
+        Task {
+            defer { learning = false }
+            do {
+                let r = try await APIClient.shared.aiLearnNow()
+                Toasts.shared.show(r.skipped == "nothing_new" ? "Nothing new to learn from" : r.skipped == "no_key" ? "Add an API key first" : "Learned · \(r.changed) update\(r.changed == 1 ? "" : "s")")
+                memory = (try? await APIClient.shared.aiMemory()) ?? memory
+                await onLearned()
+            } catch { Toasts.shared.error(friendly(error)) }
+        }
+    }
+
+    private func forget() {
+        dialogs.confirm(title: "Forget everything?", description: "Deletes every memory entry and the learning history. The assistant starts from scratch.", action: "Forget everything") {
+            Task {
+                do { try await APIClient.shared.clearAiMemory(); memory = []; Toasts.shared.show("Memory cleared"); await onLearned() }
+                catch { Toasts.shared.error(friendly(error)) }
+            }
+        }
+    }
+
+    private func add() {
+        let t = adding.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty, !addBusy else { return }
+        addBusy = true
+        Task {
+            defer { addBusy = false }
+            do { let e = try await APIClient.shared.addAiMemory(kind: addKind, content: t); memory.insert(e, at: 0); adding = "" }
+            catch { Toasts.shared.error(friendly(error)) }
+        }
+    }
+}
+
+/// One memory line: the text, who put it there, and — on hover — a pencil and a bin. Editing
+/// swaps in an input; Enter or the tick saves, Escape or the cross puts it back.
+private struct MemoryRow: View {
+    let entry: AiMemoryEntry
+    var last = false
+    var onUpdate: (AiMemoryEntry) -> Void
+    var onDelete: () -> Void
+    @State private var hovering = false
+    @State private var editing: String?
+
+    private var sourceLabel: String { entry.source == "learned" ? "learned" : entry.source == "assistant" ? "assistant" : "you" }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            if let draft = editing {
+                WTextField(placeholder: "", text: Binding(get: { draft }, set: { editing = $0 }), onSubmit: { commit() }, autofocus: true)
+                    .onExitCommand { editing = nil }
+                WButton(icon: "check", variant: .ghost, size: .iconXs, help: "Save") { commit() }
+                WButton(icon: "x", variant: .ghost, size: .iconXs, help: "Cancel") { editing = nil }
+            } else {
+                Text(entry.content).font(W.s13).webLine(13, 20).foregroundStyle(W.foreground).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                Text(sourceLabel).font(W.font(11)).foregroundStyle(W.mutedForeground).padding(.top, 2)
+                HStack(spacing: 0) {
+                    WButton(icon: "pencil", variant: .ghost, size: .iconXs, muted: true, help: "Edit") { editing = entry.content }
+                    WButton(icon: "trash2", variant: .ghost, size: .iconXs, muted: true, help: "Delete") { delete() }
+                }
+                .opacity(hovering ? 1 : 0)
+            }
+        }
+        .padding(.vertical, 8)
+        .edgeLine(.bottom, last ? Color.clear : W.border)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+    }
+
+    private func commit() {
+        guard let draft = editing else { return }
+        editing = nil
+        Task {
+            do { onUpdate(try await APIClient.shared.updateAiMemory(entry.id, content: draft)) }
+            catch { Toasts.shared.error(friendly(error)) }
+        }
+    }
+
+    private func delete() {
+        Task {
+            do { try await APIClient.shared.deleteAiMemory(entry.id); onDelete() }
+            catch { Toasts.shared.error(friendly(error)) }
+        }
     }
 }
 
@@ -1050,15 +2048,18 @@ struct SecuritySection: View {
     @State private var busy = false
     @State private var status: TwoFactorStatus?
 
+    /// The form's submit rule: both fields filled, the new one long enough, nothing in flight.
+    private var canChange: Bool { !current.isEmpty && next.count >= 8 && !busy }
+
     var body: some View {
         SettingsSection(title: "Password", description: "Use at least 8 characters. Sessions on other devices stay signed in.") {
             VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 6) { FieldLabel("Current password"); WTextField(placeholder: "", text: $current, secure: true) }
+                VStack(alignment: .leading, spacing: 6) { FieldLabel("Current password"); WTextField(placeholder: "", text: $current, secure: true, onSubmit: { if canChange { change() } }) }
                 VStack(alignment: .leading, spacing: 6) {
-                    FieldLabel("New password"); WTextField(placeholder: "", text: $next, secure: true, onSubmit: { change() })
+                    FieldLabel("New password"); WTextField(placeholder: "", text: $next, secure: true, onSubmit: { if canChange { change() } })
                     if !next.isEmpty && next.count < 8 { Text("\(8 - next.count) more character\(8 - next.count == 1 ? "" : "s")").font(W.xs).foregroundStyle(W.mutedForeground) }
                 }
-                WButton("Change password", icon: "keyRound", size: .sm) { change() }.disabled(current.isEmpty || next.count < 8 || busy)
+                WButton("Change password", icon: "keyRound", size: .sm) { change() }.disabled(!canChange)
             }
             .frame(maxWidth: 384).padding(.horizontal, 8)
         }
@@ -1081,24 +2082,38 @@ struct SecuritySection: View {
             }
             .padding(.horizontal, 8)
         }
-        .task { status = try? await APIClient.shared.twoFactorStatus() }
+        .task { await reloadStatus() }
     }
+
+    private func reloadStatus() async { status = try? await APIClient.shared.twoFactorStatus() }
 
     private func change() {
         busy = true
-        Task { defer { busy = false }; do { try await APIClient.shared.changePassword(current: current, next: next); Toasts.shared.show("Password changed"); current = ""; next = "" } catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) } }
+        Task { defer { busy = false }; do { try await APIClient.shared.changePassword(current: current, next: next); Toasts.shared.show("Password changed"); current = ""; next = "" } catch { Toasts.shared.error(friendly(error)) } }
     }
 
+    /// The QR step can be clicked away; the recovery codes cannot, so they get a dialog of their
+    /// own that only "I've saved these" closes.
     private func enable() {
-        dialogs.present("tfa-enable", width: 448, dismissible: false) {
-            TwoFactorEnableForm(onDone: { dialogs.dismiss("tfa-enable"); Task { status = try? await APIClient.shared.twoFactorStatus() } }, onCancel: { dialogs.dismiss("tfa-enable") })
+        dialogs.present("tfa-enable", width: 448) {
+            TwoFactorEnableForm(onCodes: { codes in
+                dialogs.dismiss("tfa-enable")
+                Task { await reloadStatus() }
+                dialogs.present("tfa-codes", width: 448, dismissible: false) {
+                    FormDialog(title: "Save your recovery codes", description: "Each code works once if you lose your authenticator. Keep them somewhere safe — they won't be shown again.") {
+                        RecoveryCodesView(codes: codes)
+                    } footer: {
+                        WButton("I've saved these") { dialogs.dismiss("tfa-codes"); Task { await reloadStatus() } }
+                    }
+                }
+            }, onCancel: { dialogs.dismiss("tfa-enable") })
         }
     }
     private func regenerate() {
-        dialogs.present("tfa-regen", width: 448) { TwoFactorCodeForm(title: "Regenerate recovery codes", description: "Enter a code from your authenticator to confirm. Your old codes stop working.", action: "Regenerate", run: { code in try await APIClient.shared.twoFactorRegenerate(code: code) }, onDone: { dialogs.dismiss("tfa-regen") }, onCancel: { dialogs.dismiss("tfa-regen") }) }
+        dialogs.present("tfa-regen", width: 448) { TwoFactorCodeForm(title: "Regenerate recovery codes", description: "Enter a code from your authenticator to confirm. Your old codes stop working.", action: "Regenerate", run: { code in try await APIClient.shared.twoFactorRegenerate(code: code) }, onDone: { dialogs.dismiss("tfa-regen"); Task { await reloadStatus() } }, onCancel: { dialogs.dismiss("tfa-regen") }) }
     }
     private func disable() {
-        dialogs.present("tfa-disable", width: 448) { TwoFactorDisableForm(onDone: { dialogs.dismiss("tfa-disable"); Task { status = try? await APIClient.shared.twoFactorStatus() } }, onCancel: { dialogs.dismiss("tfa-disable") }) }
+        dialogs.present("tfa-disable", width: 448) { TwoFactorDisableForm(onDone: { dialogs.dismiss("tfa-disable"); Task { await reloadStatus() } }, onCancel: { dialogs.dismiss("tfa-disable") }) }
     }
 }
 
@@ -1109,46 +2124,61 @@ struct RecoveryCodesView: View {
         VStack(alignment: .leading, spacing: 8) {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 6) { ForEach(codes, id: \.self) { Text($0).font(W.mono(13)).monospacedDigit() } }
                 .padding(.horizontal, 16).padding(.vertical, 12).background(W.muted).rounded(W.radiusMd)
-            WButton(copied ? "Copied" : "Copy all", icon: copied ? "check" : "copy", variant: .ghost, size: .sm, muted: true) { Platform.copy(codes.joined(separator: "\n")); copied = true }
+            WButton(copied ? "Copied" : "Copy all", icon: copied ? "check" : "copy", variant: .ghost, size: .sm, muted: true) {
+                Platform.copy(codes.joined(separator: "\n"))
+                copied = true
+                Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
+            }
         }
     }
 }
 
+/// `tracking-[0.3em]` on the one-time-code inputs.
+private let codeTracking: CGFloat = 0.3 * 14
+
 private struct TwoFactorEnableForm: View {
-    var onDone: () -> Void
+    var onCodes: ([String]) -> Void
     var onCancel: () -> Void
     @State private var setup: TwoFactorSetup?
     @State private var code = ""
-    @State private var codes: [String]?
     @State private var busy = false
     @State private var copied = false
 
     var body: some View {
-        FormDialog(title: codes != nil ? "Save your recovery codes" : "Set up your authenticator", description: codes != nil ? "Each code works once if you lose your authenticator. Keep them somewhere safe — they won't be shown again." : "Scan the code with your authenticator app, then enter the 6-digit code it shows.") {
-            if let codes { RecoveryCodesView(codes: codes) } else {
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack { Spacer(); if let s = setup, let img = QRCodeImage.make(s.otpauthURL) { Image(nsImage: img).interpolation(.none).resizable().frame(width: 192, height: 192).padding(4).background(Color.white).rounded(W.radiusMd) } else { SkeletonBlock(width: 192, height: 192) }; Spacer() }
-                    Text("Can't scan? Enter this key manually:").font(W.xs).foregroundStyle(W.mutedForeground)
-                    HStack(spacing: 8) {
-                        Text(setup.map { $0.secret.chunked(4).joined(separator: " ") } ?? "…").font(W.mono(12)).tracking(1).lineLimit(1).padding(.horizontal, 10).frame(height: 32).frame(maxWidth: .infinity, alignment: .leading).background(W.muted).rounded(W.radiusMd)
-                        WButton(icon: copied ? "check" : "copy", variant: .ghost, size: .iconSm, help: "Copy key") { if let s = setup { Platform.copy(s.secret); copied = true } }.disabled(setup == nil)
+        FormDialog(title: "Set up your authenticator", description: "Scan the code with your authenticator app, then enter the 6-digit code it shows.") {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack { Spacer(); if let s = setup, let img = QRCodeImage.make(s.otpauthURL) { Image(nsImage: img).interpolation(.none).resizable().frame(width: 192, height: 192).padding(4).background(Color.white).rounded(W.radiusMd) } else { SkeletonBlock(width: 192, height: 192) }; Spacer() }
+                Text("Can't scan? Enter this key manually:").font(W.xs).foregroundStyle(W.mutedForeground)
+                HStack(spacing: 8) {
+                    Text(setup.map { $0.secret.chunked(4).joined(separator: " ") } ?? "…").font(W.mono(12)).tracking(1).lineLimit(1).padding(.horizontal, 10).frame(height: 32).frame(maxWidth: .infinity, alignment: .leading).background(W.muted).rounded(W.radiusMd)
+                    WButton(icon: copied ? "check" : "copy", variant: .ghost, size: .iconSm, help: "Copy key") {
+                        if let s = setup { Platform.copy(s.secret); copied = true; Task { try? await Task.sleep(for: .seconds(1.5)); copied = false } }
                     }
-                    VStack(alignment: .leading, spacing: 6) { FieldLabel("6-digit code"); WTextField(placeholder: "123456", text: $code, mono: true, onSubmit: { verify() }, autofocus: true) }
+                    .disabled(setup == nil)
                 }
+                VStack(alignment: .leading, spacing: 6) { FieldLabel("6-digit code"); WTextField(placeholder: "123456", text: $code, mono: true, onSubmit: { verify() }, autofocus: true).tracking(codeTracking) }
             }
         } footer: {
-            if codes != nil { WButton("I've saved these", action: onDone) } else {
-                WButton("Cancel", variant: .ghost, action: onCancel)
-                WButton("Verify & turn on") { verify() }.disabled(setup == nil || code.filter(\.isNumber).count != 6 || busy)
-            }
+            WButton("Cancel", variant: .ghost, action: onCancel)
+            WButton("Verify & turn on") { verify() }.disabled(setup == nil || code.filter { !$0.isWhitespace }.count != 6 || busy)
         }
-        .task { do { setup = try await APIClient.shared.twoFactorSetup() } catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription); onCancel() } }
+        .task { do { setup = try await APIClient.shared.twoFactorSetup() } catch { Toasts.shared.error(friendly(error)); onCancel() } }
     }
 
     private func verify() {
         busy = true
-        Task { defer { busy = false }; do { codes = try await APIClient.shared.twoFactorEnable(code: code); Toasts.shared.show("Two-factor authentication is on") } catch { let m = (error as? APIError)?.errorDescription ?? error.localizedDescription; Toasts.shared.error(m.range(of: "invalid code", options: .caseInsensitive) != nil ? "That code isn't right. Try the next one." : m) } }
+        Task {
+            defer { busy = false }
+            do { let codes = try await APIClient.shared.twoFactorEnable(code: code); Toasts.shared.show("Two-factor authentication is on"); onCodes(codes) }
+            catch { Toasts.shared.error(isInvalidCode(error) ? "That code isn't right. Try the next one." : friendly(error)) }
+        }
     }
+}
+
+/// The worker's `invalid_code`, which the web matches as "invalid code" in the message.
+private func isInvalidCode(_ error: Error) -> Bool {
+    if let e = error as? APIError, case .server(let code, _) = e { return code == "invalid_code" }
+    return false
 }
 
 private struct TwoFactorCodeForm: View {
@@ -1163,11 +2193,11 @@ private struct TwoFactorCodeForm: View {
     @State private var busy = false
     var body: some View {
         FormDialog(title: codes != nil ? "Your new recovery codes" : title, description: codes != nil ? "The old codes no longer work." : description) {
-            if let codes { RecoveryCodesView(codes: codes) } else { VStack(alignment: .leading, spacing: 6) { FieldLabel("Authenticator code"); WTextField(placeholder: "123456", text: $code, mono: true, autofocus: true) } }
+            if let codes { RecoveryCodesView(codes: codes) } else { VStack(alignment: .leading, spacing: 6) { FieldLabel("Authenticator code"); WTextField(placeholder: "123456", text: $code, mono: true, autofocus: true).tracking(codeTracking) } }
         } footer: {
             if codes != nil { WButton("I've saved these", action: onDone) } else {
                 WButton("Cancel", variant: .ghost, action: onCancel)
-                WButton(action) { busy = true; Task { defer { busy = false }; do { codes = try await run(code) } catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) } } }.disabled(code.filter(\.isNumber).count != 6 || busy)
+                WButton(action) { busy = true; Task { defer { busy = false }; do { codes = try await run(code) } catch { Toasts.shared.error(isInvalidCode(error) ? "That code isn't right." : friendly(error)) } } }.disabled(code.filter { !$0.isWhitespace }.count != 6 || busy)
             }
         }
     }
@@ -1187,7 +2217,7 @@ private struct TwoFactorDisableForm: View {
             }
         } footer: {
             WButton("Cancel", variant: .ghost, action: onCancel)
-            WButton("Turn off", variant: .outline) { busy = true; Task { defer { busy = false }; do { try await APIClient.shared.twoFactorDisable(password: password, code: code); Toasts.shared.show("Two-factor authentication is off"); onDone() } catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) } } }.disabled(password.isEmpty || code.trimmingCharacters(in: .whitespaces).isEmpty || busy)
+            WButton("Turn off", variant: .outline) { busy = true; Task { defer { busy = false }; do { try await APIClient.shared.twoFactorDisable(password: password, code: code); Toasts.shared.show("Two-factor authentication is off"); onDone() } catch { Toasts.shared.error(friendly(error)) } } }.disabled(password.isEmpty || code.trimmingCharacters(in: .whitespaces).isEmpty || busy)
         }
     }
 }

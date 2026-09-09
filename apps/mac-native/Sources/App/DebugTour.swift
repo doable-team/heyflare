@@ -113,7 +113,7 @@ enum DebugTour {
         let drafts = (try? await APIClient.shared.drafts()) ?? []
         check("draft on server", drafts.contains { $0.subject == "Tour draft" }, dir)
         for d in drafts where d.subject == "Tour draft" { try? await APIClient.shared.deleteDraft(d.id) }
-        for (name, route) in [("06-feed", AppRoute.feed), ("07-paper-trail", .paperTrail), ("08-screener", .screener), ("09-reply-later", .replyLater), ("10-set-aside", .setAside), ("11-calendar", .calendar), ("12-contacts", .contacts), ("13-files", .files), ("14-settings", .settings("profile")), ("14b-settings-calendar", .settings("calendar")), ("15-drafts", .drafts), ("19-habits", .habits), ("20-journal", .journal(nil)), ("21-journal-today", .journal(CalDate.todayKey))] {
+        for (name, route) in [("06-feed", AppRoute.feed), ("07-paper-trail", .paperTrail), ("08-screener", .screener), ("09-reply-later", .replyLater), ("10-set-aside", .setAside), ("11-calendar", .calendar(nil)), ("12-contacts", .contacts), ("13-files", .files), ("14-settings", .settings("profile")), ("14b-settings-calendar", .settings("calendar")), ("15-drafts", .drafts), ("19-habits", .habits), ("20-journal", .journal(nil)), ("21-journal-today", .journal(CalDate.todayKey))] {
             router.go(route)
             await pause(2)
             await snap(name, dir)
@@ -140,7 +140,7 @@ enum DebugTour {
         check("journal autosaved", saved.contains("Written by the tour"), dir)
         _ = try? await CalendarAPI.saveJournal(date: day, html: "")
         // The calendar's day view: the horizontal ribbon.
-        router.go(.calendar)
+        router.go(.calendar(nil))
         await pause(2)
         KeyBus.shared.simulate("d")
         await pause(2)
@@ -168,6 +168,17 @@ enum DebugTour {
         await pause(1)
         await snap("18-shortcuts", dir)
         ui.shortcutsOpen = false
+        // The collapsed rail (32×32 buttons, menus opening to the right) and a confirm dialog.
+        ui.sidebarOpen = false
+        await pause(1)
+        PopLayerState.shared.open("scope-menu", side: .right, align: .start) { Text("") }
+        PopLayerState.shared.closeAll()
+        await snap("22-collapsed", dir)
+        ui.sidebarOpen = true
+        DialogState.shared.confirm(title: "Delete this thread forever?", description: "It'll be removed here and trashed in Gmail. There's no undo.", action: "Delete forever") {}
+        await pause(1)
+        await snap("23-confirm", dir)
+        DialogState.shared.dismissTop()
         try? "done".write(to: dir.appendingPathComponent("done"), atomically: true, encoding: .utf8)
         NSApp.terminate(nil)
     }

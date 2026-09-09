@@ -53,6 +53,21 @@ enum FileKind {
         return .other
     }
 
+    /// `KIND_ICON` in Files.tsx: the Lucide glyph the web draws on a tile without a preview.
+    var lucide: String {
+        switch self {
+        case .image: return "fileImage"
+        case .pdf, .document: return "fileText"
+        case .slides: return "presentation"
+        case .spreadsheet: return "fileSpreadsheet"
+        case .archive: return "fileArchive"
+        case .video: return "film"
+        case .audio: return "music"
+        case .other: return "file"
+        }
+    }
+
+    /// The SF Symbol the iOS screen draws for the same kind.
     var icon: String {
         switch self {
         case .image: return "photo"

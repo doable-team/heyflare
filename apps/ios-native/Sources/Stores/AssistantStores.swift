@@ -105,11 +105,11 @@ final class AssistantChatStore {
         }
     }
 
-    func send(_ text: String, contextThreadIDs: [String] = []) {
+    func send(_ text: String, contextThreadIDs: [String] = [], context: [AiContextRef] = []) {
         let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty, !streaming else { return }
 
-        turns.append(AiTurn(id: UUID().uuidString, role: .user, text: message))
+        turns.append(AiTurn(id: UUID().uuidString, role: .user, text: message, context: context))
         // The assistant's turn is created empty and filled by the stream, so the
         // "thinking" state and the answer are the same row rather than two.
         let replyID = UUID().uuidString
@@ -151,10 +151,10 @@ final class AssistantChatStore {
             }
         case .draft(let card):
             turns[index].drafts.append(card)
-        case .sent:
-            // Autonomous sending is off unless the owner turned it on; when it is on the
-            // draft card would be misleading, so it is dropped once the mail has gone.
-            turns[index].drafts.removeAll()
+        case .sent(let draftID, let threadID):
+            // Autonomous sending is off unless the owner turned it on; when it is on, the
+            // draft's card collapses to "Sent to …" rather than offering to send it again.
+            turns[index].sent[draftID] = threadID
         case .done(let id):
             if !id.isEmpty { conversationID = id }
             streaming = false

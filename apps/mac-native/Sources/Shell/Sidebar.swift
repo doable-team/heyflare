@@ -15,7 +15,7 @@ struct NavItem: Identifiable, Hashable {
         case "/feed": return .feed
         case "/paper-trail": return .paperTrail
         case "/screener": return .screener
-        case "/calendar": return .calendar
+        case "/calendar": return .calendar(nil)
         case "/reply-later": return .replyLater
         case "/set-aside": return .setAside
         case "/bubble-up": return .bubbleUp
@@ -89,18 +89,26 @@ struct Sidebar: View {
 
     private var moreExpanded: Bool { ui.moreOpen || more.contains { $0.key == router.route.navKey } }
     private var flatNav: [NavItem] { primary + trays + library + (moreExpanded ? more : []) }
+    private var focusedKey: String? {
+        ui.region == .sidebar && flatNav.indices.contains(ui.sidebarFocusIndex) ? flatNav[ui.sidebarFocusIndex].key : nil
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    group(nil, primary)
-                    group("Trays", trays)
-                    group("Library", library)
-                    moreGroup
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        group(nil, primary)
+                        group("Trays", trays)
+                        group("Library", library)
+                        moreGroup
+                    }
+                    .padding(.horizontal, 8)
                 }
-                .padding(.horizontal, 8)
+                .scrollIndicators(.hidden)
+                // `Shell.tsx`: the keyboard-focused row is scrolled into view (`block: "nearest"`).
+                .onChange(of: focusedKey) { _, key in if let key { proxy.scrollTo(key) } }
             }
             footer
         }
@@ -153,7 +161,7 @@ struct Sidebar: View {
                     }
                 }
             } action: {
-                pops.toggle("scope-menu", side: .bottom, align: .start) { scopeMenu }
+                pops.toggle("scope-menu", side: collapsed ? .right : .bottom, align: .start) { scopeMenu }
             }
             .popAnchor("scope-menu")
 
@@ -164,14 +172,14 @@ struct Sidebar: View {
                         if !collapsed { Text("New message").font(W.sm).foregroundStyle(W.foreground); Spacer(); Kbd("c") }
                     }
                 } action: { Compose.open() }
-                .help("Compose  c")
+                .webTooltip("Compose c", side: .right, enabled: collapsed)
                 SidebarButton(height: 28, collapsed: collapsed, active: false) {
                     HStack(spacing: 8) {
                         Icon("search", size: 16).foregroundStyle(W.mutedForeground)
                         if !collapsed { Text("Search").font(W.sm).foregroundStyle(W.foreground); Spacer(); Kbd("⌘K") }
                     }
                 } action: { ui.paletteOpen = true }
-                .help("Search  ⌘K")
+                .webTooltip("Search ⌘K", side: .right, enabled: collapsed)
             }
             .padding(.top, 12)
         }
@@ -192,11 +200,12 @@ struct Sidebar: View {
                     MenuItem(a.email, glyph: Theme.glyph(forAccountIndex: i), checked: app.scope == a.id) { app.setScope(a.id); router.go(.imbox) }
                 }
                 if app.accounts.isEmpty {
-                    Text("No Gmail connected yet.").font(W.xs).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 6)
+                    Text("Nothing connected yet.").font(W.xs).foregroundStyle(W.mutedForeground).padding(.horizontal, 8).padding(.vertical, 6)
                 }
                 MenuSeparator()
-                // `Shell.tsx`: only offered when the server can actually start Google's consent.
+                // `Shell.tsx`: only offered when the server can actually start the consent.
                 if app.googleConfigured { MenuItem("Connect Gmail", icon: "plus") { GoogleConnect.start(toasts: toasts) } }
+                if app.microsoftConfigured { MenuItem("Connect Outlook", icon: "plus") { GoogleConnect.start(toasts: toasts, provider: "microsoft") } }
                 MenuItem("Manage accounts", icon: "settings") { router.go(.settings("accounts")) }
             }
         }
@@ -219,17 +228,7 @@ struct Sidebar: View {
     private var moreGroup: some View {
         VStack(alignment: .leading, spacing: 0) {
             if !collapsed {
-                Button {
-                    ui.moreOpen.toggle()
-                } label: {
-                    HStack {
-                        Text("More").font(W.font(12, 500)).foregroundStyle(W.mutedForeground)
-                        Spacer()
-                        Icon("chevronRight", size: 12).foregroundStyle(W.mutedForeground).rotationEffect(.degrees(moreExpanded ? 90 : 0))
-                    }
-                    .padding(.horizontal, 8).frame(height: 28).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                MoreTrigger(expanded: moreExpanded) { ui.moreOpen.toggle() }
             }
             if moreExpanded {
                 ForEach(more) { item in navRow(item) }
@@ -240,7 +239,7 @@ struct Sidebar: View {
 
     private func navRow(_ item: NavItem) -> some View {
         let active = router.route.navKey == item.key
-        let focused = ui.region == .sidebar && flatNav.indices.contains(ui.sidebarFocusIndex) && flatNav[ui.sidebarFocusIndex].key == item.key
+        let focused = focusedKey == item.key
         return SidebarButton(height: 28, collapsed: collapsed, active: active, focused: focused) {
             HStack(spacing: 8) {
                 Icon(item.icon, size: 16).foregroundStyle(active ? W.foreground : W.mutedForeground)
@@ -256,7 +255,8 @@ struct Sidebar: View {
             router.go(item.route)
             ui.region = .content
         }
-        .help(item.kbd.map { "\(item.label)  \($0)" } ?? item.label)
+        .id(item.key)
+        .webTooltip(item.kbd.map { "\(item.label) \($0)" } ?? item.label, side: .right, enabled: collapsed)
     }
 
     // MARK: Footer
@@ -269,7 +269,7 @@ struct Sidebar: View {
                     if !collapsed { Text("Settings").font(W.sm).foregroundStyle(W.foreground) }
                 }
             } action: { router.go(.settings("profile")) }
-            .help("Settings")
+            .webTooltip("Settings", side: .right, enabled: collapsed)
 
             SidebarButton(height: 32, collapsed: collapsed, active: false, expanded: pops.isOpen("user-menu")) {
                 HStack(spacing: 8) {
@@ -281,10 +281,10 @@ struct Sidebar: View {
                     }
                 }
             } action: {
-                pops.toggle("user-menu", side: .top, align: .start) { userMenu }
+                pops.toggle("user-menu", side: collapsed ? .right : .top, align: .start) { userMenu }
             }
             .popAnchor("user-menu")
-            .help(app.user?.name ?? app.user?.email ?? "")
+            .webTooltip(app.user?.name.isEmpty == false ? app.user!.name : (app.user?.email ?? ""), side: .right, enabled: collapsed)
         }
         .padding(8)
     }
@@ -294,11 +294,12 @@ struct Sidebar: View {
         let theme = app.user?.settings.theme ?? "system"
         PopCard(width: 224) {
             VStack(alignment: .leading, spacing: 0) {
+                // `DropdownMenuLabel font-normal`: px-1.5 py-1.
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(app.user?.name.isEmpty == false ? app.user!.name : (app.user?.email ?? "")).font(W.sm).foregroundStyle(W.foreground)
-                    Text(app.user?.email ?? "").font(W.xs).foregroundStyle(W.mutedForeground).lineLimit(1)
+                    Text(app.user?.name.isEmpty == false ? app.user!.name : (app.user?.email ?? "")).font(W.sm).webLine(14).foregroundStyle(W.foreground)
+                    Text(app.user?.email ?? "").font(W.xs).webLine(12).foregroundStyle(W.mutedForeground).lineLimit(1)
                 }
-                .padding(.horizontal, 8).padding(.vertical, 6)
+                .padding(.horizontal, 6).padding(.vertical, 4)
                 MenuSeparator()
                 MenuLabel("Theme")
                 MenuItem("Light", icon: "sun", checked: theme == "light") { setTheme("light") }
@@ -313,19 +314,42 @@ struct Sidebar: View {
         }
     }
 
+    /// `Shell.tsx`: the theme mutation is silent when it fails.
     private func setTheme(_ t: String) {
         Task {
-            do {
-                let user = try await APIClient.shared.updateMe(settings: ["theme": t])
-                await app.adopt(user: user)
-            } catch {
-                toasts.error((error as? APIError)?.errorDescription ?? "Couldn't save the theme.")
-            }
+            if let user = try? await APIClient.shared.updateMe(settings: ["theme": t]) { await app.adopt(user: user) }
         }
     }
 }
 
+/// The "More" `SidebarGroupLabel`: `h-7 cursor-pointer hover:bg-sidebar-accent`, with the
+/// chevron turning (`transition-transform`).
+private struct MoreTrigger: View {
+    let expanded: Bool
+    var action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                Text("More").font(W.font(12, 500)).foregroundStyle(W.mutedForeground)
+                Spacer()
+                Icon("chevronRight", size: 12).foregroundStyle(W.mutedForeground)
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+                    .animation(.easeInOut(duration: 0.15), value: expanded)
+            }
+            .padding(.horizontal, 8).frame(height: 28)
+            .background(hovering ? W.sidebarAccent : Color.clear)
+            .rounded(W.radiusMd)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
 /// `SidebarMenuButton`: full width, rounded-md, p-2, hover/active in the sidebar accent.
+/// Collapsed (`group-data-[collapsible=icon]:size-8`) every button is a 32×32 square.
 struct SidebarButton<Label: View>: View {
     var height: CGFloat = 28
     var collapsed = false
@@ -341,7 +365,7 @@ struct SidebarButton<Label: View>: View {
             label()
                 .padding(.horizontal, collapsed ? 0 : 8)
                 .frame(maxWidth: .infinity, alignment: collapsed ? .center : .leading)
-                .frame(height: height)
+                .frame(height: collapsed ? 32 : height)
                 .background(active || hovering || expanded || focused ? W.sidebarAccent : Color.clear)
                 .overlay {
                     if focused { RoundedRectangle(cornerRadius: W.radiusMd, style: .continuous).strokeBorder(W.ring, lineWidth: 1) }
@@ -354,8 +378,8 @@ struct SidebarButton<Label: View>: View {
     }
 }
 
-/// `startGoogleConnect()`: the OAuth start page opens in the browser; the app refreshes
-/// its accounts when it comes back to the front.
+/// `startGoogleConnect()` / `startMicrosoftConnect()`: the OAuth start page opens in the
+/// browser; the app refreshes its accounts when it comes back to the front.
 enum GoogleConnect {
     @MainActor
     static func start(toasts: Toasts, loginHint: String? = nil, provider: String = "google") {
@@ -364,7 +388,7 @@ enum GoogleConnect {
                 let url = try await APIClient.shared.gmailConnectLink(loginHint: loginHint, provider: provider)
                 NSWorkspace.shared.open(url)
             } catch {
-                toasts.error((error as? APIError)?.errorDescription ?? "Google sign-in isn't configured on this server.")
+                toasts.error((error as? APIError)?.errorDescription ?? (provider == "microsoft" ? "Microsoft sign-in isn't configured on this server." : "Google sign-in isn't configured on this server."))
             }
         }
     }

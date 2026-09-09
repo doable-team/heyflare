@@ -41,6 +41,12 @@ final class PowerThroughStore {
         return index
     }
 
+    /// A note or label edit made on a card, without refetching the snapshot under the cursor.
+    func update(_ id: String, _ edit: (inout ThreadSummary) -> Void) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        edit(&items[index])
+    }
+
     func restore(_ thread: ThreadSummary, at index: Int) {
         guard !items.contains(where: { $0.id == thread.id }) else { return }
         withAnimation(Theme.Motion.rowExit) { items.insert(thread, at: min(index, items.count)) }

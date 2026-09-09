@@ -31,7 +31,13 @@ enum APIError: LocalizedError, Equatable {
         case "mfa_too_many_attempts": return "Too many attempts. Sign in again."
         case "no_recipients": return "Add someone to send this to."
         case "account_disconnected": return "That account is disconnected. Reconnect it in Settings."
-        case "sending_not_configured": return "This domain cannot send mail yet."
+        // `DOMAIN_ERRORS` in src/web/api.ts, word for word.
+        case "sending_not_configured": return "Outbound mail isn't configured for this domain yet."
+        case "invalid_domain": return "That doesn't look like a domain name."
+        case "domain_exists": return "That domain is already added."
+        case "mailbox_exists": return "That mailbox already exists."
+        case "invalid_local_part": return "Use letters, numbers, dots, dashes, plus or underscores."
+        case "invalid_mailbox": return "Pick one of this domain's mailboxes."
         case "scheduled_send_no_attachments": return "Scheduled mail cannot carry attachments."
         case "send_failed": return "The server could not send that."
         case "invalid_email": return "That email address is not valid."
@@ -228,6 +234,31 @@ actor APIClient {
     /// Raw bytes, for attachments and remote images that need the session cookie.
     func data(path: String, query: [String: String?] = [:]) async throws -> Data {
         try await run(try request("GET", path, query: query))
+    }
+
+    /// A POST whose *failure* body the caller reads. `POST /api/domains` answers 409
+    /// `mx_in_use` with the MX hosts it found, which `run` would reduce to a bare code; the
+    /// web's `createDomain` does its own fetch for the same reason. Only transport failures
+    /// and an expired session throw — every other status comes back with its parsed body.
+    func postRaw(_ path: String, body: [String: Any] = [:], scoped: Bool = true) async throws -> (status: Int, json: [String: Any]?) {
+        let payload = try JSONSerialization.data(withJSONObject: body)
+        let req = try request("POST", path, body: payload, scoped: scoped)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: req)
+        } catch let error as URLError {
+            if error.code == .cancelled { throw CancellationError() }
+            throw APIError.transport(Self.describe(error))
+        } catch {
+            throw APIError.transport(error.localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse else { throw APIError.transport("No response") }
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        if http.statusCode == 401 || http.statusCode == 403, (json?["error"] as? String ?? "unauthorized") == "unauthorized" {
+            throw APIError.unauthorized
+        }
+        return (http.statusCode, json)
     }
 
     /// Clears the cookie jar. Called on sign-out and when a server is swapped.

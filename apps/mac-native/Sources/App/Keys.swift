@@ -33,6 +33,12 @@ final class KeyBus {
             guard let self, let key = Self.name(for: event) else { return event }
             let typing = Self.isTyping()
             let e = KeyEvent(key: key, meta: event.modifierFlags.contains(.command), shift: event.modifierFlags.contains(.shift), typing: typing, nsEvent: event)
+            // ⌘↵ sends the open composer, as the web's editor binds it; the Tauri menu never
+            // carried a "Send" item, so it lives here rather than in the menu bar.
+            if key == "Enter", event.modifierFlags.contains(.command), !event.modifierFlags.contains(.option), !event.modifierFlags.contains(.control), Compose.current != nil {
+                Compose.sendShortcut()
+                return nil
+            }
             // ⌘-shortcuts belong to the menu bar; ⌥ and ⌃ are left alone too.
             if event.modifierFlags.contains(.command) || event.modifierFlags.contains(.option) || event.modifierFlags.contains(.control) { return event }
             // `overlayOpen()`: with a dialog, popover or sheet up, only the overlays' own

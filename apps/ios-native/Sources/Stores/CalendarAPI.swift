@@ -284,6 +284,8 @@ struct CalSource: Codable, Hashable, Identifiable, Sendable {
     var isDefault: Bool
     var lastSyncedAt: Double?
     var syncError: String?
+    /// `idle | syncing | error`, what the toolbar's popover tags a row with.
+    var syncStatus: String?
     var eventCount: Int?
 
     enum CodingKeys: String, CodingKey {
@@ -293,6 +295,7 @@ struct CalSource: Codable, Hashable, Identifiable, Sendable {
         case isDefault = "is_default"
         case lastSyncedAt = "last_synced_at"
         case syncError = "sync_error"
+        case syncStatus = "sync_status"
         case eventCount = "event_count"
     }
 
@@ -310,6 +313,7 @@ struct CalSource: Codable, Hashable, Identifiable, Sendable {
         isDefault = (try? c.decode(Bool.self, forKey: .isDefault)) ?? false
         lastSyncedAt = try? c.decode(Double.self, forKey: .lastSyncedAt)
         syncError = try? c.decode(String.self, forKey: .syncError)
+        syncStatus = try? c.decode(String.self, forKey: .syncStatus)
         eventCount = try? c.decode(Int.self, forKey: .eventCount)
     }
 }
@@ -360,6 +364,8 @@ struct CalPrefs: Codable, Hashable, Sendable {
     var showDeclined: Bool
     /// `days | week | year` — which of `CalendarPage`'s three tabs opens by default.
     var defaultView: String
+    /// The Imbox's "Next three days" cover art, off by default (`CalendarCover.tsx`).
+    var coverArt: Bool = false
 
     /// What the app assumes before `/settings` has answered: the device's own conventions.
     /// `weekStart` of -1 means "not yet known", which is how `calendar` tells the difference
@@ -394,6 +400,7 @@ struct CalPrefs: Codable, Hashable, Sendable {
         case timeFormat = "time_format"
         case showDeclined = "show_declined"
         case defaultView = "default_view"
+        case coverArt = "cover_art"
     }
 
     init(from decoder: Decoder) throws {
@@ -407,6 +414,7 @@ struct CalPrefs: Codable, Hashable, Sendable {
         timeFormat = (try? c.decode(String.self, forKey: .timeFormat)) ?? ""
         showDeclined = (try? c.decode(Bool.self, forKey: .showDeclined)) ?? false
         defaultView = (try? c.decode(String.self, forKey: .defaultView)) ?? "week"
+        coverArt = (try? c.decode(Bool.self, forKey: .coverArt)) ?? false
     }
 }
 
@@ -483,6 +491,9 @@ struct EventInput {
     var reminders: [Int]?
     /// `{email, name}` rows. Sent only by a draft made from mail.
     var attendees: [[String: Any]]?
+    /// The Mac editor's "Extras" switches (`EventSheet.tsx:827-838`).
+    var countdown: Bool?
+    var circled: Bool?
 
     var payload: [String: Any] {
         var body: [String: Any] = [:]
@@ -502,6 +513,8 @@ struct EventInput {
         if let conferenceURL { body["conference_url"] = conferenceURL }
         if let url { body["url"] = url }
         if let reminders { body["reminders"] = reminders.map { ["minutes": $0] } }
+        if let countdown { body["countdown"] = countdown }
+        if let circled { body["circled"] = circled }
         return body
     }
 }
@@ -765,4 +778,45 @@ final class CalendarBus {
     private(set) var revision = 0
 
     func changed() { revision &+= 1 }
+}
+
+// MARK: - Connecting, subscribing, importing
+
+/// The parts of `CalendarSettingsSection.tsx` that bring a new source in. They live in an
+/// extension so the calls above, which the phone and the Mac's calendar share, stay as they are.
+extension CalendarAPI {
+    private struct LinkResponse: Decodable { var url: String }
+    private struct ImportResponse: Decodable { var imported: Int }
+
+    /// `POST /api/calendar/google/connect-link`: the URL that runs Google's consent screen for
+    /// the Calendar scope. `accountID` pre-fills which account to sign in as; `calendarOnly`
+    /// asks for calendar access and no mail access at all.
+    static func googleConnectLink(accountID: String? = nil, calendarOnly: Bool) async throws -> URL {
+        var body: [String: Any] = ["calendar_only": calendarOnly]
+        if let accountID { body["account_id"] = accountID }
+        let r = try await send("POST", "/api/calendar/google/connect-link", body: body, as: LinkResponse.self)
+        guard let url = URL(string: r.url) else { throw APIError.decoding("connect link") }
+        return url
+    }
+
+    /// Drops one Google account's calendars and their events, and forgets its Calendar scope.
+    /// Mail is untouched.
+    static func disconnectGoogle(accountID: String) async throws {
+        _ = try await run(try request("POST", "/api/calendar/google/\(accountID)/disconnect", body: [:]))
+    }
+
+    /// Follows an `.ics` link. `bad_url` / `bad_feed` come back as the bare code.
+    static func subscribe(url: String, name: String?) async throws -> CalSource {
+        var body: [String: Any] = ["url": url]
+        if let name, !name.isEmpty { body["name"] = name }
+        return try await send("POST", "/api/calendar/sources/subscribe", body: body, as: CalSource.self)
+    }
+
+    /// Uploads an `.ics` body; its events land in `calendarID` (or a new local calendar when
+    /// none is given) and become editable. Answers how many events came in.
+    static func importICS(_ ics: String, calendarID: String?) async throws -> Int {
+        var body: [String: Any] = ["ics": ics]
+        if let calendarID, !calendarID.isEmpty { body["calendar_id"] = calendarID }
+        return try await send("POST", "/api/calendar/sources/import", body: body, as: ImportResponse.self).imported
+    }
 }

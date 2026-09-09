@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UserNotifications
 
 /// The app's long-lived objects, reachable from the SwiftUI scene and from the AppKit
 /// delegate alike.
@@ -14,7 +15,7 @@ enum Services {
 /// type changes between builds, restoration fails and SwiftUI opens no window at all —
 /// on some Macs, for good. So the window is hosted here, by hand, when the scene has not
 /// produced one; the SwiftUI scene still provides the menu bar.
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     override init() {
         // Browsers draw text without macOS font smoothing, which is why the same weight of
         // Geist looks heavier in an AppKit window than in the web app. Registering it off
@@ -26,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hosted: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UNUserNotificationCenter.current().delegate = self
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in
             if NSApp.windows.filter({ $0.isVisible }).isEmpty { openHostedWindow() }
         }
@@ -51,7 +53,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    /// `ComposeContext.tsx`: a message still inside its undo window goes out when the app
+    /// closes (the web fires a beacon on `beforeunload`), rather than being dropped.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard Compose.hasPendingSend else { return .terminateNow }
+        Task { @MainActor in
+            await Compose.flushPendingSend()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
+
+    // MARK: Notifications
+
+    /// `native.notify(title, body, url)`: the deep link rides in `userInfo` and is followed
+    /// when the notification is clicked (the web's `takePendingUrl` on focus).
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        guard let path = response.notification.request.content.userInfo["url"] as? String else { return }
+        await MainActor.run {
+            NSApp.activate(ignoringOtherApps: true)
+            if path.hasPrefix("/t/") { Services.router.go(.thread(String(path.dropFirst(3)), peek: false)) }
+        }
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        [.banner, .sound]
+    }
 
     @MainActor
     private func openHostedWindow() {
@@ -72,6 +101,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         hosted = window
+    }
+}
+
+/// `Shell.tsx`: a system notification for the newest Imbox thread whenever `imbox_new`
+/// grows while the window is not in front.
+@MainActor
+enum NewMailNotifier {
+    private static var previousNew: Int?
+    private static var asked = false
+
+    static func countsChanged(_ counts: Counts) {
+        let now = counts.imboxNew
+        defer { previousNew = now }
+        guard let prev = previousNew, now > prev, !NSApp.isActive else { return }
+        Task {
+            guard let thread = (try? await APIClient.shared.imbox())?.newThreads.first else { return }
+            await notify(title: thread.lastFrom.name.isEmpty ? thread.lastFrom.email : thread.lastFrom.name,
+                         body: thread.subject.isEmpty ? "(no subject)" : thread.subject,
+                         url: "/t/\(thread.id)")
+        }
+    }
+
+    static func notify(title: String, body: String, url: String) async {
+        let center = UNUserNotificationCenter.current()
+        if !asked {
+            asked = true
+            _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
+        }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.userInfo = ["url": url]
+        try? await center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
 }
 
@@ -118,6 +180,7 @@ struct RootHost: View {
             .environment(DialogState.shared)
             .environment(SheetState.shared)
             .environment(Toasts.shared)
+            .environment(TooltipState.shared)
             .font(W.sm)
             .tint(W.foreground)
             .preferredColorScheme(colorScheme)
@@ -130,6 +193,7 @@ struct RootHost: View {
             .onChange(of: app.counts, initial: true) { _, counts in
                 let n = counts.imboxNew + counts.screener
                 NSApp?.dockTile.badgeLabel = n > 0 ? String(n) : nil
+                NewMailNotifier.countsChanged(counts)
             }
             .onAppear {
                 // Not in `App.init`: touching NSEvent there instantiates NSApplication before
@@ -154,20 +218,26 @@ struct RootHost: View {
     }
 }
 
-/// The menu bar the Tauri app shipped: ⌘N, ⌘K, ⌘J, ⌘B, ⌘1–9, ⌘[ ⌘].
+/// The menu bar the Tauri app shipped (`apps/mac/src-tauri/src/lib.rs`): heyflare (Settings…
+/// ⌘, / Switch Server…), File (New Message ⌘N), View (Imbox ⌘1 … Contacts ⌘9, Toggle Sidebar
+/// ⌘B, Assistant ⌘J, Reload ⌘R, Full Screen), Go (Search ⌘K, Back ⌘[, Forward ⌘]), Help
+/// (heyflare on GitHub). `0` stays a plain key: ⌘0 was "Actual Size" there, and a native
+/// window has no page zoom.
 struct MenuCommands: Commands {
     let app: AppState
     let router: Router
     let ui: UIState
 
     var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") { router.go(.settings("profile")) }.keyboardShortcut(",", modifiers: .command)
+            Button("Switch Server…") { Task { await app.clearServer() } }
+        }
         CommandGroup(replacing: .newItem) {
             Button("New Message") { Compose.open() }.keyboardShortcut("n", modifiers: .command)
         }
-        CommandGroup(replacing: .appSettings) {
-            Button("Settings…") { router.go(.settings("profile")) }.keyboardShortcut(",", modifiers: .command)
-        }
-        CommandMenu("Go") {
+        // The system View menu keeps "Enter Full Screen"; the Tauri items go in front of it.
+        CommandGroup(replacing: .sidebar) {
             Button("Imbox") { router.go(.imbox) }.keyboardShortcut("1", modifiers: .command)
             Button("The Feed") { router.go(.feed) }.keyboardShortcut("2", modifiers: .command)
             Button("Paper Trail") { router.go(.paperTrail) }.keyboardShortcut("3", modifiers: .command)
@@ -177,19 +247,21 @@ struct MenuCommands: Commands {
             Button("Bubble Up") { router.go(.bubbleUp) }.keyboardShortcut("7", modifiers: .command)
             Button("Previously Seen") { router.go(.previouslySeen) }.keyboardShortcut("8", modifiers: .command)
             Button("Contacts") { router.go(.contacts) }.keyboardShortcut("9", modifiers: .command)
-            Button("Calendar") { router.go(.calendar) }.keyboardShortcut("0", modifiers: .command)
+            Divider()
+            Button("Toggle Sidebar") { withAnimation(.linear(duration: 0.2)) { ui.sidebarOpen.toggle() } }.keyboardShortcut("b", modifiers: .command)
+            Button("Assistant") { ui.toggleAssistant() }.keyboardShortcut("j", modifiers: .command)
+            Divider()
+            // The webview's reload: fetch the session and every list again.
+            Button("Reload") { Task { await app.loadSession(); Mail.invalidate() } }.keyboardShortcut("r", modifiers: .command)
+        }
+        CommandMenu("Go") {
+            Button("Search") { ui.paletteOpen = true }.keyboardShortcut("k", modifiers: .command)
             Divider()
             Button("Back") { router.back() }.keyboardShortcut("[", modifiers: .command)
             Button("Forward") { router.goForward() }.keyboardShortcut("]", modifiers: .command)
-            Divider()
-            Button("Search & Commands…") { ui.paletteOpen.toggle() }.keyboardShortcut("k", modifiers: .command)
-            Button("Assistant") { ui.toggleAssistant() }.keyboardShortcut("j", modifiers: .command)
         }
-        CommandGroup(after: .sidebar) {
-            Button("Toggle Sidebar") { withAnimation(.easeOut(duration: 0.15)) { ui.sidebarOpen.toggle() } }.keyboardShortcut("b", modifiers: .command)
-        }
-        CommandGroup(after: .textEditing) {
-            Button("Send") { Compose.sendShortcut() }.keyboardShortcut(.return, modifiers: .command)
+        CommandGroup(replacing: .help) {
+            Button("heyflare on GitHub") { NSWorkspace.shared.open(URL(string: "https://github.com/doable-team/heyflare")!) }
         }
     }
 }

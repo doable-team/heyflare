@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// `Shell.tsx`: the sidebar, the inset with its 44pt top bar, the page, and every overlay.
 struct AppShell: View {
@@ -22,18 +23,20 @@ struct AppShell: View {
                 Sidebar()
                     .frame(width: ui.sidebarOpen ? 256 : 48)
                     .clipped()
-                VStack(spacing: 0) {
-                    InsetTopBar()
-                    PageHost()
-                        .overlay(alignment: .bottom) {
-                            if let dock = ui.dock { dock }
-                        }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(W.background)
-                .overlay(alignment: .bottomTrailing) {
-                    if !ui.assistantOpen { AssistantFab() }
-                }
+                    // `SidebarRail`: the strip on the sidebar's edge that toggles it.
+                    .overlay(alignment: .trailing) { SidebarRail().offset(x: 8) }
+                    .zIndex(1)
+                PageHost()
+                    // `sticky top-0` header: the page scrolls under the bar.
+                    .safeAreaInset(edge: .top, spacing: 0) { InsetTopBar() }
+                    .overlay(alignment: .bottom) {
+                        if let dock = ui.dock { dock }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(W.background)
+                    .overlay(alignment: .bottomTrailing) {
+                        if !ui.assistantOpen { AssistantFab() }
+                    }
                 if ui.assistantOpen && ui.assistantDocked {
                     AssistantPanel()
                         .frame(width: ui.assistantWidth)
@@ -43,7 +46,7 @@ struct AppShell: View {
             }
             if ui.assistantOpen && !ui.assistantDocked {
                 AssistantPanel()
-                    .frame(width: 400, height: 560)
+                    .frame(width: 400, height: min(560, ui.viewportHeight - 32))
                     .background(W.popover)
                     .overlay(RoundedRectangle(cornerRadius: W.radiusXl, style: .continuous).strokeBorder(W.border, lineWidth: 1))
                     .rounded(W.radiusXl)
@@ -51,15 +54,24 @@ struct AppShell: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     .padding(16)
             }
-            SheetLayer()
-            CommandPalette()
-            ShortcutsOverlay()
-            DialogLayer()
-            PopLayer()
-            ToastLayer()
+        }
+        // `backdrop-blur-xs` on the dialog, sheet and palette overlays: the app behind blurs.
+        .blur(radius: blurOpen ? 4 : 0)
+        .animation(.easeOut(duration: 0.1), value: blurOpen)
+        .overlay {
+            ZStack(alignment: .topLeading) {
+                SheetLayer()
+                CommandPalette()
+                ShortcutsOverlay()
+                DialogLayer()
+                PopLayer()
+                TooltipLayer()
+                ToastLayer()
+            }
         }
         .coordinateSpace(name: "window")
-        .animation(.easeOut(duration: 0.15), value: ui.sidebarOpen)
+        // `ui/sidebar.tsx`: `transition-[width] duration-200 ease-linear`.
+        .animation(.linear(duration: 0.2), value: ui.sidebarOpen)
         .animation(.easeOut(duration: 0.15), value: ui.assistantOpen)
         // The keys the web binds everywhere.
         .onKeys([
@@ -68,7 +80,7 @@ struct AppShell: View {
             "s": { ui.paletteOpen = true },
             "?": { ui.shortcutsOpen = true },
             "i": { router.go(.imbox) },
-            "0": { router.go(router.route == .calendar ? .imbox : .calendar) },
+            "0": { if case .calendar = router.route { router.go(.imbox) } else { router.go(.calendar(nil)) } },
             "q": { Compose.undoSend() },
         ], enabled: !overlayOpen, priority: -10)
         .onKeys([
@@ -87,7 +99,7 @@ struct AppShell: View {
         }
         // A popover is placed by the frame its button had when it opened; once the sidebar
         // slides or the window resizes that frame is stale, so the popover goes instead.
-        .onChange(of: ui.sidebarOpen) { _, _ in pops.closeAll() }
+        .onChange(of: ui.sidebarOpen) { _, _ in pops.closeAll(); TooltipState.shared.hideAll() }
         .onChange(of: ui.viewportHeight) { _, _ in pops.closeAll() }
         .onAppear { Mail.app = app }
     }
@@ -96,9 +108,38 @@ struct AppShell: View {
     private var overlayOpen: Bool {
         !pops.stack.isEmpty || dialogs.isOpen || ui.paletteOpen || ui.shortcutsOpen || sheet.isOpen
     }
+
+    /// The overlays that carry `backdrop-blur-xs` (dropdown menus do not).
+    private var blurOpen: Bool {
+        dialogs.isOpen || ui.paletteOpen || ui.shortcutsOpen || sheet.isOpen
+    }
 }
 
-/// `InsetTopBar`: the rail toggle, the page title, the scope.
+/// `SidebarRail`: a 16pt strip centred on the sidebar's edge; hovering draws a 2pt line in
+/// the sidebar border colour and shows a resize cursor, clicking toggles the sidebar.
+struct SidebarRail: View {
+    @Environment(UIState.self) private var ui
+    @State private var hovering = false
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.clear)
+            .frame(width: 16)
+            .frame(maxHeight: .infinity)
+            .overlay {
+                Rectangle().fill(hovering ? W.border : Color.clear).frame(width: 2)
+            }
+            .contentShape(Rectangle())
+            .onHover { over in
+                hovering = over
+                if over { (ui.sidebarOpen ? NSCursor.resizeLeft : NSCursor.resizeRight).push() } else { NSCursor.pop() }
+            }
+            .onTapGesture { withAnimation(.linear(duration: 0.2)) { ui.sidebarOpen.toggle() } }
+            .help("Toggle Sidebar")
+    }
+}
+
+/// `InsetTopBar`: the rail toggle, the page title, the scope — `bg-background/90 backdrop-blur`.
 struct InsetTopBar: View {
     @Environment(AppState.self) private var app
     @Environment(Router.self) private var router
@@ -106,8 +147,8 @@ struct InsetTopBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            WButton(icon: "panelLeft", variant: .ghost, size: .iconSm, muted: true, help: "Toggle sidebar (⌘B)") {
-                withAnimation(.easeOut(duration: 0.15)) { ui.sidebarOpen.toggle() }
+            WButton(icon: "panelLeft", variant: .ghost, size: .iconSm, muted: true) {
+                withAnimation(.linear(duration: 0.2)) { ui.sidebarOpen.toggle() }
             }
             HStack(spacing: 6) {
                 Text(router.route.title).font(W.font(14, 500)).foregroundStyle(W.foreground).lineLimit(1)
@@ -121,7 +162,20 @@ struct InsetTopBar: View {
         .padding(.horizontal, 12)
         .frame(height: 44)
         .background(W.background.opacity(0.9))
+        .background { BlurBehind() }
     }
+}
+
+/// `backdrop-blur`: an `NSVisualEffectView` blending with what is behind it in the window.
+struct BlurBehind: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let v = NSVisualEffectView()
+        v.blendingMode = .withinWindow
+        v.material = .headerView
+        v.state = .active
+        return v
+    }
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }
 
 /// `<main>`: the page in a scroll view with the web's padding, or the calendar filling the
@@ -133,8 +187,8 @@ struct PageHost: View {
         Group {
             if router.route.fullHeight {
                 page
-                    // Full-height pages run edge to edge: the web's card lands at x=292.
-                    .padding(.horizontal, 36)
+                    // `px-8 pt-4 pb-3`.
+                    .padding(.horizontal, 32)
                     .padding(.top, 16)
                     .padding(.bottom, 12)
             } else {
@@ -149,9 +203,9 @@ struct PageHost: View {
                             // scroll by a fraction of the window (the web's `scrollPageBy`).
                             .background(PageScrollHook())
                     }
-                    // Browsers overlay their scrollbar; a reserved gutter would shift the
-                    // centred column left by half its width.
-                    .scrollIndicators(.never)
+                    // The web's thin overlay scrollbar (`scrollbar-width: thin`): shown while
+                    // scrolling, over the content, never in a gutter of its own.
+                    .scrollIndicators(.automatic)
                     // Lets a list further down (ThreadListView) keep the keyboard cursor
                     // on screen without owning the scroll view itself.
                     .environment(\.pageScrollProxy, proxy)
@@ -180,7 +234,7 @@ struct PageHost: View {
         case .everything: ListPage(kind: .everything, title: "Everything", subtitle: "All your mail, every bucket, one list.", showBucket: true)
         case .contacts: ContactsPage()
         case .contact(let id): ContactDetailPage(contactID: id)
-        case .contactEmail(let email, _): ContactByEmailPage(email: email)
+        case .contactEmail(let email, let account): ContactByEmailPage(email: email, account: account)
         case .clips: ClipsPage()
         case .collections: CollectionsPage()
         case .collection(let id): CollectionDetailPage(collectionID: id)
@@ -191,11 +245,12 @@ struct PageHost: View {
         case .scheduled: DraftsPage(scheduled: true)
         case .thread(let id, let peek): ThreadPageView(threadID: id, peek: peek)
         case .bundle(let id): BundlePage(bundleID: id)
-        case .calendar: CalendarPage()
+        case .calendar(let date): CalendarPage(initialDate: date)
         case .journal(let date): if let date { JournalEntryPage(date: date) } else { JournalIndexPage() }
         case .habits: HabitsPage()
         case .settings(let tab): SettingsPage(tab: tab)
         case .search(let q): SearchPage(query: q)
+        case .compose(let to, let subject): ComposePage(to: to, subject: subject)
         }
     }
 }
@@ -252,7 +307,13 @@ private struct PageScrollHook: NSViewRepresentable {
     final class HookView: NSView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            if let sv = enclosingScrollView { PageScroll.scrollView = sv }
+            if let sv = enclosingScrollView {
+                PageScroll.scrollView = sv
+                // Browsers overlay their scrollbar; a legacy scroller's gutter would shift the
+                // centred column left by half its width.
+                sv.scrollerStyle = .overlay
+                sv.autohidesScrollers = true
+            }
         }
     }
 }

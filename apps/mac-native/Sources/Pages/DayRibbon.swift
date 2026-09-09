@@ -8,9 +8,10 @@ import AppKit
 struct DayRibbonView: View {
     let store: CalendarStore
     let cursor: String
-    var reveal = 0
+    let revealAt: RevealAt
     var onEvent: (CalEventFull) -> Void
     var onCreate: (Double, Double) -> Void
+    var onVisibleMonth: (String) -> Void
 
     @Environment(Router.self) private var router
     @State private var nightOpen = false
@@ -20,7 +21,9 @@ struct DayRibbonView: View {
     @State private var now = Date()
     @State private var labelDraft = ""
     @State private var editingLabel = false
+    @State private var hoverLabel = false
     @FocusState private var labelFocused: Bool
+    @State private var model = RibbonScrollModel()
 
     /// Measured off 37signals' own screenshot: dead linear, bars at full track height.
     private let pxPerHour: CGFloat = 42.7
@@ -51,7 +54,12 @@ struct DayRibbonView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            strip
+            ZStack {
+                // The cover photo runs floor-to-ceiling behind the whole strip, not as a thumbnail.
+                DayPhotoBackdrop(day: day)
+                strip
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             if !allDay.isEmpty { allDayRow }
             countdownsRow
         }
@@ -61,85 +69,75 @@ struct DayRibbonView: View {
         .task {
             while !Task.isCancelled { try? await Task.sleep(for: .seconds(30)); now = Date() }
         }
-        .onChange(of: store.calendar.firstWeekday) { _, _ in }
     }
 
     // MARK: Header
 
     private var header: some View {
-        VStack(spacing: 0) {
-            ZStack(alignment: .topTrailing) {
+        let habits = store.habitList(near: cursor).filter { $0.days.contains(CalUI.dow(cursor, cal)) }
+        return ZStack(alignment: .topTrailing) {
+            VStack(spacing: 0) {
                 VStack(spacing: 0) {
-                    Text(longLabel).font(W.font(14, 600)).lineLimit(1)
-                    if let rel = CalDate.relativeDay(CalDate.date(fromKey: cursor, in: cal) ?? Date(), in: cal) {
+                    Text(longLabel).font(W.font(14, 600)).foregroundStyle(W.foreground).truncate()
+                    if let rel = CalUI.relativeDay(cursor, cal) {
                         Text(rel).font(W.font(11)).foregroundStyle(W.mutedForeground)
-                    }
-                    if editingLabel {
-                        TextField("", text: $labelDraft).textFieldStyle(.plain).font(W.font(12)).multilineTextAlignment(.center)
-                            .focused($labelFocused)
-                            .onSubmit { commitLabel() }
-                            .onChange(of: labelFocused) { _, f in if !f && editingLabel { commitLabel() } }
-                            .onKeys(["Escape": { labelDraft = day?.label ?? ""; editingLabel = false }], priority: 10, whileTyping: true)
-                            .frame(height: 20).padding(.top, 4)
-                            .onAppear { labelFocused = true }
-                    } else {
-                        Button { labelDraft = day?.label ?? ""; editingLabel = true } label: {
-                            Text((day?.label.isEmpty == false) ? day!.label : "Name this day")
-                                .font(W.font(12)).foregroundStyle((day?.label.isEmpty == false) ? W.mutedForeground : W.tertiary.opacity(0.7))
-                                .lineLimit(1).frame(height: 20).contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain).padding(.top, 2)
                     }
                 }
                 .padding(.horizontal, 64)
                 .frame(maxWidth: .infinity)
-                HStack(spacing: 4) {
-                    WButton(icon: "bookOpen", variant: .ghost, size: .iconSm, muted: true, help: "Journal") { router.go(.journal(cursor)) }
-                    WButton(icon: "plus", variant: .ghost, size: .iconSm, muted: true, help: "New event") { onCreate(CalDate.ms(cursor, minutes: 9 * 60, in: cal), CalDate.ms(cursor, minutes: 10 * 60, in: cal)) }
-                }
-            }
-            let habits = store.habits(onKey: cursor)
-            if !habits.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(habits) { h in
-                        let done = h.completions.contains(cursor)
-                        Button { toggle(h) } label: {
-                            Text(h.icon.isEmpty ? String(h.name.prefix(1)).uppercased() : h.icon).font(W.font(13))
-                                .foregroundStyle(done ? .white : W.mutedForeground)
-                                .frame(width: 28, height: 28)
-                                .background(done ? colorFromHex(h.color.isEmpty ? "#37352f" : h.color) : Color.clear)
-                                .overlay(Circle().strokeBorder(done ? Color.clear : W.border, lineWidth: 1))
-                                .clipShape(Circle()).contentShape(Circle())
-                        }
-                        .buttonStyle(.plain).help("\(h.name)\(done ? " · done" : "")")
+                if editingLabel {
+                    TextField("", text: $labelDraft).textFieldStyle(.plain).font(W.font(12)).foregroundStyle(W.foreground).multilineTextAlignment(.center)
+                        .focused($labelFocused)
+                        .onSubmit { labelFocused = false }
+                        .onChange(of: labelFocused) { _, f in if !f && editingLabel { commitLabel() } }
+                        .onKeys(["Escape": { labelDraft = day?.label ?? ""; editingLabel = false }], priority: 10, whileTyping: true)
+                        .frame(height: 20).padding(.horizontal, 64).padding(.top, 4)
+                        .onAppear { labelFocused = true }
+                } else {
+                    Button { labelDraft = day?.label ?? ""; editingLabel = true } label: {
+                        Text((day?.label.isEmpty == false) ? day!.label : "Name this day")
+                            .font(W.font(12))
+                            .foregroundStyle((day?.label.isEmpty == false) ? W.mutedForeground : (hoverLabel ? W.tertiary : W.tertiary.opacity(0.7)))
+                            .truncate().frame(maxWidth: .infinity).frame(height: 20).padding(.horizontal, 64).contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain).onHover { hoverLabel = $0 }.padding(.top, 2)
                 }
-                .padding(.top, 6)
+                if !habits.isEmpty {
+                    FlowLayout(spacing: 6) {
+                        ForEach(habits) { h in
+                            RibbonHabit(habit: h, done: h.completions.contains(cursor)) { Task { do { try await store.toggleHabit(h, date: cursor) } catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) } } }
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 6)
+                }
             }
+            // The icons are taken out of the flow, so the date centres on the same axis as the
+            // day's name directly beneath it.
+            HStack(spacing: 4) {
+                HeaderIcon(icon: "bookOpen", help: "Journal") { router.go(.journal(cursor)) }
+                DayPhotoButton(store: store, date: cursor, day: day)
+                HeaderIcon(icon: "plus", help: "New event") { onCreate(CalDate.ms(cursor, minutes: 9 * 60, in: cal), CalDate.ms(cursor, minutes: 10 * 60, in: cal)) }
+            }
+            .padding(.trailing, 8).padding(.top, 8)
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .edgeLine(.bottom)
     }
 
+    /// `longDayLabel`: "Thursday, 15 January 2026".
     private var longLabel: String {
         guard let d = CalDate.date(fromKey: cursor, in: cal) else { return cursor }
-        let f = DateFormatter(); f.calendar = cal; f.locale = Locale(identifier: "en_GB"); f.dateFormat = "EEEE, d MMMM yyyy"
+        let f = DateFormatter(); f.calendar = cal; f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "EEEE, d MMMM yyyy"
         return f.string(from: d)
     }
 
     private func commitLabel() {
         editingLabel = false
-        let next = labelDraft.trimmingCharacters(in: .whitespaces)
+        let next = labelDraft
         guard next != (day?.label ?? "") else { return }
         Task {
-            do { store.adopt(day: try await CalendarAPI.updateDay(date: cursor, label: next)) }
-            catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
-        }
-    }
-
-    private func toggle(_ h: CalHabit) {
-        Task {
-            do { store.adopt(habit: try await CalendarAPI.toggleHabit(id: h.id, date: cursor, from: CalDate.addingDays(-83, toKey: cursor, in: cal), to: cursor)) }
+            do { store.adoptOrInsert(day: try await CalendarAPI.updateDay(cursor, label: next)) }
             catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
         }
     }
@@ -153,43 +151,50 @@ struct DayRibbonView: View {
         let gaps = CalRibbon.freeGaps(timed, from: winFrom, to: winTo)
         let hourStep = ribbon.pxPerHour >= 40 ? 1 : 2
         let nowMs = now.timeIntervalSince1970 * 1000
+        let mid = middle(ribbon)
+        model.middle = mid; model.ribbon = ribbon; model.cal = cal; model.onVisibleMonth = onVisibleMonth
         return GeometryReader { g in
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal) {
-                    ZStack(alignment: .topLeading) {
-                        Color.clear.frame(width: max(ribbon.length, 1), height: g.size.height)
-                        // Which day you are scrolled into: over its daylight, not its midnight.
-                        ForEach(dayMarks(ribbon), id: \.key) { m in
-                            Text("\(weekday(m.key)) \(dayNumber(m.key))")
-                                .font(W.font(10.5, CalDate.todayKey == m.key ? 600 : 400))
-                                .foregroundStyle(CalDate.todayKey == m.key ? W.foreground : W.mutedForeground)
-                                .fixedSize().frame(height: captionH)
-                                .alignmentGuide(.leading) { d in d.width / 2 - m.pos }
-                        }
-                        ForEach(ribbon.hours.filter { $0.hour % hourStep == 0 }, id: \.ms) { h in
-                            Text(heyTime(h.ms)).font(W.font(11)).monospacedDigit().foregroundStyle(W.mutedForeground).fixedSize()
-                                .offset(x: h.pos + 3, y: captionH)
-                        }
-                        // The anchor "Today" and the cursor scroll to: the middle of the day's waking hours.
-                        HStack(spacing: 0) { Color.clear.frame(width: max(0, middle(ribbon) - 0.5), height: 1); Color.clear.frame(width: 1, height: 1).id("anchor") }
-                        track(ribbon: ribbon, timed: timed, layout: layout, gaps: gaps, hourStep: hourStep, nowMs: nowMs, height: g.size.height - trackTop)
-                            .offset(y: trackTop)
+            ScrollView(.horizontal) {
+                ZStack(alignment: .topLeading) {
+                    Color.clear.frame(width: max(ribbon.length, 1), height: g.size.height)
+                    // Which day you are scrolled into: over its daylight, not its midnight.
+                    ForEach(dayMarks(ribbon), id: \.key) { m in
+                        Text("\(CalUI.weekdayLong(m.key, cal)) \(CalUI.dayNumber(m.key))")
+                            .font(W.font(10.5, CalDate.todayKey == m.key ? 600 : 400))
+                            .foregroundStyle(CalDate.todayKey == m.key ? W.foreground : W.mutedForeground)
+                            .fixedSize().frame(height: captionH)
+                            .alignmentGuide(.leading) { d in d.width / 2 - m.pos }
                     }
-                    .frame(width: max(ribbon.length, 1), height: g.size.height, alignment: .topLeading)
+                    ForEach(ribbon.hours.filter { $0.hour % hourStep == 0 }, id: \.ms) { h in
+                        Text(CalUI.heyTime(h.ms, store.prefs.timeFormat, cal)).font(W.font(11)).monospacedDigit().foregroundStyle(W.mutedForeground).fixedSize()
+                            .offset(x: h.pos + 3, y: captionH)
+                    }
+                    track(ribbon: ribbon, timed: timed, layout: layout, gaps: gaps, hourStep: hourStep, nowMs: nowMs, height: g.size.height - trackTop)
+                        .offset(y: trackTop)
                 }
-                .scrollIndicators(.never)
-                // The strip is laid out a beat after it appears; asking once more then lands it.
-                .onAppear { proxy.scrollTo("anchor", anchor: .center); DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { proxy.scrollTo("anchor", anchor: .center) } }
-                .onChange(of: ribbon.length) { _, _ in DispatchQueue.main.async { proxy.scrollTo("anchor", anchor: .center) } }
-                .onChange(of: cursor) { _, _ in proxy.scrollTo("anchor", anchor: .center) }
-                .onChange(of: reveal) { _, _ in withAnimation { proxy.scrollTo("anchor", anchor: .center) } }
-                .onChange(of: nightOpen) { _, _ in proxy.scrollTo("anchor", anchor: .center) }
+                .frame(width: max(ribbon.length, 1), height: g.size.height, alignment: .topLeading)
+                .background(ScrollHook(controller: model.scroll))
             }
+            .scrollIndicators(.never)
             // The strip runs on forever; fading the last few points reads as "there is more".
             .overlay(alignment: .leading) { LinearGradient(colors: [W.background, W.background.opacity(0)], startPoint: .leading, endPoint: .trailing).frame(width: 24).allowsHitTesting(false) }
             .overlay(alignment: .trailing) { LinearGradient(colors: [W.background.opacity(0), W.background], startPoint: .leading, endPoint: .trailing).frame(width: 24).allowsHitTesting(false) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            model.scroll.onScroll = { model.scrolled() }
+            model.scroll.onContentResize = { _, _ in model.anchor() }
+            model.anchor()
+        }
+        // Frame the day between its own two nights, without animating — on the ribbon changing
+        // shape, the cursor moving, Today, and the night opening.
+        .onChange(of: model.scroll.viewport.width) { _, _ in model.anchor() }
+        .onChange(of: ribbon.length) { _, _ in model.anchor(force: true) }
+        .onChange(of: cursor) { _, _ in model.anchor(force: true) }
+        .onChange(of: revealAt.nonce) { _, _ in model.anchor(force: true) }
+        .onChange(of: nightOpen) { _, _ in model.anchor(force: true) }
+        .onChange(of: store.prefs.nightStart) { _, _ in model.anchor(force: true) }
+        .onChange(of: store.prefs.nightEnd) { _, _ in model.anchor(force: true) }
     }
 
     private func track(ribbon: CalRibbon, timed: [CalEventFull], layout: [(column: Int, columns: Int)], gaps: [(from: Double, to: Double)], hourStep: Int, nowMs: Double, height: CGFloat) -> some View {
@@ -228,19 +233,19 @@ struct DayRibbonView: View {
                 let a = ribbon.pos(min(sketch.from, sketch.to)), b = ribbon.pos(max(sketch.from, sketch.to))
                 RoundedRectangle(cornerRadius: 3, style: .continuous).fill(W.foreground.opacity(0.1))
                     .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(W.foreground.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [3])))
-                    .frame(width: max(b - a, 6), height: height - 8).offset(x: a, y: 4).allowsHitTesting(false)
+                    .frame(width: max(b - a, 6), height: height - 8).offset(x: a, y: 4).allowsHitTesting(false).zIndex(30)
             }
             if nowMs >= winFrom && nowMs <= winTo {
                 let x = ribbon.pos(nowMs)
                 ZStack(alignment: .topLeading) {
-                    Rectangle().fill(Color.red).frame(width: 1, height: height)
-                    Circle().fill(Color.red).frame(width: 7, height: 7).offset(x: -3, y: -3)
-                    Text(heyTime(nowMs)).font(W.font(9.5, 500)).monospacedDigit().foregroundStyle(.white)
-                        .padding(.horizontal, 4).padding(.vertical, 1).background(Color.red)
+                    Rectangle().fill(CalUI.red).frame(width: 1, height: height)
+                    Circle().fill(CalUI.red).frame(width: 7, height: 7).offset(x: -3, y: -3)
+                    Text(CalUI.heyTime(nowMs, store.prefs.timeFormat, cal)).font(W.font(9.5, 500)).monospacedDigit().foregroundStyle(.white)
+                        .padding(.horizontal, 4).padding(.vertical, 1).background(CalUI.red)
                         .clipShape(UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 2, bottomTrailingRadius: 2, topTrailingRadius: 2))
                         .fixedSize()
                 }
-                .offset(x: x).allowsHitTesting(false)
+                .offset(x: x).allowsHitTesting(false).zIndex(40)
             }
             if timed.isEmpty {
                 Text("Nothing scheduled. Drag across the strip to make something.").font(W.font(12)).foregroundStyle(W.tertiary).fixedSize()
@@ -249,13 +254,16 @@ struct DayRibbonView: View {
         }
         .frame(width: max(ribbon.length, 1), height: height, alignment: .topLeading)
         // The space the spines read their drags in: the track itself, so x is ribbon offset.
-        .coordinateSpace(name: "ribbon")
+        .coordinateSpace(name: "ribbon-track")
         .contentShape(Rectangle())
         // Drag across the strip to draw out a new event; a plain click makes a half hour.
         .gesture(DragGesture(minimumDistance: 0).onChanged { v in
-            let from = sketch?.from ?? snapMs(ribbon.at(v.startLocation.x))
-            sketch = (from, snapMs(ribbon.at(v.location.x)))
-        }.onEnded { v in
+            if sketch == nil {
+                let from = snapMs(ribbon.at(v.startLocation.x))
+                sketch = (from, from + 30 * 60_000)
+            }
+            if v.translation != .zero { sketch = (sketch!.from, snapMs(ribbon.at(v.location.x))) }
+        }.onEnded { _ in
             guard let s = sketch else { return }
             sketch = nil
             let a = min(s.from, s.to), b = max(s.from, s.to)
@@ -273,9 +281,11 @@ struct DayRibbonView: View {
         guard EventDrag.moved(e, span) else { return }
         let p = EventPreview(event: e, span: span)
         pending = p
-        DragCommit.commit(p, store: store, month: CalDate.date(fromKey: cursor, in: cal) ?? Date()) { if pending == p { pending = nil } }
+        let from = fromKey, to = toKey
+        DragCommit.commit(p, refresh: { await store.refreshRange(fromKey: from, toKey: to) }) { if pending == p { pending = nil } }
     }
 
+    /// The waking span of the cursor's day, which is what belongs in the middle of the screen.
     private func middle(_ ribbon: CalRibbon) -> CGFloat {
         let dayStart = CalDate.ms(cursor, minutes: 0, in: cal)
         let ns = store.prefs.nightStart, ne = store.prefs.nightEnd
@@ -298,39 +308,24 @@ struct DayRibbonView: View {
         return out
     }
 
-    private func weekday(_ key: String) -> String {
-        guard let d = CalDate.date(fromKey: key, in: cal) else { return "" }
-        let f = DateFormatter(); f.calendar = cal; f.locale = Locale(identifier: "en_US"); f.dateFormat = "EEE"
-        return f.string(from: d).uppercased()
-    }
-    private func dayNumber(_ key: String) -> String { String(Int(key.suffix(2)) ?? 0) }
-
-    private func heyTime(_ ms: Double) -> String {
-        let d = Date(timeIntervalSince1970: ms / 1000)
-        let h = cal.component(.hour, from: d), m = cal.component(.minute, from: d)
-        if store.prefs.timeFormat == "24" { return String(format: "%02d:%02d", h, m) }
-        let hh = h % 12 == 0 ? 12 : h % 12
-        let ap = h < 12 ? "AM" : "PM"
-        return m == 0 ? "\(hh)\(ap)" : "\(hh):\(String(format: "%02d", m))\(ap)"
-    }
-
     // MARK: Floor
 
-    /// HEY pins all-day items to the bottom of the day, as fully-rounded pills.
+    /// HEY pins all-day items to the bottom of the day, as fully-rounded pills — wrapping.
     private var allDayRow: some View {
-        HStack(spacing: 6) {
+        FlowLayout(spacing: 6) {
             ForEach(allDay) { e in
-                let s = EventSurface(e)
+                let s = EventSurface(hex: e.calendarColor)
+                let title = e.title.isEmpty ? "(no title)" : e.title
                 Button { onEvent(e) } label: {
-                    Text((e.emoji.isEmpty ? "" : "\(e.emoji) ") + (e.title.isEmpty ? "(no title)" : e.title))
-                        .font(W.font(11.5, 500)).foregroundStyle(s.ink).lineLimit(1)
+                    Text((e.emoji.isEmpty ? "" : "\(e.emoji) ") + title)
+                        .font(W.font(11.5, 500)).foregroundStyle(s.ink).truncate()
                         .padding(.horizontal, 10).padding(.vertical, 3).frame(maxWidth: 240).background(s.fill).clipShape(Capsule())
                         .strikethrough(e.isDeclined).opacity(e.isDeclined ? 0.45 : 1)
                 }
-                .buttonStyle(.plain).help(e.title.isEmpty ? "(no title)" : e.title)
+                .buttonStyle(.plain).help(title)
             }
-            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12).padding(.vertical, 6)
         .edgeLine(.top)
     }
@@ -345,11 +340,8 @@ struct DayRibbonView: View {
                 HStack(spacing: 8) {
                     ForEach(Array(countdowns.enumerated()), id: \.element.id) { i, e in
                         if i > 0 { Text("·").foregroundStyle(W.tertiary) }
-                        let d = max(0, daysUntil(e.startDate ?? today))
-                        Button { onEvent(e) } label: {
-                            Text(d == 0 ? "Today — \(e.emoji) \(e.title)" : "\(d) \(d == 1 ? "day" : "days") until \(e.emoji) \(e.title)").lineLimit(1)
-                        }
-                        .buttonStyle(.plain)
+                        let d = max(0, CalUI.daysBetween(today, e.startDate ?? today, cal))
+                        CountdownLink(text: d == 0 ? "Today — \(e.emoji) \(e.title)" : "\(d) \(d == 1 ? "day" : "days") until \(e.emoji) \(e.title)") { onEvent(e) }
                     }
                 }
                 .font(W.font(11)).foregroundStyle(W.mutedForeground)
@@ -359,10 +351,80 @@ struct DayRibbonView: View {
             .edgeLine(.top)
         }
     }
+}
 
-    private func daysUntil(_ key: String) -> Int {
-        guard let a = CalDate.date(fromKey: CalDate.todayKey, in: cal), let b = CalDate.date(fromKey: key, in: cal) else { return 0 }
-        return cal.dateComponents([.day], from: a, to: b).day ?? 0
+/// The ribbon's scroll: `scrollLeft = middle - clientWidth / 2`, never animated.
+@MainActor
+final class RibbonScrollModel {
+    let scroll = ScrollController()
+    var middle: CGFloat = 0
+    var ribbon: CalRibbon?
+    var cal = CalDate.cal
+    var onVisibleMonth: (String) -> Void = { _ in }
+    private var anchored = false
+    private var wanted = false
+
+    func anchor(force: Bool = false) {
+        if force { anchored = false }
+        guard !anchored, scroll.viewport.width > 0, let ribbon, scroll.content.width >= ribbon.length - 1 else { return }
+        anchored = true
+        scroll.scrollTo(x: max(0, middle - scroll.viewport.width / 2), animated: false)
+    }
+
+    /// Tell the toolbar which month the ribbon is actually showing — a third in, where the eye is.
+    func scrolled() {
+        guard let ribbon else { return }
+        let ms = ribbon.at(scroll.offset.x + scroll.viewport.width / 3)
+        onVisibleMonth(String(CalDate.key(Date(timeIntervalSince1970: ms / 1000), in: cal).prefix(7)))
+    }
+}
+
+/// `rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground` with a 15px icon.
+private struct HeaderIcon: View {
+    let icon: String
+    let help: String
+    var action: () -> Void
+    @State private var hovering = false
+    var body: some View {
+        Button(action: action) {
+            Icon(icon, size: 15).foregroundStyle(hovering ? W.foreground : W.mutedForeground).padding(4)
+                .background(hovering ? W.accent : Color.clear).rounded(4).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(help)
+    }
+}
+
+/// `size-7 rounded-full border text-[13px]`, filled in the habit's colour when done.
+private struct RibbonHabit: View {
+    let habit: CalHabit
+    let done: Bool
+    var action: () -> Void
+    @State private var hovering = false
+    var body: some View {
+        Button(action: action) {
+            Text(habit.icon.isEmpty ? String(habit.name.prefix(1)).uppercased() : habit.icon).font(W.font(13))
+                .foregroundStyle(done ? .white : W.mutedForeground)
+                .frame(width: 28, height: 28)
+                .background(done ? (habit.color.isEmpty ? W.mutedForeground : Color(hex: habit.color)) : Color.clear)
+                .overlay(Circle().strokeBorder(done ? Color.clear : (hovering ? W.foreground.opacity(0.4) : W.border), lineWidth: 1))
+                .clipShape(Circle()).contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("\(habit.name)\(done ? " · done" : "")")
+    }
+}
+
+private struct CountdownLink: View {
+    let text: String
+    var action: () -> Void
+    @State private var hovering = false
+    var body: some View {
+        Button(action: action) { Text(text).lineLimit(1).foregroundStyle(hovering ? W.foreground : W.mutedForeground).contentShape(Rectangle()) }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
     }
 }
 
@@ -381,23 +443,27 @@ private struct Spine: View {
     /// (mode, x at press, x now, ended)
     var onDrag: (EventDrag.Mode, CGFloat, CGFloat, Bool) -> Void
     @State private var mode: EventDrag.Mode?
+    @State private var hovering = false
 
     var body: some View {
-        let s = EventSurface(event)
+        let s = EventSurface(hex: event.calendarColor)
         let left = ribbon.pos(event.startsAt)
         let width = max(ribbon.pos(event.endsAt) - left, minBar)
+        // Mid-drag the times show whatever the bar's width, because they are what you are choosing.
         let wide = width >= timeOnBar || dragging
-        let share = (height - 4) / CGFloat(max(slot.columns, 1))
+        // `top: column*share% + 2px; height: share% - 4px`.
+        let share = height / CGFloat(max(slot.columns, 1))
         let top = CGFloat(slot.column) * share + 2
         let barH = max(share - 4, 8)
         let grab = EventDrag.handle(width)
+        let title = (event.emoji.isEmpty ? "" : "\(event.emoji) ") + (event.title.isEmpty ? "(no title)" : event.title)
         ZStack(alignment: .topLeading) {
             s.fill
             if wide {
-                Text("\(heyTime(event.start))- \(heyTime(event.end))").font(W.font(10)).monospacedDigit().opacity(0.7).lineLimit(1)
+                Text(CalUI.heyRange(event.startsAt, event.endsAt, timeFormat)).font(W.font(10)).monospacedDigit().opacity(0.7).lineLimit(1)
                     .padding(.horizontal, 6).padding(.top, 3).frame(width: width, alignment: .leading)
             }
-            Text((event.emoji.isEmpty ? "" : "\(event.emoji) ") + (event.title.isEmpty ? "(no title)" : event.title))
+            Text(title)
                 .font(W.font(12, 600)).lineLimit(1)
                 .frame(width: max(barH - (wide ? 12 : 0) - 4, 8))
                 .rotationEffect(.degrees(-90))
@@ -408,12 +474,15 @@ private struct Spine: View {
         .frame(width: width, height: barH)
         .clipped()
         .rounded(3)
-        .opacity(event.isDeclined ? 0.4 : (event.isTentative ? 0.7 : 1))
+        .opacity(dragging ? 1 : (event.isDeclined ? 0.4 : (event.isTentative ? 0.7 : (hovering ? 0.9 : 1))))
         .overlay { if dragging { RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(W.foreground.opacity(0.4), lineWidth: 1) } }
         .shadow(color: .black.opacity(dragging ? 0.2 : 0), radius: 8, y: 4)
+        // The bar clips its own contents, so the ink ring sits outside it and overshoots the edges.
+        .overlay { if event.circled { InkCircle().zIndex(30) } }
         .contentShape(Rectangle())
+        .onHover { hovering = $0 }
         .onTapGesture(perform: onTap)
-        .gesture(DragGesture(minimumDistance: EventDrag.slop, coordinateSpace: .named("ribbon")).onChanged { v in
+        .gesture(DragGesture(minimumDistance: EventDrag.slop, coordinateSpace: .named("ribbon-track")).onChanged { v in
             guard event.writable else { return }
             if mode == nil {
                 let x = v.startLocation.x - left
@@ -427,16 +496,7 @@ private struct Spine: View {
         })
         .offset(x: left, y: top)
         .zIndex(dragging ? 35 : 20)
-        .help("\(event.title.isEmpty ? "(no title)" : event.title) · \(heyTime(event.start))- \(heyTime(event.end))")
-    }
-
-    private func heyTime(_ d: Date) -> String {
-        let cal = CalDate.cal
-        let h = cal.component(.hour, from: d), m = cal.component(.minute, from: d)
-        if timeFormat == "24" { return String(format: "%02d:%02d", h, m) }
-        let hh = h % 12 == 0 ? 12 : h % 12
-        let ap = h < 12 ? "AM" : "PM"
-        return m == 0 ? "\(hh)\(ap)" : "\(hh):\(String(format: "%02d", m))\(ap)"
+        .help("\(event.title.isEmpty ? "(no title)" : event.title) · \(CalUI.heyRange(event.startsAt, event.endsAt, timeFormat))")
     }
 }
 
@@ -464,7 +524,8 @@ private struct NightBlock: View {
                         .offset(x: s.x * run.size, y: s.y * height)
                 }
                 if let midPos { Rectangle().fill(Color.black).frame(width: 1, height: height).offset(x: midPos) }
-                Text("Nighttime").font(W.font(9.5)).tracking(0.5).foregroundStyle(Color.white.opacity(0.45)).fixedSize()
+                // `tracking-wide`: 0.025em.
+                Text("Nighttime").font(W.font(9.5)).tracking(0.2375).foregroundStyle(Color.white.opacity(0.45)).fixedSize()
                     .rotationEffect(.degrees(-90))
                     .frame(width: run.size, height: height)
             }

@@ -87,6 +87,13 @@ final class ContactsStore {
     var contacts: [Contact] = []
     var loading = false
     var error: String?
+    /// True once the first answer (or failure) has landed. The web has no cache, so it
+    /// always shows the skeleton on first load; the Mac page keys its skeleton on this
+    /// rather than on the list being empty, which the cached seed below makes it not.
+    var fresh = false
+    /// The query `contacts` answers. The web keys its cache on the query, so a fresh search
+    /// term shows the skeleton until its own answer lands; this lets the page do the same.
+    var answeredQuery = ""
 
     /// Not observed: a pending debounce is bookkeeping, and redrawing on it would
     /// re-run the very `onChange` that scheduled it.
@@ -102,17 +109,30 @@ final class ContactsStore {
         loading = true
         defer { loading = false }
         let searching = !query.isEmpty
+        let asked = query
         do {
-            contacts = try await APIClient.shared.contacts(query: query)
+            contacts = try await APIClient.shared.contacts(query: asked)
             error = nil
             // Only the unfiltered list is cached. A result set for "ann" restored under a
             // blank search field would read as the whole address book being three people.
             if !searching { ContentCache.shared.store(contacts, for: .contacts) }
+            fresh = true
+            answeredQuery = asked
         } catch is CancellationError {
             return
         } catch {
             self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription
+            fresh = true
+            answeredQuery = asked
         }
+    }
+
+    /// The web (`useContacts(q)`) asks on every keystroke, cancelling nothing — the newest
+    /// answer wins. Here the previous request is cancelled so a slow early answer cannot
+    /// land on top of a later one.
+    func search() {
+        searchTask?.cancel()
+        searchTask = Task { [weak self] in await self?.load() }
     }
 
     /// The worker searches server-side, so every keystroke would otherwise be a round trip.
@@ -133,6 +153,8 @@ final class ContactDetailStore {
     var detail: ContactDetailResponse?
     var loading = true
     var error: String?
+    /// True once the first answer (or failure) for this person has landed.
+    var fresh = false
     /// True while a change is being written, so the controls can refuse a second tap.
     var saving = false
 
@@ -149,10 +171,12 @@ final class ContactDetailStore {
             detail = fetched
             ContentCache.shared.store(fetched, for: .contact(id))
             error = nil
+            fresh = true
         } catch is CancellationError {
             return
         } catch {
             self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription
+            fresh = true
         }
     }
 
@@ -199,6 +223,8 @@ final class ClipsStore {
     var clips: [Clip] = []
     var loading = true
     var error: String?
+    /// True once the first answer (or failure) has landed (the Mac skeleton keys on it).
+    var fresh = false
 
     /// Same shape in all four library stores below: seed from the cache so the list is
     /// already drawn when the screen appears, then let the request correct it.
@@ -213,10 +239,12 @@ final class ClipsStore {
             clips = try await APIClient.shared.clips()
             ContentCache.shared.store(clips, for: .clips)
             error = nil
+            fresh = true
         } catch is CancellationError {
             return
         } catch {
             self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription
+            fresh = true
         }
     }
 }
@@ -227,6 +255,8 @@ final class CollectionsStore {
     var collections: [MailCollection] = []
     var loading = true
     var error: String?
+    /// True once the first answer (or failure) has landed (the Mac skeleton keys on it).
+    var fresh = false
 
     init() {
         collections = ContentCache.shared.value([MailCollection].self, for: .collections) ?? []
@@ -239,10 +269,12 @@ final class CollectionsStore {
             collections = try await APIClient.shared.collections()
             ContentCache.shared.store(collections, for: .collections)
             error = nil
+            fresh = true
         } catch is CancellationError {
             return
         } catch {
             self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription
+            fresh = true
         }
     }
 }
@@ -253,6 +285,8 @@ final class CollectionDetailStore {
     var detail: CollectionDetailResponse?
     var loading = true
     var error: String?
+    /// True once the first answer (or failure) has landed (the Mac skeleton keys on it).
+    var fresh = false
 
     func load(id: String) async {
         loading = detail == nil
@@ -260,10 +294,12 @@ final class CollectionDetailStore {
         do {
             detail = try await APIClient.shared.collection(id)
             error = nil
+            fresh = true
         } catch is CancellationError {
             return
         } catch {
             self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription
+            fresh = true
         }
     }
 }
@@ -276,6 +312,8 @@ final class LabelsStore {
     var counts: [String: Int] = [:]
     var loading = true
     var error: String?
+    /// True once the first answer (or failure) has landed (the Mac skeleton keys on it).
+    var fresh = false
 
     /// Only the labels are cached, not their counts: the counts are a fan-out of one
     /// request per label and a stale number beside a name is worse than no number at all.
@@ -290,10 +328,12 @@ final class LabelsStore {
             labels = try await APIClient.shared.labels()
             ContentCache.shared.store(labels, for: .labels)
             error = nil
+            fresh = true
         } catch is CancellationError {
             return
         } catch {
             self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription
+            fresh = true
             return
         }
         await loadCounts()
@@ -324,6 +364,8 @@ final class LabelThreadsStore {
     var threads: [ThreadSummary] = []
     var loading = true
     var error: String?
+    /// True once the first answer (or failure) has landed (the Mac skeleton keys on it).
+    var fresh = false
 
     func load(id: String) async {
         // Seeded per label id, so reopening a label you have looked at is instant.
@@ -336,10 +378,12 @@ final class LabelThreadsStore {
             threads = try await APIClient.shared.labelThreads(id).threads
             ContentCache.shared.store(threads, for: .labelThreads(id))
             error = nil
+            fresh = true
         } catch is CancellationError {
             return
         } catch {
             self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription
+            fresh = true
         }
     }
 }

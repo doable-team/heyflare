@@ -31,9 +31,13 @@ struct ThreadRowView: View {
 
     @Environment(AppState.self) private var app
     @Environment(Router.self) private var router
+    @Environment(\.searchTerms) private var terms
     @State private var hovering = false
+    /// The text column's width, for the web's `max-w-[55%]` / `sm:max-w-[45%]` caps.
+    @State private var textWidth: CGFloat = 0
 
     private var unread: Bool { thread.unread || !thread.seen }
+    private var acctEmail: String? { app.accounts.count > 1 ? app.account(thread.accountID)?.email : nil }
     private var showQuick: Bool { quickActions && onQuick != nil }
     private var glyph: String? { app.accounts.count > 1 ? app.glyph(for: thread.accountID) : nil }
     private var stack: [Address]? {
@@ -63,27 +67,31 @@ struct ThreadRowView: View {
                     if compact {
                         HStack(spacing: 6) {
                             if unread { Circle().fill(W.foreground).frame(width: 6, height: 6) }
-                            Text(thread.displaySubject).font(W.font(13, unread ? 600 : 400)).foregroundStyle(unread ? W.foreground : W.mutedForeground).lineLimit(1).layoutPriority(1)
+                            // `shrink-0 max-w-[55%]`
+                            highlighted(thread.displaySubject, terms).font(W.font(13, unread ? 600 : 400)).foregroundStyle(unread ? W.foreground : W.mutedForeground).lineLimit(1).layoutPriority(1)
+                                .frame(maxWidth: textWidth > 0 ? textWidth * 0.55 : nil, alignment: .leading)
                             if thread.messageCount > 1 { Text("\(thread.messageCount)").font(W.xs).monospacedDigit().foregroundStyle(W.tertiary) }
-                            AccountGlyph(glyph: glyph)
+                            AccountGlyph(glyph: glyph, label: acctEmail)
                             if thread.bubbled { WBadge("Bubbled up", variant: .outline, muted: true, small: true) }
                             if showBucket && thread.bucket != .imbox { WBadge(thread.bucket.title, variant: .outline, muted: true, small: true) }
-                            Text(senderLine(thread) + (thread.snippet.isEmpty ? "" : " — \(thread.snippet)")).font(W.s13).foregroundStyle(unread ? W.foreground : W.tertiary).lineLimit(1)
+                            highlighted(senderLine(thread) + (thread.snippet.isEmpty ? "" : " — \(thread.snippet)"), terms).font(W.s13).foregroundStyle(unread ? W.foreground : W.tertiary).lineLimit(1)
                         }
                     } else {
                         HStack(spacing: 6) {
                             if unread { Circle().fill(W.foreground).frame(width: 6, height: 6) }
-                            Text(thread.displaySubject).font(W.font(13, unread ? 600 : 500)).webLine(13, weight: unread ? 600 : 500).foregroundStyle(unread ? W.foreground : W.foreground90).lineLimit(1)
+                            highlighted(thread.displaySubject, terms).font(W.font(13, unread ? 600 : 500)).webLine(13, weight: unread ? 600 : 500).foregroundStyle(unread ? W.foreground : W.foreground90).lineLimit(1)
                             if let stack { WAvatarStack(people: stack, size: 14, max: 6) }
                             if thread.messageCount > 1 { Text("\(thread.messageCount)").font(W.xs).monospacedDigit().foregroundStyle(W.tertiary) }
-                            AccountGlyph(glyph: glyph)
+                            AccountGlyph(glyph: glyph, label: acctEmail)
                             if thread.bubbled { WBadge("Bubbled up", variant: .outline, muted: true, small: true) }
                             if showBucket && thread.bucket != .imbox { WBadge(thread.bucket.title, variant: .outline, muted: true, small: true) }
                         }
                         HStack(spacing: 6) {
-                            Text(senderLine(thread)).font(W.s13).webLine(13).foregroundStyle(unread ? W.foreground : W.mutedForeground).lineLimit(1).layoutPriority(1)
+                            // `shrink-0 sm:max-w-[45%]`
+                            highlighted(senderLine(thread), terms).font(W.s13).webLine(13).foregroundStyle(unread ? W.foreground : W.mutedForeground).lineLimit(1).layoutPriority(1)
+                                .frame(maxWidth: textWidth > 0 ? textWidth * 0.45 : nil, alignment: .leading)
                             if !thread.snippet.isEmpty {
-                                Text("— \(thread.snippet)").font(W.xs).webLine(12).foregroundStyle(unread ? W.foreground : W.mutedForeground).lineLimit(1)
+                                highlighted("— \(thread.snippet)", terms).font(W.xs).webLine(12).foregroundStyle(unread ? W.foreground : W.mutedForeground).lineLimit(1)
                             }
                         }
                     }
@@ -92,12 +100,13 @@ struct ThreadRowView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .background(GeometryReader { g in Color.clear.onChange(of: g.size.width, initial: true) { _, w in textWidth = w } })
 
             // meta / quick actions
             ZStack(alignment: .trailing) {
                 HStack(spacing: 8) {
                     if !compact {
-                        ForEach(thread.labels.prefix(2)) { l in WBadge(l.name, variant: .outline, muted: true, small: true) }
+                        ForEach(thread.labels.prefix(2)) { l in WBadge(l.name, variant: .outline, muted: true, small: true, paddingX: 6) }
                     }
                     if !thread.note.isEmpty { Icon("stickyNote", size: 13).help("Has a note") }
                     if thread.trackersBlocked > 0 { Icon("shieldCheck", size: 13).help("Blocked \(thread.trackersBlocked) spy tracker\(thread.trackersBlocked == 1 ? "" : "s")") }
@@ -120,7 +129,9 @@ struct ThreadRowView: View {
             .frame(minWidth: showQuick && hovering ? 116 : 56, alignment: .trailing)
         }
         .padding(.horizontal, 8)
-        .frame(height: compact ? 44 : 56)
+        // `row-out`: the row fades, slides right and collapses (`max-height: 0`) together.
+        .frame(height: leaving ? 0 : (compact ? 44 : 56))
+        .clipped()
         .background(selected ? W.accent : (focused || hovering ? W.muted : Color.clear))
         .rounded(W.radiusMd)
         .overlay(alignment: .leading) {
@@ -133,8 +144,11 @@ struct ThreadRowView: View {
         .animation(.easeIn(duration: 0.12), value: leaving)
     }
 
+    /// `Quick`: a ghost icon-xs button; while the action is on (`active`) it sits on `bg-accent`.
     private func quick(_ icon: String, _ label: String, _ kbd: String, active: Bool, action: @escaping () -> Void) -> some View {
-        WButton(icon: icon, variant: .ghost, size: .iconXs, muted: !active, expanded: active, help: "\(label)  \(kbd)", action: action)
+        WButton(icon: icon, variant: .ghost, size: .iconXs, muted: !active, help: "\(label)  \(kbd)", action: action)
+            .background(active ? W.accent : Color.clear)
+            .rounded(W.radiusMd)
     }
 }
 
@@ -163,7 +177,7 @@ struct BundleRowView: View {
                         Text(bundle.name.isEmpty ? bundle.email : bundle.name).font(W.font(13, open ? 600 : 500)).foregroundStyle(open ? W.foreground : W.foreground90).lineLimit(1)
                         Icon("layers", size: 12).foregroundStyle(W.mutedForeground)
                         Text("\(bundle.messageCount) \(bundle.messageCount == 1 ? "message" : "messages")").font(W.xs).monospacedDigit().foregroundStyle(W.tertiary)
-                        AccountGlyph(glyph: app.accounts.count > 1 ? app.glyph(for: bundle.accountID) : nil)
+                        AccountGlyph(glyph: app.accounts.count > 1 ? app.glyph(for: bundle.accountID) : nil, label: app.account(bundle.accountID)?.email)
                         if compact {
                             Text(bundle.latest.displaySubject + (bundle.latest.snippet.isEmpty ? "" : " — \(bundle.latest.snippet)")).font(W.s13).foregroundStyle(W.foreground80).lineLimit(1)
                         }
@@ -261,6 +275,8 @@ struct ThreadListView: View {
     @State private var cursor = -1
     @State private var leaving: Set<String> = []
     @State private var lastClick: String?
+    /// Where the bulk bar would sit unpinned (window coordinates), for `sticky top-11`.
+    @State private var barTop: CGFloat = .infinity
 
     private var all: [ThreadSummary] { sections.flatMap(\.threads) }
     private var sectionItems: [[ListItem]] {
@@ -292,9 +308,18 @@ struct ThreadListView: View {
                 SkeletonRows(compact: compact)
             } else {
                 if !selected.isEmpty {
+                    // `sticky top-11 z-20`: the page's scroll view lives in the shell, so the bar
+                    // is pinned by measuring where it would be and offsetting it back under the
+                    // 44pt top bar once it has scrolled past.
+                    Color.clear.frame(height: 0)
+                        .background(GeometryReader { g in
+                            Color.clear.onChange(of: g.frame(in: .named("window")).minY, initial: true) { _, y in barTop = y }
+                        })
                     BulkBar(selected: selected, threads: all, onClear: { selected = [] }) { action, msg, removes in
                         act(Array(selected), action, msg, removes: removes)
                     }
+                    .offset(y: max(0, 44 - barTop))
+                    .zIndex(1)
                 }
                 let offsets = sectionOffsets
                 ForEach(Array(sections.enumerated()), id: \.offset) { si, s in
@@ -340,11 +365,13 @@ struct ThreadListView: View {
             "e": { act(targets(), .seen, "Done", removes: false) },
         ], enabled: keysEnabled && ui.region == .content)
         // `b` and `g` only mean something with a selection, so they bind only then.
-        .onKeys(["b": { BulkBar.labelSelection(selected, all, pops: PopLayerState.shared) }, "g": { BulkBar.mergeSelection(selected, all) { selected = [] } }],
+        .onKeys(["b": { BulkBar.labelSelection(selected, all, pops: PopLayerState.shared) }, "g": { Task { await BulkBar.mergeSelection(selected, all) { selected = [] } } }],
                 enabled: keysEnabled && ui.region == .content && !selected.isEmpty)
         // A bound key is a claimed key, so these only bind while they have something to
         // do: the Imbox's own `o` and a page's Escape get through otherwise.
-        .onKeys(["Enter": { open() }, "o": { open() }], enabled: keysEnabled && ui.region == .content && cursor >= 0 && cursor < items.count)
+        // With rows selected but nothing focused the web's `listRowActive()` still swallows
+        // `o`, so the Imbox does not jump to Power Through under a selection.
+        .onKeys(["Enter": { open() }, "o": { open() }], enabled: keysEnabled && ui.region == .content && ((cursor >= 0 && cursor < items.count) || !selected.isEmpty))
         .onKeys(["Escape": { selected = [] }], enabled: keysEnabled && ui.region == .content && !selected.isEmpty)
         .onChange(of: all.map(\.id)) { _, ids in
             selected = selected.filter { ids.contains($0) }
@@ -409,7 +436,8 @@ struct ThreadListView: View {
         // `scrollIntoView` on the web: the cursor moving is not enough on its own, since the
         // list sits inside the page's own ScrollView rather than owning one of its own.
         if items.indices.contains(cursor) {
-            withAnimation(nil) { pageScroll?.scrollTo(items[cursor].id, anchor: .center) }
+            // `scrollIntoView({ block: "nearest" })`: the least movement that shows the row.
+            withAnimation(nil) { pageScroll?.scrollTo(items[cursor].id, anchor: nil) }
         }
     }
 
@@ -440,19 +468,24 @@ struct ThreadListView: View {
         }
     }
 
+    /// `<Modal size="sm">`: `sm:max-w-sm` (384), `p-4 gap-4`, a header of title + description
+    /// (`gap-2`), and the close button at `top-2 right-2`.
     private func bubble(_ ids: [String]) {
-        dialogs.present("bubble", width: 340) {
-            VStack(alignment: .leading, spacing: 0) {
-                VStack(alignment: .leading, spacing: 2) {
+        dialogs.present("bubble", width: 384) {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
                     Text("Bubble up").font(W.font(16, 500)).webLine(16, weight: 500).foregroundStyle(W.foreground)
                     Text("Out of sight until the moment you pick.").font(W.sm).foregroundStyle(W.mutedForeground)
                 }
-                .padding(16).padding(.bottom, 0)
                 DateTimePicker(embedded: true, onPick: { at in
                     dialogs.dismiss("bubble")
                     act(ids, .bubbleUp(at), "Will bubble up later")
                 }, onCancel: { dialogs.dismiss("bubble") })
-                .padding(.horizontal, 12).padding(.bottom, 12)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .topTrailing) {
+                WButton(icon: "x", variant: .ghost, size: .iconSm, help: "Close") { dialogs.dismiss("bubble") }.padding(8)
             }
         }
     }
@@ -467,6 +500,7 @@ struct BulkBar: View {
 
     @Environment(PopLayerState.self) private var pops
     @Environment(DialogState.self) private var dialogs
+    @State private var busy = false
 
     private var sel: [ThreadSummary] { threads.filter { selected.contains($0.id) } }
     private var allRead: Bool { sel.allSatisfy { !$0.unread } }
@@ -481,7 +515,8 @@ struct BulkBar: View {
             WButton(icon: "bookmark", variant: .ghost, size: .iconSm, muted: true, help: "Set aside  a") { onAct(.setAside(true), "Set aside", true) }
             WButton(icon: "arrowUpCircle", variant: .ghost, size: .iconSm, muted: true, help: "Bubble up  z") {
                 pops.toggle("bulk-bubble", side: .bottom, align: .start) {
-                    PopCard { DateTimePicker(embedded: true, onPick: { at in pops.closeAll(); onAct(.bubbleUp(at), "Will bubble up later", true) }, onCancel: { pops.closeAll() }) }
+                    // `PopoverContent className="w-auto p-0"` around the full picker: title row + Cancel.
+                    PopCard(padding: 0) { DateTimePicker(onPick: { at in pops.closeAll(); onAct(.bubbleUp(at), "Will bubble up later", true) }, onCancel: { pops.closeAll() }) }
                 }
             }
             .popAnchor("bulk-bubble")
@@ -506,13 +541,27 @@ struct BulkBar: View {
             }
             .popAnchor("bulk-collect")
             if selected.count >= 2 {
-                WButton("Merge", icon: "gitMerge", variant: .ghost, size: .sm, muted: true) { Self.mergeSelection(selected, threads, onClear: onClear) }
+                Button {
+                    guard !busy else { return }
+                    busy = true
+                    Task { defer { busy = false }; await Self.mergeSelection(selected, threads, onClear: onClear) }
+                } label: {
+                    HStack(spacing: 4) {
+                        if busy { Spinner(size: 14) } else { Icon("gitMerge", size: 14) }
+                        Text("Merge")
+                    }
+                }
+                .buttonStyle(.web(.ghost, .sm, muted: true))
+                .disabled(busy)
+                .help("Merge")
             }
             Spacer()
             WButton(icon: "trash2", variant: .ghost, size: .iconSm, muted: true, help: "Trash  #") { onAct(.move(.trash), "Moved to trash", true) }
         }
         .padding(.horizontal, 8)
         .frame(height: 40)
+        // `bg-background/90 backdrop-blur`
+        .background { Rectangle().fill(.ultraThinMaterial) }
         .background(W.background.opacity(0.9))
         .edgeLine(.bottom)
         .padding(.horizontal, -8)
@@ -532,11 +581,12 @@ extension BulkBar {
     }
 
     /// Merges the selection into its newest thread, from the bar's button or the `g` key.
-    static func mergeSelection(_ selected: Set<String>, _ threads: [ThreadSummary], onClear: @escaping () -> Void) {
+    static func mergeSelection(_ selected: Set<String>, _ threads: [ThreadSummary], onClear: @escaping () -> Void) async {
         let sorted = threads.filter { selected.contains($0.id) }.sorted { $0.lastMessageAt > $1.lastMessageAt }
         guard sorted.count >= 2, let target = sorted.first else { return }
-        Task {
-            if await Mail.raw(target.id, ["action": "merge", "thread_ids": sorted.dropFirst().map(\.id)], toast: "Merged \(sorted.count) threads") { onClear() }
+        if await Mail.raw(target.id, ["action": "merge", "thread_ids": sorted.dropFirst().map(\.id)]) {
+            Toasts.shared.success("Merged \(sorted.count) threads")
+            onClear()
         }
     }
 }
@@ -571,6 +621,36 @@ struct LoadMore: View {
     @Environment(UIState.self) private var ui
     @State private var top: CGFloat = .infinity
     private func nudge() {
-        if hasMore && !loading && top < ui.viewportHeight + 300 { onMore() }
+        // `rootMargin: "400px"`
+        if hasMore && !loading && top < ui.viewportHeight + 400 { onMore() }
     }
+}
+
+// MARK: - Search highlighting
+
+private struct SearchTermsKey: EnvironmentKey { static let defaultValue: [String] = [] }
+extension EnvironmentValues {
+    /// The Search page's query words: every row under it marks its matches.
+    var searchTerms: [String] {
+        get { self[SearchTermsKey.self] }
+        set { self[SearchTermsKey.self] = newValue }
+    }
+}
+
+/// `::highlight(hey-search){background:var(--accent);text-decoration:underline}`: each
+/// occurrence of each word, case-insensitively, on an accent wash and underlined.
+func highlighted(_ string: String, _ words: [String]) -> Text {
+    guard !words.isEmpty else { return Text(string) }
+    var a = AttributedString(string)
+    for w in words where !w.isEmpty {
+        var from = string.startIndex
+        while from < string.endIndex, let r = string.range(of: w, options: .caseInsensitive, range: from..<string.endIndex) {
+            if let ar = Range(r, in: a) {
+                a[ar].backgroundColor = W.accent
+                a[ar].underlineStyle = .single
+            }
+            from = r.upperBound
+        }
+    }
+    return Text(a)
 }

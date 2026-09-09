@@ -51,11 +51,25 @@ enum Compose {
         current?.send()
     }
 
+    /// `ComposeContext.tsx`: something is still inside its undo window.
+    static var hasPendingSend: Bool { pending != nil }
+
+    /// The web's `beforeunload` beacon: on quit, a queued message goes out now rather than
+    /// being dropped with the process.
+    static func flushPendingSend() async {
+        guard let p = pending else { return }
+        p.task.cancel()
+        pending = nil
+        _ = try? await APIClient.shared.send(p.payload)
+    }
+
     static func queueSend(_ payload: [String: Any], undoSeconds: Int) {
-        // A second send inside the undo window fires the first one now; nothing is dropped.
+        // `ComposeContext.tsx`: a second send inside the undo window clears the timer and
+        // replaces the pending message — the first one is never sent, and its toast runs
+        // out on its own.
         if let p = pending {
-            p.task.cancel(); Toasts.shared.dismiss(p.toast); pending = nil
-            Task { await fire(p.payload) }
+            p.task.cancel()
+            pending = nil
         }
         let secs = max(0, undoSeconds)
         if secs <= 0 { Task { await fire(payload) }; return }
@@ -147,6 +161,9 @@ final class ComposerModel {
         subject = initial.subject
         draftID = initial.draftID
         attachments = initial.attachments
+        // `text-[15px] leading-[1.6]`: a 24pt line box.
+        editor.fontSize = 15
+        editor.lineHeight = 24
     }
 
     var isReply: Bool { initial.threadID != nil }
@@ -259,8 +276,10 @@ final class ComposerModel {
         return true
     }
 
+    /// `doSend`. ⌘↵ and the button both come here; neither does anything while a
+    /// scheduled send is still on the wire (`!busy`).
     func send(skipSubjectCheck: Bool = false) {
-        guard let app = Mail.app, validate(app: app) else { return }
+        guard !busy, let app = Mail.app, validate(app: app) else { return }
         if !skipSubjectCheck, subject.trimmingCharacters(in: .whitespaces).isEmpty, !isReply {
             DialogState.shared.present("subject") {
                 AlertDialogView(title: "Send without a subject?", description: "The recipient will see “(no subject)”.", cancel: "Add a subject", action: "Send",
@@ -291,13 +310,18 @@ final class ComposerModel {
         do {
             _ = try await APIClient.shared.send(payload(sendAt: at.timeIntervalSince1970 * 1000))
             dirty = false
-            Toasts.shared.success("Scheduled for \(Fmt.full(at.timeIntervalSince1970 * 1000))")
+            Toasts.shared.success("Scheduled for \(ComposerModel.scheduledLabel(at))")
             Mail.invalidate()
             onDone?()
         } catch {
             Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription)
         }
     }
+
+    /// `toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })`:
+    /// "Sep 12, 9:00 AM" — no year.
+    private static let monthDay: DateFormatter = { let f = DateFormatter(); f.setLocalizedDateFormatFromTemplate("MMM d"); return f }()
+    static func scheduledLabel(_ d: Date) -> String { "\(monthDay.string(from: d)), \(Fmt.clock(d))" }
 
     func reallyDiscard() {
         dirty = false
@@ -316,18 +340,6 @@ final class ComposerModel {
         }
     }
 
-    /// `setReply(null)`: an inline reply that was never typed into just goes away — the
-    /// prefilled recipient and quote are not a draft worth keeping. Typed text is saved.
-    func closeInline() async {
-        guard let app = Mail.app else { onCancel?(); return }
-        if dirty, !isEmpty(app: app) {
-            if await saveDraft() != nil { Toasts.shared.show("Saved as a draft", duration: 3); Mail.invalidate() }
-        } else if let id = draftID, isEmpty(app: app) {
-            try? await APIClient.shared.deleteDraft(id)
-        }
-        onCancel?()
-    }
-
     /// Save a draft if there is anything worth saving, then close.
     func saveAndClose() async {
         guard let app = Mail.app else { onCancel?(); return }
@@ -340,18 +352,27 @@ final class ComposerModel {
     }
 
     func addFiles(_ urls: [URL]) {
-        let cap = 20 * 1024 * 1024
-        var total = attachments.reduce(0) { $0 + $1.size }
+        var files: [ComposeAttachmentFile] = []
         for url in urls {
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             guard let data = try? Data(contentsOf: url) else { continue }
-            // The worker keeps the first ten silently; say so here instead.
-            if attachments.count >= 10 { Toasts.shared.error("Up to 10 attachments per message."); break }
-            if total + data.count > cap { Toasts.shared.error("Attachments are capped at 20 MB total."); break }
-            total += data.count
             let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
-            attachments.append(ComposeAttachmentFile(filename: url.lastPathComponent, mimeType: mime, data: data))
+            files.append(ComposeAttachmentFile(filename: url.lastPathComponent, mimeType: mime, data: data))
+        }
+        add(files)
+    }
+
+    /// Pasted images and dropped files alike: the 20 MB cap, and the worker's ten-file limit
+    /// said out loud rather than silently applied.
+    func add(_ files: [ComposeAttachmentFile]) {
+        let cap = 20 * 1024 * 1024
+        var total = attachments.reduce(0) { $0 + $1.size }
+        for f in files {
+            if attachments.count >= 10 { Toasts.shared.error("Up to 10 attachments per message."); break }
+            if total + f.size > cap { Toasts.shared.error("Attachments are capped at 20 MB total."); break }
+            total += f.size
+            attachments.append(f)
         }
         markDirty()
     }
@@ -375,77 +396,106 @@ final class ComposerModel {
 struct ComposerView: View {
     @Bindable var model: ComposerModel
     var inline = false
+    /// `/compose?to=…`: the recipient is known, so the caret starts in the body.
+    var autoFocusBody = false
 
     @Environment(AppState.self) private var app
     @Environment(PopLayerState.self) private var pops
-    @State private var editorHeight: CGFloat = 120
+    @State private var editorHeight: CGFloat = 96
     @State private var tick = 0
     @State private var importing = false
 
     private var account: Account? { model.account(in: app) }
     private var multi: Bool { app.accounts.count > 1 }
+    /// The sheet's new message gets the big subject; replies and the in-page composer keep 14.
+    private var bigSubject: Bool { !model.isReply && !inline }
+    private var minBody: CGFloat { inline ? 96 : 192 }
 
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    fromRow
-                    AddressInput(label: "To", value: $model.to, autoFocus: !model.isReply, onChange: { model.markDirty() }) {
-                        if !model.showCc { WButton("Cc", variant: .ghost, size: .xs, muted: true) { model.showCc = true } }
-                        if !model.showBcc { WButton("Bcc", variant: .ghost, size: .xs, muted: true) { model.showBcc = true } }
-                    }
-                    if model.showCc { AddressInput(label: "Cc", value: $model.cc, onChange: { model.markDirty() }) { EmptyView() } }
-                    if model.showBcc { AddressInput(label: "Bcc", value: $model.bcc, onChange: { model.markDirty() }) { EmptyView() } }
-                    HStack(alignment: .center, spacing: 12) {
-                        rowLabel("Subject")
-                        TextField("Subject", text: $model.subject)
-                            .textFieldStyle(.plain)
-                            .font(W.font(14))
-                            .foregroundStyle(W.foreground)
-                            .onChange(of: model.subject) { _, _ in model.markDirty() }
-                    }
-                    .padding(.vertical, 6)
-                    .edgeLine(.bottom)
-
-                    RichTextEditor(controller: model.editor, height: $editorHeight, placeholder: "Write something…", autoFocus: model.isReply, onEdit: { model.markDirty() })
-                        .frame(minHeight: inline ? 120 : 200)
-                        .frame(height: max(editorHeight, inline ? 120 : 200))
-                        .padding(.top, 12)
-
-                    if !model.initial.quotedHTML.isEmpty {
-                        HStack(spacing: 8) {
-                            WButton(model.showQuote ? "Hide quoted text" : "Show quoted text", icon: "chevronDown", variant: .ghost, size: .xs, muted: true) { model.showQuote.toggle() }
-                            Spacer()
-                            HStack(spacing: 8) {
-                                Text("Include when sending").font(W.xs).foregroundStyle(W.mutedForeground)
-                                WSwitch(on: $model.includeQuote)
-                            }
+                    VStack(alignment: .leading, spacing: 0) {
+                        fromRow
+                        AddressInput(label: "To", value: $model.to, autoFocus: !model.isReply && model.to.isEmpty, onChange: { model.markDirty() }) {
+                            if !model.showCc { WButton("Cc", variant: .ghost, size: .xs, muted: true) { model.showCc = true } }
+                            if !model.showBcc { WButton("Bcc", variant: .ghost, size: .xs, muted: true) { model.showBcc = true } }
                         }
-                        .padding(.top, 8)
-                        if model.showQuote {
-                            HtmlBodyView(html: model.initial.quotedHTML, collapseQuotes: false)
-                                .padding(.leading, 12)
-                                .overlay(alignment: .leading) { Rectangle().fill(W.border).frame(width: 2) }
-                                .padding(.top, 8)
-                                .opacity(model.includeQuote ? 1 : 0.5)
+                        .zIndex(3)
+                        if model.showCc { AddressInput(label: "Cc", value: $model.cc, autoFocus: model.cc.isEmpty, onChange: { model.markDirty() }) { EmptyView() }.zIndex(2) }
+                        if model.showBcc { AddressInput(label: "Bcc", value: $model.bcc, autoFocus: model.bcc.isEmpty, onChange: { model.markDirty() }) { EmptyView() }.zIndex(1) }
+                        HStack(alignment: .center, spacing: 12) {
+                            rowLabel("Subject")
+                            TextField("", text: $model.subject, prompt: Text(model.isReply ? "" : "Subject").foregroundStyle(W.tertiary))
+                                .textFieldStyle(.plain)
+                                .font(bigSubject ? W.font(16, 600) : W.font(14))
+                                .tracking(bigSubject ? -0.16 : 0)
+                                .foregroundStyle(W.foreground)
+                                .padding(.vertical, 2)
+                                .onChange(of: model.subject) { _, _ in model.markDirty() }
+                                // Enter moves on to the body.
+                                .onSubmit { model.editor.focus() }
                         }
+                        .padding(.vertical, 6)
+                        .edgeLine(.bottom)
                     }
+                    .padding(.top, inline ? 2 : 4)
 
-                    if !model.attachments.isEmpty {
-                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
-                            ForEach(model.attachments) { a in
-                                AttachmentItemView(filename: a.filename, mimeType: a.mimeType, size: a.size, imageData: a.isImage ? a.data : nil) {
-                                    model.attachments.removeAll { $0.id == a.id }
-                                    model.markDirty()
+                    VStack(alignment: .leading, spacing: 0) {
+                        RichTextEditor(controller: model.editor, height: $editorHeight, placeholder: model.isReply ? "Write your reply…" : "Write something…", autoFocus: model.isReply || autoFocusBody,
+                                       onEdit: { model.markDirty() },
+                                       onPasteFiles: { urls, images in
+                                           if !urls.isEmpty { model.addFiles(urls) }
+                                           if !images.isEmpty { model.add(images) }
+                                       })
+                            .frame(minHeight: minBody)
+                            .frame(height: max(editorHeight, minBody))
+
+                        if !model.initial.quotedHTML.isEmpty {
+                            VStack(alignment: .leading, spacing: 0) {
+                                HStack(spacing: 12) {
+                                    Button { model.showQuote.toggle() } label: {
+                                        HStack(spacing: 4) {
+                                            Icon("chevronDown", size: 12).rotationEffect(.degrees(model.showQuote ? 180 : 0))
+                                            Text("\(model.showQuote ? "Hide" : "Show") quoted text")
+                                        }
+                                    }
+                                    .buttonStyle(.web(.ghost, .xs, muted: true))
+                                    .animation(.easeOut(duration: 0.15), value: model.showQuote)
+                                    HStack(spacing: 8) {
+                                        SmallSwitch(on: Binding(get: { model.includeQuote }, set: { model.includeQuote = $0; model.markDirty() }))
+                                        Text("Include when sending").font(W.xs).foregroundStyle(W.mutedForeground)
+                                    }
+                                }
+                                if model.showQuote {
+                                    // `mt-2 border-l-2 border-border pl-3 text-muted-foreground text-[13px] max-h-64 overflow-y-auto`
+                                    ScrollView(.vertical) {
+                                        HtmlBodyView(html: model.initial.quotedHTML, collapseQuotes: false, fontSize: 13, muted: true)
+                                            .padding(.leading, 12)
+                                    }
+                                    .frame(maxHeight: 256)
+                                    .overlay(alignment: .leading) { Rectangle().fill(W.border).frame(width: 2) }
+                                    .padding(.top, 8)
                                 }
                             }
+                            .padding(.top, 12)
                         }
-                        .padding(.top, 12)
+
+                        if !model.attachments.isEmpty {
+                            LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
+                                ForEach(model.attachments) { a in
+                                    AttachmentItemView(filename: a.filename, mimeType: a.mimeType, size: a.size, imageData: a.isImage ? a.data : nil) {
+                                        model.attachments.removeAll { $0.id == a.id }
+                                        model.markDirty()
+                                    }
+                                }
+                            }
+                            .padding(.top, 16)
+                        }
                     }
+                    .padding(.vertical, 12)
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, inline ? 2 : 4)
-                .padding(.bottom, 12)
             }
             .frame(maxHeight: inline ? nil : .infinity)
 
@@ -453,11 +503,17 @@ struct ComposerView: View {
         }
         .overlay {
             if model.dragging {
-                Text("Drop to attach").font(W.sm).foregroundStyle(W.mutedForeground)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(W.background.opacity(0.9))
-                    .overlay(RoundedRectangle(cornerRadius: W.radiusLg, style: .continuous).strokeBorder(W.ring, style: StrokeStyle(lineWidth: 1, dash: [4])))
-                    .padding(4)
+                HStack(spacing: 0) {
+                    Icon("paperclip", size: 14).padding(.trailing, 8)
+                    Text("Drop to attach")
+                }
+                .font(W.sm).foregroundStyle(W.mutedForeground)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(W.background.opacity(0.9))
+                .overlay(RoundedRectangle(cornerRadius: W.radiusLg, style: .continuous).strokeBorder(W.ring, style: StrokeStyle(lineWidth: 1, dash: [4])))
+                .rounded(W.radiusLg)
+                .padding(4)
+                .allowsHitTesting(false)
             }
         }
         .onDrop(of: [.fileURL], isTargeted: Binding(get: { model.dragging }, set: { model.dragging = $0 })) { providers in
@@ -478,7 +534,8 @@ struct ComposerView: View {
         .task {
             while !Task.isCancelled { try? await Task.sleep(for: .seconds(5)); tick += 1 }
         }
-        .onKeys(["Escape": { Task { await model.closeInline() } }], enabled: inline, priority: 20)
+        // `setReply(null)`: Escape just closes an inline reply — no draft is written for it.
+        .onKeys(["Escape": { model.onCancel?() }], enabled: inline, priority: 20)
     }
 
     private func rowLabel(_ t: String) -> some View {
@@ -492,11 +549,17 @@ struct ComposerView: View {
                 Text("No account connected").font(W.s13).foregroundStyle(W.mutedForeground)
             } else {
                 Button {
+                    let minWidth = PopLayerState.shared.frames["compose-from"]?.width ?? 0
                     pops.toggle("compose-from", side: .bottom, align: .start) {
-                        PopCard(width: 320) {
-                            ForEach(app.accounts) { a in
-                                MenuItem("\(fromLabel(a))  \(a.email)", checked: a.id == model.accountID) { model.accountID = a.id; model.markDirty() }
+                        PopCard {
+                            VStack(spacing: 0) {
+                                ForEach(app.accounts) { a in
+                                    FromMenuRow(account: a, label: fromLabel(a), glyph: multi ? app.glyph(for: a.id) : nil, checked: a.id == model.accountID) {
+                                        pops.closeAll(); model.accountID = a.id; model.markDirty()
+                                    }
+                                }
                             }
+                            .frame(minWidth: max(0, minWidth - 8))
                         }
                     }
                 } label: {
@@ -505,7 +568,7 @@ struct ComposerView: View {
                             WAvatar(email: a.email, name: fromLabel(a), src: a.avatarURL, size: 16)
                             Text(fromLabel(a)).font(W.s13).foregroundStyle(W.foreground).lineLimit(1)
                             Text(a.email).font(W.s13).foregroundStyle(W.mutedForeground).lineLimit(1)
-                            if multi { AccountGlyph(glyph: app.glyph(for: a.id)) }
+                            if multi { AccountGlyph(glyph: app.glyph(for: a.id), label: a.email) }
                         }
                         Icon("chevronDown", size: 14).foregroundStyle(W.mutedForeground)
                     }
@@ -577,6 +640,65 @@ struct ComposerView: View {
     }
 }
 
+/// `SelectItem` in the From menu: py-1.5 pr-8 pl-2 gap-2 text-sm, avatar, email, the
+/// provider in xs muted, the account glyph when there are several, a check at `right-2`.
+private struct FromMenuRow: View {
+    let account: Account
+    let label: String
+    var glyph: String?
+    let checked: Bool
+    var action: () -> Void
+    @State private var hovering = false
+
+    private var provider: String {
+        switch account.provider {
+        case "domain": return "Domain"
+        case "outlook": return "Outlook"
+        case "imap": return "IMAP"
+        default: return "Gmail"
+        }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                WAvatar(email: account.email, name: label, src: account.avatarURL, size: 16)
+                Text(account.email).font(W.sm).foregroundStyle(W.foreground).lineLimit(1)
+                Text(provider).font(W.xs).foregroundStyle(W.mutedForeground)
+                if let glyph { AccountGlyph(glyph: glyph) }
+                Spacer(minLength: 0)
+            }
+            .padding(.leading, 8)
+            .padding(.trailing, 32)
+            .frame(height: 32)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .trailing) { Icon("check", size: 16).opacity(checked ? 1 : 0).padding(.trailing, 8) }
+            .background(hovering ? W.accent : Color.clear)
+            .rounded(W.radiusSm)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+/// shadcn `Switch size="sm"`: 24×14, thumb 12.
+private struct SmallSwitch: View {
+    @Binding var on: Bool
+    var body: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.12)) { on.toggle() }
+        } label: {
+            ZStack(alignment: on ? .trailing : .leading) {
+                Capsule().fill(on ? W.primary : W.input).frame(width: 24, height: 14)
+                Circle().fill(on ? W.primaryForeground : W.foreground).frame(width: 12, height: 12).padding(1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 struct LinkPopover: View {
     var onAdd: (String) -> Void
     @State private var url = ""
@@ -590,38 +712,60 @@ struct LinkPopover: View {
     }
 }
 
-/// `AttachmentItem` in the composer and in the thread: icon or thumbnail, name, size.
+/// `AttachmentItem` (`Item variant="muted" size="xs"`) in the composer and in the thread:
+/// a bare 16px icon or a 24px thumbnail, the name at 13/500, the size in xs; the action
+/// button shows on hover. The thread's item is a link, so it also gets `hover:bg-muted`.
 struct AttachmentItemView: View {
     let filename: String
     let mimeType: String
     let size: Int
     var imageData: Data? = nil
+    /// An `image/*` attachment on the server, shown as its own thumbnail.
+    var thumbnailURL: URL? = nil
     var onRemove: (() -> Void)? = nil
     var onDownload: (() -> Void)? = nil
     var onOpen: (() -> Void)? = nil
     @State private var hovering = false
+    @State private var remote: NSImage?
+    @State private var broken = false
+
+    private var thumbnail: NSImage? {
+        if let imageData, let img = NSImage(data: imageData) { return img }
+        return remote
+    }
 
     var body: some View {
-        HStack(spacing: 8) {
-            if let imageData, let img = NSImage(data: imageData) {
-                Image(nsImage: img).resizable().scaledToFill().frame(width: 32, height: 32).rounded(2)
-            } else {
-                Icon(fileIcon(mimeType, filename), size: 16).foregroundStyle(W.mutedForeground).frame(width: 32, height: 32).background(W.muted).rounded(W.radiusMd)
+        HStack(alignment: .top, spacing: 8) {
+            Group {
+                if let img = thumbnail, !broken {
+                    Image(nsImage: img).resizable().scaledToFill().frame(width: 24, height: 24).clipped().rounded(W.radiusSm)
+                } else {
+                    Icon(fileIcon(mimeType, filename), size: 16).foregroundStyle(W.mutedForeground)
+                }
             }
-            VStack(alignment: .leading, spacing: 1) {
-                Text(filename.isEmpty ? "attachment" : filename).font(W.font(13, 500)).foregroundStyle(W.foreground).lineLimit(1)
-                Text(Fmt.size(size)).font(W.xs).monospacedDigit().foregroundStyle(W.mutedForeground)
+            .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(filename.isEmpty ? "attachment" : filename).font(W.font(13, 500)).webLine(13, 17.875, weight: 500).foregroundStyle(W.foreground).lineLimit(1)
+                Text(Fmt.size(size)).font(W.xs).monospacedDigit().webLine(12, 18).foregroundStyle(W.mutedForeground)
             }
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.trailing, onRemove != nil || onDownload != nil ? 32 : 0)
+        }
+        .overlay(alignment: .trailing) {
             if let onRemove { WButton(icon: "x", variant: .ghost, size: .iconXs, muted: true, help: "Remove attachment", action: onRemove).opacity(hovering ? 1 : 0) }
             if let onDownload { WButton(icon: "download", variant: .ghost, size: .iconXs, muted: true, help: "Download", action: onDownload).opacity(hovering ? 1 : 0) }
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
-        .background(W.muted50)
+        .background(onOpen != nil && hovering ? W.muted : W.muted50)
         .rounded(W.radiusLg)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { onOpen?() }
+        .task(id: thumbnailURL) {
+            guard let thumbnailURL, mimeType.hasPrefix("image/") else { return }
+            remote = await ImageCache.shared.image(for: thumbnailURL, maxPixel: 96)
+            if remote == nil { broken = true }
+        }
     }
 }
 
@@ -649,81 +793,76 @@ struct AddressInput<Trailing: View>: View {
     @State private var highlighted = 0
     @FocusState private var focused: Bool
 
+    private var showMenu: Bool { open && !text.trimmingCharacters(in: .whitespaces).isEmpty && !suggestions.isEmpty }
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Text(label).font(W.s13).foregroundStyle(W.mutedForeground).frame(width: 56, alignment: .leading).padding(.top, 4)
-            ZStack(alignment: .topLeading) {
-                FlowLayout(spacing: 4) {
-                    ForEach(value) { a in
-                        HStack(spacing: 6) {
-                            WAvatar(a, size: 16)
-                            Text(a.name.isEmpty ? a.email : a.name).font(W.s13).foregroundStyle(W.foreground).lineLimit(1)
-                            Button { value.removeAll { $0.email == a.email }; onChange() } label: {
-                                Icon("x", size: 11).foregroundStyle(W.mutedForeground).frame(width: 16, height: 16).contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .padding(.horizontal, 4)
-                        .frame(height: 24)
-                        .background(W.muted)
-                        .rounded(W.radiusMd)
-                        .help(a.email)
-                    }
-                    TextField(value.isEmpty ? placeholder : "", text: $text)
-                        .textFieldStyle(.plain)
-                        .font(W.font(14))
-                        .foregroundStyle(W.foreground)
-                        .focused($focused)
-                        .frame(minWidth: 144, minHeight: 24)
-                        .onSubmit { commit() }
-                        .onChange(of: text) { _, v in
-                            if v.hasSuffix(",") || v.hasSuffix(";") { text = String(v.dropLast()); commit(); return }
-                            open = true
-                            Task { await suggest(v) }
-                        }
-                        .onChange(of: focused) { _, f in if !f { DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { commitText(); open = false } } }
-                        .onKeyPress(.downArrow) { highlighted = min(highlighted + 1, max(suggestions.count - 1, 0)); return .handled }
-                        .onKeyPress(.upArrow) { highlighted = max(highlighted - 1, 0); return .handled }
-                        .onKeyPress(.tab) { if !text.isEmpty { commit(); return .handled }; return .ignored }
-                        .onKeyPress(.escape) { open = false; return .handled }
-                        .onKeyPress(.delete) { if text.isEmpty, !value.isEmpty { value.removeLast(); onChange(); return .handled }; return .ignored }
+            FlowLayout(spacing: 4) {
+                ForEach(value) { a in
+                    AddressChip(address: a) { value.removeAll { $0.email == a.email }; onChange() }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                if open && !text.trimmingCharacters(in: .whitespaces).isEmpty && !suggestions.isEmpty {
-                    VStack(spacing: 0) {
-                        ForEach(Array(suggestions.prefix(8).enumerated()), id: \.element.id) { i, c in
-                            Button { commit(c) } label: {
-                                HStack(spacing: 8) {
-                                    WAvatar(c, size: 20)
-                                    Text(c.name.isEmpty ? c.email : c.name).font(W.s13).foregroundStyle(W.foreground).lineLimit(1)
-                                    if !c.name.isEmpty { Text(c.email).font(W.xs).foregroundStyle(W.mutedForeground).lineLimit(1) }
-                                    Spacer(minLength: 0)
-                                }
-                                .padding(.horizontal, 6).frame(height: 32)
-                                .background(i == highlighted ? W.accent : Color.clear)
-                                .rounded(W.radiusMd)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .onHover { if $0 { highlighted = i } }
-                        }
+                TextField("", text: $text, prompt: Text(value.isEmpty ? placeholder : "").foregroundStyle(W.tertiary))
+                    .textFieldStyle(.plain)
+                    .font(W.font(14))
+                    .foregroundStyle(W.foreground)
+                    .focused($focused)
+                    .frame(minWidth: 144, minHeight: 24)
+                    .onSubmit { commit() }
+                    .onChange(of: text) { _, v in
+                        if v.hasSuffix(",") || v.hasSuffix(";") { text = String(v.dropLast()); commit(); return }
+                        open = true
+                        Task { await suggest(v) }
                     }
-                    .padding(4)
-                    .frame(width: 288)
-                    .background(W.popover)
-                    .overlay(RoundedRectangle(cornerRadius: W.radiusLg, style: .continuous).strokeBorder(W.popoverRing, lineWidth: 1))
-                    .rounded(W.radiusLg)
-                    .shadow(color: .black.opacity(0.15), radius: 10, y: 4)
-                    .offset(y: 32)
-                    .zIndex(10)
-                }
+                    .onChange(of: focused) { _, f in if f { open = true } else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { commitText(); open = false } } }
+                    .onKeyPress(.downArrow) { highlighted = min(highlighted + 1, max(suggestions.count - 1, 0)); return .handled }
+                    .onKeyPress(.upArrow) { highlighted = max(highlighted - 1, 0); return .handled }
+                    .onKeyPress(.tab) { if !text.isEmpty { commit(); return .handled }; return .ignored }
+                    .onKeyPress(.escape) { open = false; return .handled }
+                    .onKeyPress(.delete) { if text.isEmpty, !value.isEmpty { value.removeLast(); onChange(); return .handled }; return .ignored }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 8) { trailing() }.padding(.top, 2)
         }
         .padding(.vertical, 6)
         .edgeLine(.bottom)
         .contentShape(Rectangle())
         .onTapGesture { focused = true }
+        // `absolute left-[68px] top-full mt-1 w-72`: the list hangs 4px under the row,
+        // aligned with the chips.
+        .overlay(alignment: .bottomLeading) {
+            if showMenu {
+                VStack(spacing: 0) {
+                    ForEach(Array(suggestions.prefix(8).enumerated()), id: \.element.id) { i, c in
+                        Button { commit(c) } label: {
+                            HStack(spacing: 8) {
+                                WAvatar(c, size: 20)
+                                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                    Text(c.name.isEmpty ? c.email : c.name).font(W.s13).foregroundStyle(W.foreground).lineLimit(1)
+                                    if !c.name.isEmpty { Text(c.email).font(W.xs).foregroundStyle(W.mutedForeground).lineLimit(1) }
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 6).frame(height: 32)
+                            .background(i == highlighted ? W.accent : Color.clear)
+                            .rounded(W.radiusMd)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { if $0 { highlighted = i } }
+                    }
+                }
+                .padding(4)
+                .frame(width: 288)
+                .background(W.popover)
+                .overlay(RoundedRectangle(cornerRadius: W.radiusLg, style: .continuous).strokeBorder(W.popoverRing, lineWidth: 1))
+                .rounded(W.radiusLg)
+                .shadow(color: .black.opacity(0.15), radius: 10, y: 4)
+                .alignmentGuide(.bottom) { d in d[.top] - 4 }
+                .padding(.leading, 68)
+            }
+        }
+        .zIndex(showMenu ? 10 : 0)
         .onAppear { if autoFocus { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { focused = true } } }
     }
 
@@ -769,6 +908,35 @@ struct AddressInput<Trailing: View>: View {
     }
 }
 
+/// A recipient chip: h-6 rounded-md bg-muted, avatar 16, the name capped at `max-w-56`,
+/// and a 16pt remove button that washes on hover.
+private struct AddressChip: View {
+    let address: Address
+    var onRemove: () -> Void
+    @State private var hoverX = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            WAvatar(address, size: 16)
+            Text(address.name.isEmpty ? address.email : address.name).font(W.s13).foregroundStyle(W.foreground).lineLimit(1).truncationMode(.tail).frame(maxWidth: 224)
+            Button(action: onRemove) {
+                Icon("x", size: 11).foregroundStyle(hoverX ? W.foreground : W.mutedForeground)
+                    .frame(width: 16, height: 16)
+                    .background(hoverX ? W.accent : Color.clear)
+                    .rounded(W.radiusSm)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hoverX = $0 }
+        }
+        .padding(.horizontal, 4)
+        .frame(height: 24)
+        .background(W.muted)
+        .rounded(W.radiusMd)
+        .help(address.email)
+    }
+}
+
 /// Wraps chips onto new lines, like `flex-wrap`.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 4
@@ -799,24 +967,51 @@ struct FlowLayout: Layout {
 
 // MARK: - Rich text
 
-/// The contenteditable's stand-in: an NSTextView with bold/italic/underline/links/lists,
-/// exported to HTML on send.
+/// The contenteditable's stand-in: an NSTextView with bold/italic/underline/links, real
+/// lists and quotes (a paragraph carries an `NSTextList` or the quote mark, exactly as the
+/// web's `<ul>/<ol>/<blockquote>` do), exported to that markup on send.
 @MainActor
 final class RichTextController {
     weak var textView: NSTextView?
-    /// The composer writes at 14; the journal at 13 with the web's 1.7 line height.
+    /// The composer writes at 15 on a 24pt line; the journal at 13 with the web's 1.7 line height.
     var fontSize: CGFloat = 14
     var lineHeightMultiple: CGFloat = 1
+    /// A fixed line box (`leading-[1.6]` at 15px is 24), which beats the multiple when set.
+    var lineHeight: CGFloat? = nil
     var baseFont: NSFont { Geist.nsFont(size: fontSize, weight: 400) }
     /// Fired by the editor as the selection moves: the selected range's first rectangle, in
     /// the editor's own coordinates, or nil when nothing is selected.
     var onSelection: ((CGRect?) -> Void)?
 
-    var baseParagraph: NSParagraphStyle {
+    /// Marks every run of a `<blockquote>` paragraph; the view draws the left bar from it.
+    static let quoteKey = NSAttributedString.Key("hfQuote")
+    /// `pl-5` on the web's lists, `border-l-2 pl-3` on its quotes.
+    static let listIndent: CGFloat = 20
+    static let quoteIndent: CGFloat = 14
+
+    enum ListKind: Equatable { case bullet, number }
+
+    func paragraphStyle(list: ListKind? = nil, quote: Bool = false) -> NSParagraphStyle {
         let p = NSMutableParagraphStyle()
         p.lineHeightMultiple = lineHeightMultiple
+        if let lineHeight { p.minimumLineHeight = lineHeight; p.maximumLineHeight = lineHeight }
+        let indent: CGFloat = quote ? Self.quoteIndent : 0
+        if let list {
+            p.textLists = [NSTextList(markerFormat: list == .bullet ? .disc : .decimal, options: 0)]
+            p.tabStops = [NSTextTab(textAlignment: .left, location: indent + Self.listIndent)]
+            p.defaultTabInterval = 28
+            p.headIndent = indent + Self.listIndent
+            p.firstLineHeadIndent = indent
+        } else {
+            p.headIndent = indent
+            p.firstLineHeadIndent = indent
+        }
         return p
     }
+    var baseParagraph: NSParagraphStyle { paragraphStyle() }
+
+    private var inkColor: NSColor { NSColor(W.foreground) }
+    private var quoteColor: NSColor { NSColor(W.mutedForeground) }
 
     func setHTML(_ html: String) {
         guard let tv = textView else { pendingHTML = html; return }
@@ -841,14 +1036,243 @@ final class RichTextController {
         tv.setSelectedRange(NSRange(location: 0, length: 0))
     }
 
+    // MARK: Paragraph model
+
+    private static func isBulletFormat(_ f: NSTextList.MarkerFormat) -> Bool {
+        [NSTextList.MarkerFormat.disc, .circle, .square, .hyphen, .check, .box, .diamond].contains(f)
+    }
+
+    private func paragraphs(of storage: NSAttributedString, in range: NSRange) -> [NSRange] {
+        let ns = storage.string as NSString
+        var out: [NSRange] = []
+        var pos = range.location
+        let end = max(range.location + range.length, range.location)
+        repeat {
+            let r = ns.paragraphRange(for: NSRange(location: min(pos, ns.length), length: 0))
+            if out.last != r { out.append(r) }
+            if r.length == 0 { break }
+            pos = r.location + r.length
+        } while pos < end || (pos == end && range.length > 0 && pos < ns.length && out.last.map { $0.location + $0.length } ?? 0 < end)
+        return out
+    }
+
+    private func style(at paragraph: NSRange, in storage: NSAttributedString) -> NSParagraphStyle? {
+        guard paragraph.length > 0, paragraph.location < storage.length else { return textView?.typingAttributes[.paragraphStyle] as? NSParagraphStyle }
+        return storage.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil) as? NSParagraphStyle
+    }
+
+    func listKind(of paragraph: NSRange, in storage: NSAttributedString) -> ListKind? {
+        guard let list = style(at: paragraph, in: storage)?.textLists.first else { return nil }
+        return Self.isBulletFormat(list.markerFormat) ? .bullet : .number
+    }
+
+    func isQuote(_ paragraph: NSRange, in storage: NSAttributedString) -> Bool {
+        guard paragraph.length > 0, paragraph.location < storage.length else { return textView?.typingAttributes[Self.quoteKey] != nil }
+        return storage.attribute(Self.quoteKey, at: paragraph.location, effectiveRange: nil) != nil
+    }
+
+    /// "•\t" / "3.\t" at the start of a list paragraph: its length, or 0.
+    func markerLength(of paragraph: NSRange, in storage: NSAttributedString) -> Int {
+        guard listKind(of: paragraph, in: storage) != nil, paragraph.length > 0 else { return 0 }
+        let text = (storage.string as NSString).substring(with: paragraph) as NSString
+        let tab = text.range(of: "\t")
+        guard tab.location != NSNotFound else { return 0 }
+        // Only a short lead counts as a marker, so a tab inside real text is left alone.
+        return tab.location <= 4 ? tab.location + 1 : 0
+    }
+
+    /// Rewrites one paragraph as a list item, a quote, both, or plain text, keeping its
+    /// inline formatting.
+    private func setParagraph(_ paragraph: NSRange, list: ListKind?, quote: Bool, number: Int = 1, in storage: NSMutableAttributedString) {
+        let mlen = markerLength(of: paragraph, in: storage)
+        let contentRange = NSRange(location: paragraph.location + mlen, length: paragraph.length - mlen)
+        let content = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: contentRange))
+        let style = paragraphStyle(list: list, quote: quote)
+        let full = NSRange(location: 0, length: content.length)
+        content.addAttribute(.paragraphStyle, value: style, range: full)
+        if quote {
+            content.addAttribute(Self.quoteKey, value: true, range: full)
+            content.addAttribute(.foregroundColor, value: quoteColor, range: full)
+        } else {
+            content.removeAttribute(Self.quoteKey, range: full)
+            content.addAttribute(.foregroundColor, value: inkColor, range: full)
+        }
+        if let list {
+            var attrs: [NSAttributedString.Key: Any] = [.font: baseFont, .foregroundColor: quote ? quoteColor : inkColor, .paragraphStyle: style]
+            if quote { attrs[Self.quoteKey] = true }
+            content.insert(NSAttributedString(string: (list == .bullet ? "•" : "\(number).") + "\t", attributes: attrs), at: 0)
+        }
+        storage.replaceCharacters(in: paragraph, with: content)
+    }
+
+    /// Numbered items count from the start of their run; markers are rewritten to match.
+    private func renumber(_ storage: NSMutableAttributedString) {
+        let ns = storage.string as NSString
+        var edits: [(NSRange, String)] = []
+        var pos = 0
+        var run = 0
+        var previousKind: ListKind? = nil
+        while pos < ns.length {
+            let r = ns.paragraphRange(for: NSRange(location: pos, length: 0))
+            if r.length == 0 { break }
+            pos = r.location + r.length
+            let kind = listKind(of: r, in: storage)
+            run = kind != nil && kind == previousKind ? run + 1 : 1
+            previousKind = kind
+            guard kind == .number else { continue }
+            let mlen = markerLength(of: r, in: storage)
+            let want = "\(run).\t"
+            let have = mlen > 0 ? ns.substring(with: NSRange(location: r.location, length: mlen)) : ""
+            if have != want { edits.append((NSRange(location: r.location, length: mlen), want)) }
+        }
+        for (range, text) in edits.reversed() {
+            var attrs = range.length > 0 ? storage.attributes(at: range.location, effectiveRange: nil) : [:]
+            if attrs[.font] == nil { attrs[.font] = baseFont }
+            storage.replaceCharacters(in: range, with: NSAttributedString(string: text, attributes: attrs))
+        }
+    }
+
+    private func itemNumber(of paragraph: NSRange, in storage: NSAttributedString) -> Int {
+        guard let kind = listKind(of: paragraph, in: storage) else { return 0 }
+        let ns = storage.string as NSString
+        var n = 1
+        var loc = paragraph.location
+        while loc > 0 {
+            let prev = ns.paragraphRange(for: NSRange(location: loc - 1, length: 0))
+            guard listKind(of: prev, in: storage) == kind else { break }
+            n += 1
+            loc = prev.location
+        }
+        return n
+    }
+
+    private func toggleBlock(list: ListKind?, quote: Bool?) {
+        guard let tv = textView, let storage = tv.textStorage else { return }
+        let sel = tv.selectedRange()
+        let paras = paragraphs(of: storage, in: sel)
+        let allList = list != nil && paras.allSatisfy { listKind(of: $0, in: storage) == list }
+        let allQuote = quote == true && paras.allSatisfy { isQuote($0, in: storage) }
+        storage.beginEditing()
+        for r in paras.reversed() {
+            let nextList: ListKind? = list != nil ? (allList ? nil : list) : listKind(of: r, in: storage)
+            let nextQuote = quote != nil ? !allQuote : isQuote(r, in: storage)
+            if r.length == 0 {
+                // The empty paragraph at the very end of the text: give it a marker to type after.
+                let style = paragraphStyle(list: nextList, quote: nextQuote)
+                var attrs: [NSAttributedString.Key: Any] = [.font: baseFont, .foregroundColor: nextQuote ? quoteColor : inkColor, .paragraphStyle: style]
+                if nextQuote { attrs[Self.quoteKey] = true }
+                if let nextList { storage.append(NSAttributedString(string: (nextList == .bullet ? "•" : "1.") + "\t", attributes: attrs)) }
+                tv.typingAttributes = attrs
+            } else {
+                setParagraph(r, list: nextList, quote: nextQuote, in: storage)
+            }
+        }
+        renumber(storage)
+        storage.endEditing()
+        // The caret lands at the end of the last touched paragraph's text.
+        if let last = paras.last {
+            let ns = storage.string as NSString
+            let r = ns.paragraphRange(for: NSRange(location: min(last.location, ns.length), length: 0))
+            var end = r.location + r.length
+            if end > r.location, ns.substring(with: NSRange(location: end - 1, length: 1)) == "\n" { end -= 1 }
+            tv.setSelectedRange(NSRange(location: min(end, ns.length), length: 0))
+            if r.length > 0, r.location < ns.length {
+                var t = storage.attributes(at: r.location, effectiveRange: nil)
+                t[.font] = t[.font] ?? baseFont
+                tv.typingAttributes = t
+            }
+        }
+        tv.didChangeText()
+        tv.needsDisplay = true
+    }
+
+    /// `insertUnorderedList` / `insertOrderedList`: toggles the list on the selected paragraphs.
+    func bulletList() { toggleBlock(list: .bullet, quote: nil) }
+    func numberedList() { toggleBlock(list: .number, quote: nil) }
+    /// `formatBlock blockquote`.
+    func quote() { toggleBlock(list: nil, quote: true) }
+
+    /// Return inside a list item: a new item with the next marker, or — on an empty item — the
+    /// end of the list, as a contenteditable does it.
+    func handleNewline() -> Bool {
+        guard let tv = textView, let storage = tv.textStorage else { return false }
+        let sel = tv.selectedRange()
+        let ns = storage.string as NSString
+        let para = ns.paragraphRange(for: sel)
+        guard let kind = listKind(of: para, in: storage), para.length > 0 else { return false }
+        let mlen = markerLength(of: para, in: storage)
+        var text = ns.substring(with: NSRange(location: para.location + mlen, length: para.length - mlen))
+        if text.hasSuffix("\n") { text.removeLast() }
+        let quote = isQuote(para, in: storage)
+        if text.isEmpty {
+            storage.beginEditing()
+            setParagraph(para, list: nil, quote: quote, in: storage)
+            renumber(storage)
+            storage.endEditing()
+            tv.setSelectedRange(NSRange(location: para.location, length: 0))
+            var t = tv.typingAttributes
+            t[.paragraphStyle] = paragraphStyle(list: nil, quote: quote)
+            tv.typingAttributes = t
+            tv.didChangeText()
+            return true
+        }
+        let style = style(at: para, in: storage) ?? paragraphStyle(list: kind, quote: quote)
+        var attrs: [NSAttributedString.Key: Any] = [.font: baseFont, .foregroundColor: quote ? quoteColor : inkColor, .paragraphStyle: style]
+        if quote { attrs[Self.quoteKey] = true }
+        let marker = (kind == .bullet ? "•" : "\(itemNumber(of: para, in: storage) + 1).") + "\t"
+        let at = max(sel.location, para.location + mlen)
+        tv.insertText(NSAttributedString(string: "\n" + marker, attributes: attrs), replacementRange: NSRange(location: at, length: sel.length))
+        storage.beginEditing(); renumber(storage); storage.endEditing()
+        return true
+    }
+
+    /// Backspace right after a marker takes the paragraph out of the list.
+    func handleDeleteBackward() -> Bool {
+        guard let tv = textView, let storage = tv.textStorage else { return false }
+        let sel = tv.selectedRange()
+        guard sel.length == 0 else { return false }
+        let para = (storage.string as NSString).paragraphRange(for: sel)
+        let mlen = markerLength(of: para, in: storage)
+        guard mlen > 0, sel.location == para.location + mlen else { return false }
+        let quote = isQuote(para, in: storage)
+        storage.beginEditing()
+        setParagraph(para, list: nil, quote: quote, in: storage)
+        renumber(storage)
+        storage.endEditing()
+        tv.setSelectedRange(NSRange(location: para.location, length: 0))
+        var t = tv.typingAttributes
+        t[.paragraphStyle] = paragraphStyle(list: nil, quote: quote)
+        tv.typingAttributes = t
+        tv.didChangeText()
+        return true
+    }
+
+    // MARK: HTML in
+
     func attributed(from html: String) -> NSAttributedString {
         let out = NSMutableAttributedString()
         if !html.isEmpty, let data = html.data(using: .utf8),
            let parsed = try? NSAttributedString(data: data, options: [.documentType: NSAttributedString.DocumentType.html, .characterEncoding: String.Encoding.utf8.rawValue], documentAttributes: nil) {
             out.append(parsed)
         }
-        // Normalise every run onto Geist, keeping only bold/italic.
         out.beginEditing()
+        // Every paragraph is a list item, a quote, or plain; the importer says which through
+        // the paragraph style it produced (`NSTextList` for lists, a 40pt indent for
+        // `<blockquote>`).
+        let ns = out.string as NSString
+        var paras: [(range: NSRange, list: ListKind?, quote: Bool)] = []
+        var pos = 0
+        while pos < ns.length {
+            let r = ns.paragraphRange(for: NSRange(location: pos, length: 0))
+            if r.length == 0 { break }
+            pos = r.location + r.length
+            let p = out.attribute(.paragraphStyle, at: r.location, effectiveRange: nil) as? NSParagraphStyle
+            var kind: ListKind? = nil
+            if let l = p?.textLists.first { kind = Self.isBulletFormat(l.markerFormat) ? .bullet : .number }
+            let quote = kind == nil && (p?.headIndent ?? 0) >= 40 && (p?.textBlocks.isEmpty ?? true)
+            paras.append((r, kind, quote))
+        }
+        // Normalise every run onto Geist, keeping only bold/italic/underline/link.
         let full = NSRange(location: 0, length: out.length)
         out.enumerateAttributes(in: full) { attrs, range, _ in
             var next: [NSAttributedString.Key: Any] = [:]
@@ -864,32 +1288,105 @@ final class RichTextController {
             var font = Geist.nsFont(size: heading ? fontSize + 1 : fontSize, weight: heading ? max(weight, 600) : weight)
             if italic { font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask) }
             next[.font] = font
-            next[.foregroundColor] = NSColor(W.foreground)
+            next[.foregroundColor] = inkColor
             if let u = attrs[.underlineStyle] { next[.underlineStyle] = u }
             if let l = attrs[.link] { next[.link] = l }
-            if let p = (attrs[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle {
-                p.lineHeightMultiple = lineHeightMultiple
-                next[.paragraphStyle] = p
-            } else { next[.paragraphStyle] = baseParagraph }
+            next[.paragraphStyle] = baseParagraph
             out.setAttributes(next, range: range)
         }
+        for p in paras.reversed() {
+            let style = paragraphStyle(list: p.list, quote: p.quote)
+            out.addAttribute(.paragraphStyle, value: style, range: p.range)
+            if p.quote {
+                out.addAttribute(Self.quoteKey, value: true, range: p.range)
+                out.addAttribute(.foregroundColor, value: quoteColor, range: p.range)
+            }
+            guard let kind = p.list else { continue }
+            // The importer writes "\t•\t" / "\t1\t"; ours is "•\t" / "1.\t".
+            let text = (out.string as NSString).substring(with: p.range) as NSString
+            var lead = NSRange(location: p.range.location, length: 0)
+            if text.hasPrefix("\t") {
+                let second = text.range(of: "\t", options: [], range: NSRange(location: 1, length: text.length - 1))
+                if second.location != NSNotFound, second.location <= 6 { lead.length = second.location + 1 }
+            }
+            var attrs: [NSAttributedString.Key: Any] = [.font: baseFont, .foregroundColor: p.quote ? quoteColor : inkColor, .paragraphStyle: style]
+            if p.quote { attrs[Self.quoteKey] = true }
+            out.replaceCharacters(in: lead, with: NSAttributedString(string: (kind == .bullet ? "•" : "1.") + "\t", attributes: attrs))
+        }
+        renumber(out)
         out.endEditing()
         return out
     }
 
     func plainText() -> String { textView?.string ?? "" }
 
-    func html() -> String {
-        guard let storage = textView?.textStorage, storage.length > 0 else { return "" }
-        let attrs: [NSAttributedString.DocumentAttributeKey: Any] = [
-            .documentType: NSAttributedString.DocumentType.html,
-            .characterEncoding: String.Encoding.utf8.rawValue,
-            .excludedElements: ["XML", "DOCTYPE", "html", "head", "meta", "title", "style", "span", "font", "body", "p"],
-        ]
-        guard let data = try? storage.data(from: NSRange(location: 0, length: storage.length), documentAttributes: attrs), var s = String(data: data, encoding: .utf8) else { return HTMLText.htmlBody(from: plainText()) }
-        s = s.replacingOccurrences(of: "\n", with: "")
+    // MARK: HTML out
+
+    private static func escape(_ s: String) -> String {
+        s.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    private func inlineHTML(_ storage: NSAttributedString, _ range: NSRange) -> String {
+        guard range.length > 0 else { return "" }
+        let ns = storage.string as NSString
+        var s = ""
+        storage.enumerateAttributes(in: range, options: []) { attrs, r, _ in
+            var t = Self.escape(ns.substring(with: r))
+            t = t.replacingOccurrences(of: "\u{2028}", with: "<br>").replacingOccurrences(of: "\n", with: "<br>")
+            if let f = attrs[.font] as? NSFont {
+                let traits = NSFontManager.shared.traits(of: f)
+                if traits.contains(.boldFontMask) { t = "<b>\(t)</b>" }
+                if traits.contains(.italicFontMask) { t = "<i>\(t)</i>" }
+            }
+            // A link is underlined by the importer; the markup carries that itself.
+            if (attrs[.underlineStyle] as? Int ?? 0) != 0, attrs[.link] == nil { t = "<u>\(t)</u>" }
+            if let link = attrs[.link] {
+                let href = (link as? URL)?.absoluteString ?? (link as? String) ?? ""
+                if !href.isEmpty { t = "<a href=\"\(Self.escape(href))\">\(t)</a>" }
+            }
+            s += t
+        }
         return s
     }
+
+    /// The body as the markup the web's contenteditable would hold: `<div>` per paragraph,
+    /// `<ul>/<ol>` with `<li>` for lists, `<blockquote>` around quoted paragraphs, `<h2>` for
+    /// the journal's headings, and `<b>/<i>/<u>/<a>` inline.
+    func html() -> String {
+        guard let storage = textView?.textStorage, storage.length > 0 else { return "" }
+        let ns = storage.string as NSString
+        var out = ""
+        var openList: ListKind? = nil
+        var inQuote = false
+        func closeList() { if let o = openList { out += o == .bullet ? "</ul>" : "</ol>"; openList = nil } }
+        var pos = 0
+        while pos < ns.length {
+            let para = ns.paragraphRange(for: NSRange(location: pos, length: 0))
+            if para.length == 0 { break }
+            pos = para.location + para.length
+            let kind = listKind(of: para, in: storage)
+            let quote = isQuote(para, in: storage)
+            if quote != inQuote {
+                closeList()
+                out += quote ? "<blockquote>" : "</blockquote>"
+                inQuote = quote
+            }
+            if kind != openList { closeList(); if let k = kind { out += k == .bullet ? "<ul>" : "<ol>"; openList = k } }
+            let mlen = markerLength(of: para, in: storage)
+            var content = NSRange(location: para.location + mlen, length: para.length - mlen)
+            if content.length > 0, ns.substring(with: NSRange(location: content.location + content.length - 1, length: 1)) == "\n" { content.length -= 1 }
+            let inner = inlineHTML(storage, content)
+            let heading = content.length > 0 && ((storage.attribute(.font, at: content.location, effectiveRange: nil) as? NSFont)?.pointSize ?? 0) > fontSize
+            if kind != nil { out += "<li>\(inner)</li>" }
+            else if heading { out += "<h2>\(inner)</h2>" }
+            else { out += "<div>\(inner.isEmpty ? "<br>" : inner)</div>" }
+        }
+        closeList()
+        if inQuote { out += "</blockquote>" }
+        return out
+    }
+
+    // MARK: Inline formatting
 
     private func apply(_ edit: (NSMutableAttributedString, NSRange) -> Void, typing: (inout [NSAttributedString.Key: Any]) -> Void) {
         guard let tv = textView, let storage = tv.textStorage else { return }
@@ -963,46 +1460,32 @@ final class RichTextController {
         guard let tv = textView, let storage = tv.textStorage else { return }
         let range = tv.selectedRange()
         if range.length == 0 {
-            let s = NSAttributedString(string: url, attributes: [.font: baseFont, .foregroundColor: NSColor(W.foreground), .link: url, .underlineStyle: NSUnderlineStyle.single.rawValue])
-            tv.insertText(s, replacementRange: range)
+            var attrs = tv.typingAttributes
+            attrs[.font] = attrs[.font] ?? baseFont
+            attrs[.foregroundColor] = attrs[.foregroundColor] ?? inkColor
+            attrs[.link] = url
+            attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+            tv.insertText(NSAttributedString(string: url, attributes: attrs), replacementRange: range)
         } else {
             storage.addAttributes([.link: url, .underlineStyle: NSUnderlineStyle.single.rawValue], range: range)
             tv.didChangeText()
         }
     }
 
-    private func prefixParagraphs(_ prefix: (Int) -> String) {
-        guard let tv = textView, let storage = tv.textStorage else { return }
-        let sel = tv.selectedRange()
-        let paragraphRange = (storage.string as NSString).paragraphRange(for: sel)
-        let text = (storage.string as NSString).substring(with: paragraphRange)
-        let lines = text.components(separatedBy: "\n")
-        var out: [String] = []
-        for (i, line) in lines.enumerated() {
-            if i == lines.count - 1 && line.isEmpty { out.append(line); continue }
-            out.append(prefix(i) + line)
-        }
-        let replacement = NSAttributedString(string: out.joined(separator: "\n"), attributes: [.font: baseFont, .foregroundColor: NSColor(W.foreground)])
-        tv.insertText(replacement, replacementRange: paragraphRange)
-    }
-
-    func bulletList() { prefixParagraphs { _ in "• " } }
-    func numberedList() { prefixParagraphs { "\($0 + 1). " } }
-
-    func quote() {
-        guard let tv = textView, let storage = tv.textStorage else { return }
-        let range = (storage.string as NSString).paragraphRange(for: tv.selectedRange())
-        let style = NSMutableParagraphStyle()
-        style.headIndent = 16; style.firstLineHeadIndent = 16
-        storage.addAttributes([.paragraphStyle: style, .foregroundColor: NSColor(W.mutedForeground)], range: range)
-        tv.didChangeText()
-    }
-
+    /// `removeFormat`: inline formatting goes; the paragraph (list, quote) stays.
     func clearFormatting() {
         apply({ storage, range in
-            storage.setAttributes([.font: self.baseFont, .foregroundColor: NSColor(W.foreground)], range: range)
+            storage.enumerateAttributes(in: range) { attrs, r, _ in
+                var next: [NSAttributedString.Key: Any] = [.font: self.baseFont, .foregroundColor: attrs[Self.quoteKey] != nil ? self.quoteColor : self.inkColor]
+                if let p = attrs[.paragraphStyle] { next[.paragraphStyle] = p }
+                if let q = attrs[Self.quoteKey] { next[Self.quoteKey] = q }
+                storage.setAttributes(next, range: r)
+            }
         }, typing: { t in
-            t = [.font: self.baseFont, .foregroundColor: NSColor(W.foreground)]
+            var next: [NSAttributedString.Key: Any] = [.font: self.baseFont, .foregroundColor: t[Self.quoteKey] != nil ? self.quoteColor : self.inkColor]
+            if let p = t[.paragraphStyle] { next[.paragraphStyle] = p }
+            if let q = t[Self.quoteKey] { next[Self.quoteKey] = q }
+            t = next
         })
     }
 }
@@ -1013,6 +1496,8 @@ struct RichTextEditor: NSViewRepresentable {
     var placeholder = ""
     var autoFocus = false
     var onEdit: () -> Void
+    /// `onPaste` with `clipboardData.files`: files and images on the clipboard become attachments.
+    var onPasteFiles: (([URL], [ComposeAttachmentFile]) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -1041,6 +1526,17 @@ struct RichTextEditor: NSViewRepresentable {
         tv.placeholder = placeholder
         tv.typingAttributes = [.font: controller.baseFont, .foregroundColor: NSColor(W.foreground), .paragraphStyle: controller.baseParagraph]
         tv.defaultParagraphStyle = controller.baseParagraph
+        let controller = self.controller
+        tv.onFormat = { [weak controller] which in
+            switch which {
+            case "bold": controller?.toggleBold()
+            case "italic": controller?.toggleItalic()
+            default: controller?.toggleUnderline()
+            }
+        }
+        tv.onNewline = { [weak controller] in controller?.handleNewline() ?? false }
+        tv.onDeleteBackward = { [weak controller] in controller?.handleDeleteBackward() ?? false }
+        tv.onPasteFiles = onPasteFiles
         scroll.documentView = tv
         controller.textView = tv
         let coordinator = context.coordinator
@@ -1059,7 +1555,11 @@ struct RichTextEditor: NSViewRepresentable {
 
     func updateNSView(_ view: NSScrollView, context: Context) {
         context.coordinator.parent = self
-        if let tv = view.documentView as? NSTextView { context.coordinator.measure(tv) }
+        if let tv = view.documentView as? PlaceholderTextView {
+            tv.placeholder = placeholder
+            tv.onPasteFiles = onPasteFiles
+            context.coordinator.measure(tv)
+        }
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -1091,15 +1591,74 @@ struct RichTextEditor: NSViewRepresentable {
     }
 }
 
-/// An NSTextView that draws a placeholder while empty.
+/// An NSTextView that draws a placeholder while empty, the quote bar beside quoted
+/// paragraphs, and answers ⌘B/⌘I/⌘U, Return and Backspace inside lists, and file pastes.
 final class PlaceholderTextView: NSTextView {
     var placeholder = ""
+    var onFormat: ((String) -> Void)?
+    var onNewline: (() -> Bool)?
+    var onDeleteBackward: (() -> Bool)?
+    var onPasteFiles: (([URL], [ComposeAttachmentFile]) -> Void)?
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         if string.isEmpty, !placeholder.isEmpty {
-            let attrs: [NSAttributedString.Key: Any] = [.font: font ?? NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor(W.mutedForeground)]
+            // `empty:before:text-tertiary`.
+            let attrs: [NSAttributedString.Key: Any] = [.font: font ?? NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor(W.tertiary)]
             (placeholder as NSString).draw(at: NSPoint(x: textContainerInset.width, y: textContainerInset.height), withAttributes: attrs)
         }
+        // `[&_blockquote]:border-l-2 [&_blockquote]:border-border`.
+        guard let storage = textStorage, storage.length > 0, let lm = layoutManager, let tc = textContainer else { return }
+        storage.enumerateAttribute(RichTextController.quoteKey, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard value != nil else { return }
+            let glyphs = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            let rect = lm.boundingRect(forGlyphRange: glyphs, in: tc)
+            NSColor(W.border).setFill()
+            NSRect(x: textContainerInset.width, y: rect.minY + textContainerInset.height, width: 2, height: rect.height).fill()
+        }
     }
+
     override func didChangeText() { super.didChangeText(); needsDisplay = true }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if window?.firstResponder === self, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           let key = event.charactersIgnoringModifiers?.lowercased() {
+            switch key {
+            case "b": onFormat?("bold"); return true
+            case "i": onFormat?("italic"); return true
+            case "u": onFormat?("underline"); return true
+            default: break
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    override func insertNewline(_ sender: Any?) {
+        if onNewline?() == true { return }
+        super.insertNewline(sender)
+    }
+
+    override func deleteBackward(_ sender: Any?) {
+        if onDeleteBackward?() == true { return }
+        super.deleteBackward(sender)
+    }
+
+    override func paste(_ sender: Any?) {
+        let pb = NSPasteboard.general
+        if let onPasteFiles {
+            if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
+                onPasteFiles(urls, [])
+                return
+            }
+            let types = pb.types ?? []
+            if types.contains(.png) || types.contains(.tiff) {
+                let raw = pb.data(forType: .png) ?? pb.data(forType: .tiff)
+                if let raw, let rep = NSBitmapImageRep(data: raw), let png = rep.representation(using: .png, properties: [:]) {
+                    onPasteFiles([], [ComposeAttachmentFile(filename: "image.png", mimeType: "image/png", data: png)])
+                    return
+                }
+            }
+        }
+        super.paste(sender)
+    }
 }

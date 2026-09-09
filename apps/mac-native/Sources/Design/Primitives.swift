@@ -215,9 +215,11 @@ struct WBadge: View {
     var muted = false
     var small = false
     var dot: Color?
+    /// `px-1.5` on a label chip against the `px-1` of the row's small badges.
+    var paddingX: CGFloat? = nil
 
-    init(_ text: String, icon: String? = nil, variant: WBadgeVariant = .secondary, muted: Bool = false, small: Bool = false, dot: Color? = nil) {
-        self.text = text; self.icon = icon; self.variant = variant; self.muted = muted; self.small = small; self.dot = dot
+    init(_ text: String, icon: String? = nil, variant: WBadgeVariant = .secondary, muted: Bool = false, small: Bool = false, dot: Color? = nil, paddingX: CGFloat? = nil) {
+        self.text = text; self.icon = icon; self.variant = variant; self.muted = muted; self.small = small; self.dot = dot; self.paddingX = paddingX
     }
 
     var body: some View {
@@ -228,7 +230,7 @@ struct WBadge: View {
         }
         .font(W.font(small ? 10 : 12, muted ? 400 : 500))
         .foregroundStyle(variant == .default ? W.primaryForeground : (muted ? W.mutedForeground : W.foreground))
-        .padding(.horizontal, small ? 4 : 8)
+        .padding(.horizontal, paddingX ?? (small ? 4 : 8))
         .frame(height: small ? 16 : 20)
         .background(variant == .default ? W.primary : variant == .secondary ? W.secondary : Color.clear)
         .overlay {
@@ -327,12 +329,23 @@ struct WAvatar: View {
     var selected = false
     @State private var image: PlatformImage?
 
+    /// `/\.svg(\?|#|$)/i` on the web: a brand logo rather than a photo.
+    private var isLogo: Bool {
+        guard let src else { return false }
+        return src.range(of: #"\.svg(\?|#|$)"#, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
     var body: some View {
         ZStack {
             if selected {
                 Icon("check", size: (size * 0.55).rounded(), strokeWidth: 2.5)
             } else if let image {
-                Image(platformImage: image).resizable().scaledToFill()
+                // SVG/BIMI brand marks sit `object-contain p-[12%] bg-muted`; photos cover.
+                if isLogo {
+                    Image(platformImage: image).resizable().scaledToFit().padding(size * 0.12).background(W.muted)
+                } else {
+                    Image(platformImage: image).resizable().scaledToFill()
+                }
             } else {
                 Text(Fmt.initials(name, email))
                     .font(W.font(max(9, (size * 0.42).rounded()), 500))
@@ -392,9 +405,11 @@ struct WAvatarStack: View {
 /// The tiny monochrome account mark (unified inbox).
 struct AccountGlyph: View {
     let glyph: String?
+    /// The account's email, shown as the tooltip.
+    var label: String? = nil
     var body: some View {
         if let glyph, !glyph.isEmpty {
-            Text(glyph).font(W.font(9)).foregroundStyle(W.mutedForeground)
+            Text(glyph).font(W.font(9)).foregroundStyle(W.mutedForeground).help(label ?? "")
         }
     }
 }
@@ -575,39 +590,51 @@ struct WToggleGroup: View {
     var outline = false
     var fontSize: CGFloat = 12.8
     var height: CGFloat = 28
+    /// `ToggleGroup spacing`: 0 joins the outlined items into one bordered row (the Screener's
+    /// targets: `px-2`, the checked item `bg-background shadow-sm`); anything else lays them
+    /// out as separate outlined pills (the Feed's New/All: `gap-2`, the checked item `bg-muted`).
+    var spacing: CGFloat = 0
+
+    private var joined: Bool { outline && spacing == 0 }
 
     var body: some View {
-        HStack(spacing: outline ? 0 : 4) {
+        HStack(spacing: outline ? spacing : 4) {
             ForEach(Array(options.enumerated()), id: \.element.id) { i, o in
                 let on = value == o.id
                 Button {
                     value = o.id
                 } label: {
-                    HStack(spacing: 4) {
+                    // `gap-1.5` on the Settings toggles' items.
+                    HStack(spacing: 6) {
                         if let icon = o.icon { Icon(icon, size: 14) }
                         Text(o.label)
                     }
                     .font(W.font(fontSize, 500))
-                    .foregroundStyle(on ? W.foreground : W.mutedForeground)
-                    .padding(.horizontal, 10)
+                    .foregroundStyle(on || (outline && !joined) ? W.foreground : W.mutedForeground)
+                    .padding(.horizontal, joined ? 8 : 10)
                     .frame(height: height)
-                    .background(on ? (outline ? W.background : W.accent) : Color.clear)
+                    .background(on ? (joined ? W.background : outline ? W.muted : W.accent) : Color.clear)
                     .overlay {
-                        if outline && on { RoundedRectangle(cornerRadius: W.radiusMd, style: .continuous).strokeBorder(W.border, lineWidth: 1) }
+                        if outline && !joined { RoundedRectangle(cornerRadius: W.radiusMd, style: .continuous).strokeBorder(W.input, lineWidth: 1) }
                     }
                     .clipShape(RoundedRectangle(cornerRadius: W.radiusMd, style: .continuous))
+                    // `aria-checked:shadow-sm` on the joined group's checked item.
+                    .shadow(color: .black.opacity(joined && on ? 0.05 : 0), radius: 1, y: 1)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(o.help ?? o.label)
                 .zIndex(on ? 1 : 0)
-                .padding(.leading, outline && i > 0 ? -1 : 0)
+                // `border-l-0` on every item but the first: one shared line between neighbours.
+                .overlay(alignment: .leading) {
+                    if joined && i > 0 { Rectangle().fill(W.input).frame(width: 1) }
+                }
             }
         }
-        .padding(outline ? 0 : 0)
         .background {
-            if outline { RoundedRectangle(cornerRadius: W.radiusMd, style: .continuous).strokeBorder(W.border, lineWidth: 1) }
+            if joined { RoundedRectangle(cornerRadius: W.radiusLg, style: .continuous).strokeBorder(W.input, lineWidth: 1) }
         }
+        .clipShape(RoundedRectangle(cornerRadius: joined ? W.radiusLg : W.radiusMd, style: .continuous))
     }
 }
 
@@ -678,5 +705,93 @@ struct HoverRow<Content: View>: View {
             .background(active ? activeWash : (hovering ? wash : Color.clear))
             .rounded(radius)
             .onHover { hovering = $0 }
+    }
+}
+
+// MARK: - Select
+
+struct WSelectOption: Identifiable, Hashable {
+    let id: String
+    let label: String
+    init(_ id: String, _ label: String) { self.id = id; self.label = label }
+}
+
+/// shadcn `Select`: the trigger is drawn as the web draws it — transparent, a 1pt `border-input`
+/// edge, the value and a muted chevron; `.sm` is h-7 rounded-md, `.default` h-8 rounded-lg — and
+/// the list opens as a `PopCard` of `MenuItem`s, at least `min-w-36` wide and never narrower
+/// than the trigger. `maxHeight` turns a long list (time zones) into a scrolling one that opens
+/// on the current value.
+struct WSelect: View {
+    let id: String
+    let options: [WSelectOption]
+    @Binding var value: String
+    var size: WSize = .default
+    var minWidth: CGFloat? = nil
+    var width: CGFloat? = nil
+    var fullWidth = false
+    var placeholder = ""
+    var align: PopAlign = .start
+    var maxHeight: CGFloat? = nil
+    var disabled = false
+    /// A bare `<select class="bg-input rounded-md px-2.5">` rather than shadcn's trigger: the
+    /// wash instead of the edge.
+    var filled = false
+    @Environment(PopLayerState.self) private var pops
+
+    private var radius: CGFloat { size == .sm || filled ? W.radiusMd : W.radiusLg }
+
+    var body: some View {
+        let current = options.first { $0.id == value }
+        Button {
+            let anchorWidth = pops.frames[id]?.width ?? 0
+            let listWidth = max(144, anchorWidth)
+            pops.toggle(id, side: .bottom, align: align) {
+                PopCard(width: listWidth) { list }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(current?.label ?? placeholder)
+                    .font(W.sm)
+                    .foregroundStyle(current == nil ? W.mutedForeground : W.foreground)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Icon("chevronDown", size: 16).foregroundStyle(W.mutedForeground)
+            }
+            .padding(.leading, 10).padding(.trailing, filled ? 10 : 8)
+            .frame(height: size == .sm ? 28 : 32)
+            .frame(minWidth: minWidth)
+            .frame(width: width)
+            .frame(maxWidth: fullWidth ? .infinity : nil)
+            .background(filled ? W.input : Color.clear)
+            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(filled ? Color.clear : W.input, lineWidth: 1))
+            .rounded(radius)
+            .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .opacity(disabled ? 0.5 : 1)
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .popAnchor(id)
+    }
+
+    @ViewBuilder
+    private var list: some View {
+        if let maxHeight {
+            let height = min(maxHeight, CGFloat(options.count) * 28)
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVStack(spacing: 0) { rows }
+                }
+                .frame(height: height)
+                .onAppear { proxy.scrollTo(value, anchor: .center) }
+            }
+        } else {
+            VStack(spacing: 0) { rows }
+        }
+    }
+
+    private var rows: some View {
+        ForEach(options) { o in
+            MenuItem(o.label, checked: o.id == value) { value = o.id }.id(o.id)
+        }
     }
 }

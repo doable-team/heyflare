@@ -327,8 +327,9 @@ final class CalendarStore {
     private var tasks: [String: Task<Void, Never>] = [:]
 
     /// Roughly a year either side of wherever the user settled. Beyond that a refetch is
-    /// cheaper than the memory.
-    private let keepMonths = 9
+    /// cheaper than the memory. (The Mac's week stack and year keep a whole loaded window on
+    /// screen at once — up to a year of weeks — so the cap has to hold more than one.)
+    private let keepMonths = 24
     /// Days of slack either side of the 42-cell grid, so a month that starts on the first
     /// weekday still carries context for the row above and below it.
     private let padDays = 7
@@ -653,6 +654,120 @@ final class CalendarStore {
         let span = min(max(raw, 0), 14)
 
         return (0...span).map { CalDate.key(CalDate.addingDays($0, to: startDay, in: cal), in: cal) }
+    }
+}
+
+// MARK: - Loaded windows (the Mac's week stack, day ribbon and year)
+
+extension CalendarStore {
+    /// Every month key the day range `[fromKey, toKey]` touches.
+    func monthKeys(fromKey: String, toKey: String) -> [Date] {
+        let cal = calendar
+        guard let a = CalDate.date(fromKey: fromKey, in: cal), let b = CalDate.date(fromKey: toKey, in: cal) else { return [] }
+        var out: [Date] = []
+        var cur = CalDate.startOfMonth(a, in: cal)
+        var guardCount = 0
+        while cur <= b && guardCount < 60 {
+            out.append(cur)
+            cur = CalDate.addingMonths(1, to: cur, in: cal)
+            guardCount += 1
+        }
+        return out
+    }
+
+    /// `useCalendarRange(from, to)`: makes sure every month the window touches is held. The
+    /// months are fetched together; `loading` is up for as long as any of them is out.
+    func ensureRange(fromKey: String, toKey: String) async {
+        let months = monthKeys(fromKey: fromKey, toKey: toKey).filter { !isLoaded(month: $0) }
+        guard !months.isEmpty else { return }
+        loading = true
+        await withTaskGroup(of: Void.self) { group in
+            for m in months { group.addTask { [weak self] in await self?.load(month: m, force: false, visible: false) } }
+        }
+        loading = false
+    }
+
+    /// `invalidateCalendar` for a window: every month in it is fetched again, the old answer
+    /// staying on screen until the new one lands — nothing blanks and refills.
+    func refreshRange(fromKey: String, toKey: String) async {
+        let months = monthKeys(fromKey: fromKey, toKey: toKey)
+        for m in months { tasks[CalDate.monthKey(m, in: calendar)]?.cancel(); tasks[CalDate.monthKey(m, in: calendar)] = nil }
+        loading = true
+        await withTaskGroup(of: Void.self) { group in
+            for m in months { group.addTask { [weak self] in await self?.load(month: m, force: true, visible: false) } }
+        }
+        loading = false
+    }
+
+    /// The habits the range returned (archived ones dropped), from whichever window holds `key`.
+    func habitList(near key: String) -> [CalHabit] {
+        guard let date = CalDate.date(fromKey: key, in: calendar) else { return [] }
+        let month = CalDate.monthKey(date, in: calendar)
+        let rows = habitRows[month] ?? habitRows.values.first ?? []
+        return rows.filter { !$0.archived }.sorted { $0.position != $1.position ? $0.position < $1.position : $0.id < $1.id }
+    }
+
+    /// `useHabitMutations().toggle`, optimistic: the tick flips on screen at once, the server's
+    /// answer replaces it, and a refusal puts it back and is rethrown for the caller to show.
+    func toggleHabit(_ h: CalHabit, date: String) async throws {
+        func flip() {
+            for (k, rows) in habitRows {
+                guard let i = rows.firstIndex(where: { $0.id == h.id }) else { continue }
+                var row = rows[i]
+                if let j = row.completions.firstIndex(of: date) { row.completions.remove(at: j) } else { row.completions.append(date) }
+                habitRows[k]?[i] = row
+            }
+        }
+        flip()
+        do {
+            let from = CalDate.addingDays(-83, toKey: date, in: calendar)
+            let fresh = try await CalendarAPI.toggleHabit(id: h.id, date: date, from: from, to: date)
+            // The window the toggle answers with is the streak's twelve weeks; the rows here hold
+            // their own month's ticks, so only the tick that changed is taken from the answer.
+            let done = fresh.completions.contains(date)
+            for (k, rows) in habitRows {
+                guard let i = rows.firstIndex(where: { $0.id == h.id }) else { continue }
+                var row = rows[i]
+                row.streak = fresh.streak
+                row.completions.removeAll { $0 == date }
+                if done { row.completions.append(date) }
+                habitRows[k]?[i] = row
+            }
+        } catch {
+            flip()
+            throw error
+        }
+    }
+
+    /// Event id → its place in the order the server sent it. The day index above sorts
+    /// all-day items by title for the phone's lists; the web's week keeps the range's own
+    /// order for its pills, and the Mac's week follows the web.
+    var serverOrder: [String: Int] {
+        var out: [String: Int] = [:]
+        var i = 0
+        for events in windows.values {
+            for e in events where out[e.id] == nil { out[e.id] = i; i += 1 }
+        }
+        return out
+    }
+
+    /// Every day row held, keyed by date — the week stack and the year read photos by it.
+    var dayByKey: [String: CalDay] {
+        var out: [String: CalDay] = [:]
+        for rows in dayRows.values { for d in rows { out[d.date] = d } }
+        return out
+    }
+
+    /// A day row that arrived from a write for a day no window described yet still has to be
+    /// drawn, so it is filed under the month it belongs to.
+    func adoptOrInsert(day: CalDay) {
+        var found = false
+        for (k, rows) in dayRows {
+            if let i = rows.firstIndex(where: { $0.date == day.date }) { dayRows[k]?[i] = day; found = true }
+        }
+        if !found, let d = CalDate.date(fromKey: day.date, in: calendar) {
+            dayRows[CalDate.monthKey(d, in: calendar), default: []].append(day)
+        }
     }
 }
 

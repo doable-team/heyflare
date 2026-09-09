@@ -4,12 +4,15 @@ import AppKit
 /// `FeedCard`: the message opened right in the list, capped, with its actions.
 struct FeedCard: View {
     let thread: ThreadSummary
-    var onLeave: (String, @escaping () -> Void) -> Void
+    /// Fade the card, run the action; `removes` says whether the page may drop it at once
+    /// (a move is optimistic on the web, `seen` is not — that card waits for the refetch).
+    var onLeave: (String, _ removes: Bool, @escaping () -> Void) -> Void
 
     @Environment(AppState.self) private var app
     @Environment(Router.self) private var router
     @State private var expanded = false
     @State private var bodyHeight: CGFloat = 0
+    @State private var subjectHover = false
 
     private let cap: CGFloat = 480
     private var m: Message? { thread.latestMessage }
@@ -26,17 +29,19 @@ struct FeedCard: View {
             HStack(spacing: 10) {
                 WAvatar(thread.lastFrom, size: 20)
                 Text(thread.lastFrom.name.isEmpty ? thread.lastFrom.email : thread.lastFrom.name).font(W.font(14, 500)).lineLimit(1)
-                if app.accounts.count > 1 { AccountGlyph(glyph: app.glyph(for: thread.accountID)) }
+                if app.accounts.count > 1 { AccountGlyph(glyph: app.glyph(for: thread.accountID), label: app.account(thread.accountID)?.email) }
                 Text(thread.lastFrom.email).font(W.xs).foregroundStyle(W.mutedForeground).lineLimit(1)
                 Spacer()
                 Text(Fmt.time(thread.lastMessageAt)).font(W.xs).monospacedDigit().foregroundStyle(W.mutedForeground).help(Fmt.full(thread.lastMessageAt))
             }
             .padding(.horizontal, 20).padding(.top, 20)
             Button { router.go(.thread(thread.id, peek: false)) } label: {
-                Text(thread.displaySubject).font(W.font(20, 600)).tracking(-0.2).foregroundStyle(W.foreground).multilineTextAlignment(.leading).lineSpacing(3)
+                // `hover:underline underline-offset-2`
+                Text(thread.displaySubject).font(W.font(20, 600)).tracking(-0.2).underline(subjectHover).foregroundStyle(W.foreground).multilineTextAlignment(.leading).lineSpacing(3)
                     .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .onHover { subjectHover = $0 }
             .padding(.horizontal, 20).padding(.top, 12)
 
             ZStack(alignment: .bottom) {
@@ -59,12 +64,15 @@ struct FeedCard: View {
                 if let url = unsubscribe.url {
                     WButton("Unsubscribe", trailingIcon: "arrowUpRight", variant: .ghost, size: .sm, muted: true) { NSWorkspace.shared.open(url) }
                 } else if let mailto = unsubscribe.mailto {
-                    WButton("Unsubscribe", trailingIcon: "arrowUpRight", variant: .ghost, size: .sm, muted: true, help: "Email \(mailto) to unsubscribe") { Compose.open(ComposerInitial(to: [Address(email: mailto)], subject: "Unsubscribe")) }
+                    // `<a href="mailto:…">`: the system mail link, not the in-app composer.
+                    WButton("Unsubscribe", trailingIcon: "arrowUpRight", variant: .ghost, size: .sm, muted: true, help: "Email \(mailto) to unsubscribe") {
+                        if let url = URL(string: "mailto:\(mailto)") { NSWorkspace.shared.open(url) }
+                    }
                 }
                 Spacer()
-                WButton("Done", icon: "check", variant: .ghost, size: .sm, muted: true) { onLeave(thread.id) { Mail.bulk([thread.id], .seen, toast: "Done") } }
-                WButton("Paper Trail", icon: "fileText", variant: .ghost, size: .sm, muted: true) { onLeave(thread.id) { Mail.bulk([thread.id], .move(.paperTrail), toast: "Moved to Paper Trail") } }
-                WButton("Imbox", icon: "inbox", variant: .ghost, size: .sm, muted: true) { onLeave(thread.id) { Mail.bulk([thread.id], .move(.imbox), toast: "Moved to Imbox") } }
+                WButton("Done", icon: "check", variant: .ghost, size: .sm, muted: true) { onLeave(thread.id, false) { Mail.bulk([thread.id], .seen, toast: "Done") } }
+                WButton("Paper Trail", icon: "fileText", variant: .ghost, size: .sm, muted: true) { onLeave(thread.id, true) { Mail.bulk([thread.id], .move(.paperTrail), toast: "Moved to Paper Trail") } }
+                WButton("Imbox", icon: "inbox", variant: .ghost, size: .sm, muted: true) { onLeave(thread.id, true) { Mail.bulk([thread.id], .move(.imbox), toast: "Moved to Imbox") } }
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
         }
@@ -89,7 +97,8 @@ struct FeedPage: View {
             let n = store.threads.count
             PageColumn(width: 672) {
                 PageHeader(title: "The Feed", subtitle: n > 0 ? "\(n)\(store.hasMore ? "+" : "") \(n == 1 && !store.hasMore ? "item" : "items"). Newsletters and long reads. Scroll, don't sort." : "Newsletters and long reads. Scroll, don't sort.") {
-                    WToggleGroup(options: [ToggleOption(id: "new", label: "New", help: "Show new"), ToggleOption(id: "all", label: "All", help: "Show everything")], value: $show, outline: true)
+                    // `ToggleGroup variant="outline" size="sm"`: two separate outlined pills, gap-2.
+                    WToggleGroup(options: [ToggleOption(id: "new", label: "New", help: "Show new"), ToggleOption(id: "all", label: "All", help: "Show everything")], value: $show, outline: true, spacing: 8)
                 }
                 .padding(.horizontal, 8)
                 if let error = store.error { ErrorStateView(message: error) { Task { await store.refresh(filter) } } }
@@ -111,26 +120,29 @@ struct FeedPage: View {
             .syncsWithMail { await store.refresh(filter) }
             // A reading page: arrows scroll it. `e` is Done on the card being read.
             .cardScrollKeys(enabled: ui.region == .content)
-            .onKeys(["e": { if let id = tops.current(store.threads.map(\.id)) { leave(id) { Mail.bulk([id], .seen, toast: "Done") } } }], enabled: ui.region == .content && !store.threads.isEmpty)
+            .onKeys(["e": { if let id = tops.current(store.threads.map(\.id)) { leave(id, false) { Mail.bulk([id], .seen, toast: "Done") } } }], enabled: ui.region == .content && !store.threads.isEmpty)
         }
     }
 
-    private func leave(_ id: String, _ then: @escaping () -> Void) {
+    /// `onLeave`: fade for 120ms, then run. A move leaves the list at once (the web removes it
+    /// optimistically); `seen` does not — the card stays until the refetch settles it.
+    private func leave(_ id: String, _ removes: Bool, _ then: @escaping () -> Void) {
         leaving.insert(id)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
             then()
-            _ = store.remove(id)
+            if removes { _ = store.remove(id) }
             leaving.remove(id)
         }
     }
 }
 
+/// `CardSkeleton`: `p-5 space-y-4`, bars at 30% / 70% / 100% / 92% / 80%.
 struct FeedSkeleton: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 10) { SkeletonBlock(width: 20, height: 20, radius: 4); SkeletonBlock(width: 160) }
-            SkeletonBlock(width: 380, height: 20)
-            VStack(alignment: .leading, spacing: 8) { SkeletonBlock(); SkeletonBlock(width: 520); SkeletonBlock(width: 440); SkeletonBlock(height: 128) }
+            HStack(spacing: 10) { SkeletonBlock(width: 20, height: 20, radius: 4); PctSkeleton(pct: 0.3) }
+            PctSkeleton(pct: 0.7, height: 20)
+            VStack(alignment: .leading, spacing: 8) { PctSkeleton(); PctSkeleton(pct: 0.92); PctSkeleton(pct: 0.8); SkeletonBlock(height: 128) }
         }
         .padding(20)
         .background(W.muted40)
@@ -149,6 +161,7 @@ struct BundlePage: View {
     @State private var store = BundleStore()
     @State private var leaving: Set<String> = []
     @State private var marked = false
+    @State private var contactHover = false
 
     var body: some View {
         if let error = store.error, store.detail == nil {
@@ -166,7 +179,8 @@ struct BundlePage: View {
                         }
                         HStack(spacing: 4) {
                             Text("\(b.messageCount) \(b.messageCount == 1 ? "message" : "messages") · \(b.threadCount) \(b.threadCount == 1 ? "thread" : "threads") ·")
-                            Button { router.go(.contact(b.contactID)) } label: { Text("Open contact").underline() }.buttonStyle(.plain)
+                            // `hover:text-foreground underline-offset-2 hover:underline`
+                            Button { router.go(.contact(b.contactID)) } label: { Text("Open contact").underline(contactHover).foregroundStyle(contactHover ? W.foreground : W.mutedForeground) }.buttonStyle(.plain).onHover { contactHover = $0 }
                         }
                         .font(W.s13).monospacedDigit().foregroundStyle(W.mutedForeground)
                     }
@@ -196,7 +210,7 @@ struct BundlePage: View {
             }
             .onKeys(["Escape": { router.back() }])
             .cardScrollKeys(enabled: ui.region == .content)
-            .onKeys(["e": { if let id = tops.current(store.threads.map(\.id)) { leave(id) { Mail.bulk([id], .seen, toast: "Done") } } }], enabled: ui.region == .content && !store.threads.isEmpty)
+            .onKeys(["e": { if let id = tops.current(store.threads.map(\.id)) { leave(id, false) { Mail.bulk([id], .seen, toast: "Done") } } }], enabled: ui.region == .content && !store.threads.isEmpty)
             .task {
                 if b.isOpen && !marked { marked = true; _ = await store.markAllSeen(bundleID); Mail.invalidate() }
             }
@@ -206,9 +220,9 @@ struct BundlePage: View {
         }
     }
 
-    private func leave(_ id: String, _ then: @escaping () -> Void) {
+    private func leave(_ id: String, _ removes: Bool, _ then: @escaping () -> Void) {
         leaving.insert(id)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { then(); _ = store.remove(id); leaving.remove(id) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { then(); if removes { _ = store.remove(id) }; leaving.remove(id) }
     }
 }
 

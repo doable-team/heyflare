@@ -32,6 +32,52 @@ struct AuthLayout<Content: View>: View {
     }
 }
 
+/// `<Button type="submit" className="w-full" disabled={busy}>{busy && <Loader2 className="animate-spin" />}Label</Button>`:
+/// the label stays while a spinner joins it.
+private struct SubmitButton: View {
+    let label: String
+    var busy = false
+    var action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if busy { Spinner(size: 16) }
+                Text(label)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.web(.default))
+    }
+}
+
+/// `text-xs text-muted-foreground hover:text-foreground`, optionally underlined.
+private struct AuthLink: View {
+    let label: String
+    var underline = false
+    var action: () -> Void
+    @State private var hovering = false
+    var body: some View {
+        Button(action: action) {
+            Text(label).font(W.xs).underline(underline).foregroundStyle(hovering ? W.foreground : W.mutedForeground).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+/// The browser's own validation bubbles, in words: `required`, `type="email"`, `minLength`.
+private enum FormValidation {
+    static func required(_ value: String) -> String? { value.isEmpty ? "Please fill out this field." : nil }
+    static func email(_ value: String) -> String? {
+        if let r = required(value) { return r }
+        return value.contains("@") ? nil : "Please include an '@' in the email address. '\(value)' is missing an '@'."
+    }
+    static func minLength(_ value: String, _ n: Int) -> String? {
+        if let r = required(value) { return r }
+        return value.count < n ? "Please lengthen this text to \(n) characters or more (you are currently using \(value.count) character\(value.count == 1 ? "" : "s"))." : nil
+    }
+}
+
 /// First run: point the app at a heyflare server.
 struct ServerSetupPage: View {
     @Environment(AppState.self) private var app
@@ -47,7 +93,7 @@ struct ServerSetupPage: View {
                     WTextField(placeholder: "mail.example.com", text: $address, onSubmit: { Task { await connect() } }, autofocus: true)
                     if let error { Text(error).font(W.xs) }
                 }
-                WButton(checking ? "Connecting…" : "Continue", fullWidth: true) { Task { await connect() } }
+                SubmitButton(label: "Continue", busy: checking) { Task { await connect() } }
                     .disabled(checking || address.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
@@ -121,7 +167,7 @@ struct SetupPage: View {
                     FieldLabel("Password"); WTextField(placeholder: "At least 8 characters", text: $password, secure: true, onSubmit: { Task { await submit() } })
                     if !error.isEmpty { Text(error).font(W.xs) }
                 }
-                WButton(busy ? "Creating…" : "Create my login", fullWidth: true) { Task { await submit() } }.disabled(busy || email.isEmpty || password.count < 8)
+                SubmitButton(label: "Create my login", busy: busy) { Task { await submit() } }.disabled(busy)
                 Text("Next, you'll connect one or more Gmail accounts from the Imbox.").font(W.xs).foregroundStyle(W.mutedForeground)
             }
         }
@@ -129,6 +175,8 @@ struct SetupPage: View {
     }
 
     private func submit() async {
+        // `required`, `type="email"`, `minLength={8}`: the form validates on submit.
+        if let v = FormValidation.email(email) ?? FormValidation.minLength(password, 8) { error = v; return }
         busy = true; error = ""
         defer { busy = false }
         do {
@@ -157,16 +205,17 @@ struct LoginPage: View {
                     VStack(alignment: .leading, spacing: 16) {
                         VStack(alignment: .leading, spacing: 6) {
                             FieldLabel(recoveryMode ? "Recovery code" : "Code")
+                            // `text-[18px] tracking-[0.3em] font-mono` for the 6-digit code.
                             WTextField(placeholder: recoveryMode ? "xxxx-xxxx" : "123456", text: $code, mono: true, fontSize: recoveryMode ? 14 : 18, onSubmit: { Task { await verify(ticket) } }, autofocus: true)
+                                .tracking(recoveryMode ? 0 : 18 * 0.3)
                             if !error.isEmpty { Text(error).font(W.xs) }
                         }
-                        WButton(busy ? "Checking…" : "Continue", fullWidth: true) { Task { await verify(ticket) } }.disabled(busy || code.trimmingCharacters(in: .whitespaces).isEmpty)
+                        SubmitButton(label: "Continue", busy: busy) { Task { await verify(ticket) } }.disabled(busy || code.trimmingCharacters(in: .whitespaces).isEmpty)
                         HStack {
-                            Button(recoveryMode ? "Use authenticator code" : "Use a recovery code") { recoveryMode.toggle(); code = ""; error = "" }.buttonStyle(.plain).underline()
+                            AuthLink(label: recoveryMode ? "Use authenticator code" : "Use a recovery code", underline: true) { recoveryMode.toggle(); code = ""; error = "" }
                             Spacer()
-                            Button("← Back") { self.ticket = nil; code = ""; error = "" }.buttonStyle(.plain)
+                            AuthLink(label: "← Back") { self.ticket = nil; code = ""; error = "" }
                         }
-                        .font(W.xs).foregroundStyle(W.mutedForeground)
                     }
                 }
             } else {
@@ -177,7 +226,7 @@ struct LoginPage: View {
                             FieldLabel("Password"); WTextField(placeholder: "••••••••", text: $password, secure: true, onSubmit: { Task { await signIn() } })
                             if !error.isEmpty { Text(error).font(W.xs) }
                         }
-                        WButton(busy ? "Signing in…" : "Continue", fullWidth: true) { Task { await signIn() } }.disabled(busy)
+                        SubmitButton(label: "Continue", busy: busy) { Task { await signIn() } }.disabled(busy)
                     }
                 }
                 .onAppear { error = initialMessage ?? "" }
@@ -189,6 +238,7 @@ struct LoginPage: View {
     }
 
     private func signIn() async {
+        if let v = FormValidation.email(email) ?? FormValidation.required(password) { error = v; return }
         busy = true; error = ""
         defer { busy = false }
         do {
