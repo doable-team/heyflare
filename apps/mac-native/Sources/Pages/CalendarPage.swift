@@ -1049,6 +1049,9 @@ private struct Track: View {
             if !first { Rectangle().fill(W.border).frame(width: 1).frame(maxHeight: .infinity, alignment: .leading) }
             // Not a thumbnail, and not dimmed: the photo fills the column at full strength.
             DayPhotoBackdrop(day: day)
+            // The scroll box's content is given the column's exact width: left to itself it
+            // would keep a scroller's worth of room on the right that nothing ever fills.
+            GeometryReader { box in
             ScrollView(.vertical) {
             ZStack(alignment: .topLeading) {
             // Hour rules behind the events: every hour faint, every sixth a shade stronger. Hours
@@ -1100,8 +1103,7 @@ private struct Track: View {
                 .zIndex(100)
             }
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: ribbon.length, alignment: .top)
+            .frame(width: box.size.width, height: ribbon.length, alignment: .top)
             .contentShape(Rectangle())
             // Press to set the cursor; drag down the column to draw out a new event; a plain
             // click makes a half hour.
@@ -1121,6 +1123,7 @@ private struct Track: View {
             .background(ScrollHook(controller: ctl))
             }
             .scrollIndicators(.hidden)
+            }
             // All-day things sit on the floor of the day — the ground it stands on, not a banner.
             if !pills.isEmpty {
                 VStack(spacing: 2) {
