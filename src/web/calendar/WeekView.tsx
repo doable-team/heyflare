@@ -21,7 +21,7 @@ import {
   type EventPreview,
 } from "./dragEvent";
 import { heyTime, snap } from "./scale";
-import { addDays, daysBetween, isToday, layoutColumns, placeBlocks, startOfDayMs, weekStartOf } from "../lib/caldate";
+import { addDays, dateKey, daysBetween, isToday, layoutColumns, placeBlocks, startOfDayMs, todayKey, weekStartOf } from "../lib/caldate";
 import { useEventMutations, useHabitMutations } from "../api";
 
 /**
@@ -66,7 +66,24 @@ const HEADER_PX = 34;
  * 576 (24px an hour): at 19px an hour a half-hour meeting had no room for its own name.
  */
 const BODY_PX = 576;
-const PX_PER_MS = BODY_PX / DAY_MS;
+/**
+ * The body shows twelve hours at a time. The full day is drawn twice as tall inside it and
+ * scrolls within the row — landing on the current hour — so the row keeps its height and the
+ * stack its rhythm, and a half-hour meeting has room for its name.
+ */
+const HOURS_ON_SCREEN = 12;
+const INNER_PX = (BODY_PX / HOURS_ON_SCREEN) * 24;
+const PX_PER_MS = INNER_PX / DAY_MS;
+const MAX_HOUR_SCROLL = INNER_PX - BODY_PX;
+
+/** Where a week's body opens: the current hour in the middle for the week holding today, noon otherwise. */
+function initialHourScroll(weekStart: string): number {
+  const today = todayKey();
+  const inWeek = today >= weekStart && today < addDays(weekStart, 7);
+  const ms = inWeek ? Date.now() : startOfDayMs(weekStart) + 12 * 3_600_000;
+  const y = (ms - startOfDayMs(dateKey(ms))) * PX_PER_MS;
+  return Math.max(0, Math.min(MAX_HOUR_SCROLL, y - BODY_PX / 2));
+}
 /**
  * The shortest a block is drawn in a week column — 25 minutes at this scale. Anything under it
  * loses its type and reads as a bar of colour, which is the honest way to draw a quarter-hour in
@@ -279,7 +296,14 @@ function WeekRow({
   register: (week: string, el: HTMLDivElement | null) => void;
 }) {
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
-  const { range } = useCalendar();
+  const { range, revealAt, settings: weekSettings } = useCalendar();
+  // The hour the row is scrolled to, shared by the gutter and all seven columns. "Today" and
+  // the arrows re-centre it, since they ask for the hour as much as for the week.
+  const [hourScroll, setHourScroll] = useState(() => initialHourScroll(weekStart));
+  useEffect(() => {
+    if (weekStartOf(revealAt.date, weekSettings.week_start) === weekStart) setHourScroll(initialHourScroll(weekStart));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealAt.nonce]);
   const { update } = useEventMutations();
 
   const grid = useRef<HTMLDivElement>(null);
@@ -427,15 +451,17 @@ function WeekRow({
         {/* The hour gutter. HEY's own week view has neither this nor the rules across the columns —
             its days are a clean field — but reading a time off a block is guesswork without them. */}
         <div className="relative w-9 shrink-0" style={{ paddingTop: HABITS_PX + HEADER_PX }}>
-          {HOUR_MARKS.map((h) => (
-            <span
-              key={h}
-              className="absolute right-1 -translate-y-1/2 text-[9.5px] tnum leading-none text-tertiary"
-              style={{ top: HABITS_PX + HEADER_PX + (h / 24) * BODY_PX }}
-            >
-              {hourLabel(h)}
-            </span>
-          ))}
+          <div className="absolute inset-x-0 overflow-hidden" style={{ top: HABITS_PX + HEADER_PX, height: BODY_PX }}>
+            {HOUR_MARKS.map((h) => (
+              <span
+                key={h}
+                className="absolute right-1 -translate-y-1/2 text-[9.5px] tnum leading-none text-tertiary"
+                style={{ top: (h / 24) * INNER_PX - hourScroll }}
+              >
+                {hourLabel(h)}
+              </span>
+            ))}
+          </div>
         </div>
 
         <div
@@ -446,18 +472,18 @@ function WeekRow({
           className="relative grid min-w-0 flex-1 grid-cols-[repeat(7,minmax(0,1fr))]"
         >
           {/* Hour rules behind the events: every hour faint, every sixth a shade stronger. */}
-          <div className="pointer-events-none absolute inset-x-0 z-0" style={{ top: HABITS_PX + HEADER_PX, height: BODY_PX }}>
+          <div className="pointer-events-none absolute inset-x-0 z-0 overflow-hidden" style={{ top: HABITS_PX + HEADER_PX, height: BODY_PX }}>
             {Array.from({ length: 23 }, (_, i) => i + 1).map((h) => (
               <div
                 key={h}
                 className={cn("absolute inset-x-0 border-t", h % 6 === 0 ? "border-border" : "border-border/40")}
-                style={{ top: (h / 24) * BODY_PX }}
+                style={{ top: (h / 24) * INNER_PX - hourScroll }}
               />
             ))}
           </div>
 
           {days.map((d, i) => (
-            <DayColumn key={d} date={d} first={i === 0} day={dayMeta.get(d)} habits={habits} drag={drag} />
+            <DayColumn key={d} date={d} first={i === 0} day={dayMeta.get(d)} habits={habits} drag={drag} hourScroll={hourScroll} onHourScroll={setHourScroll} />
           ))}
 
           {turns.map((t) => (
@@ -502,18 +528,22 @@ function DayColumn({
   day,
   habits,
   drag,
+  hourScroll,
+  onHourScroll,
 }: {
   date: string;
   first: boolean;
   day: CalendarDay | undefined;
   habits: Habit[];
   drag: RowDrag;
+  hourScroll: number;
+  onHourScroll: (y: number) => void;
 }) {
   return (
     <div className="group/day relative flex min-w-0 flex-col">
       <HabitRail date={date} habits={habits} />
       <DayHeader date={date} photo={hasPhoto(day)} />
-      <Track date={date} first={first} day={day} drag={drag} />
+      <Track date={date} first={first} day={day} drag={drag} hourScroll={hourScroll} onHourScroll={onHourScroll} />
       {/* HEY's entry point: hover the day's top-left corner and a photo icon appears over it. */}
       <div className="absolute left-1.5 z-30" style={{ top: HABITS_PX + HEADER_PX + 6 }}>
         <DayPhotoButton
@@ -601,14 +631,22 @@ function DayHeader({ date, photo }: { date: string; photo?: boolean }) {
  * The ruler is linear and complete: midnight at the top, midnight at the bottom, 24 hours in
  * between at one rate. No hour rules, no labels, no bands. The boxes *are* the day.
  */
-function Track({ date, first, day, drag }: { date: string; first: boolean; day: CalendarDay | undefined; drag: RowDrag }) {
+function Track({ date, first, day, drag, hourScroll, onHourScroll }: { date: string; first: boolean; day: CalendarDay | undefined; drag: RowDrag; hourScroll: number; onHourScroll: (y: number) => void }) {
   const { settings, cursor, setCursor, eventsOn, openEvent, createEvent } = useCalendar();
   const { setDone } = useEventMutations();
   const { timed, allDay } = eventsOn(date);
   const today = isToday(date);
 
   const dayStart = useMemo(() => startOfDayMs(date), [date]);
-  const posOf = useCallback((ms: number) => Math.max(0, Math.min(BODY_PX, (ms - dayStart) * PX_PER_MS)), [dayStart]);
+  const posOf = useCallback((ms: number) => Math.max(0, Math.min(INNER_PX, (ms - dayStart) * PX_PER_MS)), [dayStart]);
+
+  // The column's own scroll box follows the row's shared hour, and reports its own scrolling
+  // back so the six other columns and the gutter move with it.
+  const scrollBox = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = scrollBox.current;
+    if (el && Math.abs(el.scrollTop - hourScroll) > 0.5) el.scrollTop = hourScroll;
+  }, [hourScroll]);
 
   /**
    * A dragged event is drawn where it is *going*, which may well be another column. Every column
@@ -649,7 +687,7 @@ function Track({ date, first, day, drag }: { date: string; first: boolean; day: 
     (clientY: number) => {
       const r = box.current?.getBoundingClientRect();
       if (!r) return dayStart;
-      const mins = (Math.max(0, Math.min(BODY_PX, clientY - r.top)) / PX_PER_MS) / 60_000;
+      const mins = (Math.max(0, Math.min(INNER_PX, clientY - r.top)) / PX_PER_MS) / 60_000;
       return dayStart + snap(Math.round(mins)) * 60_000;
     },
     [dayStart],
@@ -667,13 +705,25 @@ function Track({ date, first, day, drag }: { date: string; first: boolean; day: 
 
   return (
     <div
-      ref={box}
       style={{ height: BODY_PX }}
       className={cn(
         "relative min-w-0 shrink-0 select-none overflow-hidden border-border",
         !first && "border-l",
         cursor === date && "bg-muted/25",
       )}
+    >
+    {/* Not a thumbnail, and not dimmed: the photo fills the column at full strength. Legibility
+        comes from the events on top of it, which stay opaque and gain a white keyline. */}
+    <DayPhotoBackdrop day={day} className="z-0" />
+    <div
+      ref={scrollBox}
+      onScroll={(e) => onHourScroll((e.currentTarget as HTMLDivElement).scrollTop)}
+      className="absolute inset-0 overflow-y-auto overflow-x-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+    >
+    <div
+      ref={box}
+      style={{ height: INNER_PX }}
+      className="relative"
       onMouseDown={(e) => {
         if (e.button !== 0) return;
         setCursor(date);
@@ -692,10 +742,6 @@ function Track({ date, first, day, drag }: { date: string; first: boolean; day: 
         createEvent({ starts_at: a, ends_at: b === a ? a + 30 * 60_000 : b });
       }}
     >
-      {/* Not a thumbnail, and not dimmed: the photo fills the column at full strength. Legibility
-          comes from the events on top of it, which stay opaque and gain a white keyline. */}
-      <DayPhotoBackdrop day={day} className="z-0" />
-
       {rest.map((e, i) => {
         const { top, height } = placed[i];
         return (
@@ -742,6 +788,17 @@ function Track({ date, first, day, drag }: { date: string; first: boolean; day: 
         />
       )}
 
+      {today && now >= dayStart && now < dayStart + DAY_MS && (
+        <div className="pointer-events-none absolute inset-x-0 z-[100]" style={{ top: posOf(now) }}>
+          <div className="border-t border-dotted border-red-500" />
+          <span className="absolute left-0 -top-[7px] bg-background/80 pr-1 text-[9px] leading-none tnum text-red-500">
+            {heyTime(now, settings.time_format)}
+          </span>
+        </div>
+      )}
+    </div>
+    </div>
+
       {/* All-day things sit on the floor of the day — the ground it stands on, not a banner. */}
       {pills.length > 0 && (
         <div className="pointer-events-auto absolute inset-x-1 bottom-1 z-[80] flex flex-col gap-[2px]">
@@ -755,15 +812,6 @@ function Track({ date, first, day, drag }: { date: string; first: boolean; day: 
             />
           ))}
           {extra > 0 && <span className="px-2 text-[10px] leading-none text-tertiary">+{extra} more</span>}
-        </div>
-      )}
-
-      {today && now >= dayStart && now < dayStart + DAY_MS && (
-        <div className="pointer-events-none absolute inset-x-0 z-[100]" style={{ top: posOf(now) }}>
-          <div className="border-t border-dotted border-red-500" />
-          <span className="absolute left-0 -top-[7px] bg-background/80 pr-1 text-[9px] leading-none tnum text-red-500">
-            {heyTime(now, settings.time_format)}
-          </span>
         </div>
       )}
     </div>

@@ -520,13 +520,18 @@ enum WeekGeom {
     /// All 24 hours at one scale — 24 to the hour (raised from HEY's 19.2, at which a half-hour
     /// meeting had no room for its own name).
     static let body: CGFloat = 576
+    /// The body shows twelve hours at a time; the full day is drawn twice as tall inside it and
+    /// scrolls within the row, landing on the current hour, so the row keeps its height.
+    static let hoursOnScreen: CGFloat = 12
+    static let inner: CGFloat = body / hoursOnScreen * 24
+    static let maxHourScroll: CGFloat = inner - body
     static let tasks: CGFloat = 28
     /// The shortest a block is drawn — 25 minutes at this scale.
     static let floor: CGFloat = 8
     static let row: CGFloat = habits + header + body + tasks
     static let gap: CGFloat = 12
     static let stride: CGFloat = row + gap
-    static let pxPerHour: CGFloat = body / 24
+    static let pxPerHour: CGFloat = inner / 24
     static let allDayMax = 3
     static let bodyTop: CGFloat = habits + header
 }
@@ -548,8 +553,11 @@ enum WeekFold {
         return CalRibbon(from: from, to: to, pxPerHour: WeekGeom.pxPerHour, nightStart: store.prefs.nightStart, nightEnd: store.prefs.nightEnd, nightPx: nightPx, collapseNight: collapse, in: cal)
     }
 
-    /// Folded unless a timed event in the week overlaps a night run.
+    /// Retired: the body now shows twelve hours with the current hour in the middle and the
+    /// rest a scroll away, so the night is never folded.
     static func collapses(week: String, store: CalendarStore) -> Bool {
+        return false
+        // swiftlint:disable:next unreachable_code
         guard store.prefs.collapseNight else { return false }
         let cal = store.calendar
         for i in 0..<7 {
@@ -568,8 +576,26 @@ enum WeekFold {
         ribbon(day: week, collapse: collapses(week: week, store: store), store: store).length
     }
 
-    static func rowHeight(week: String, store: CalendarStore) -> CGFloat {
-        WeekGeom.habits + WeekGeom.header + bodyHeight(week: week, store: store) + WeekGeom.tasks
+    static func rowHeight(week: String, store: CalendarStore) -> CGFloat { WeekGeom.row }
+}
+
+/// The hour a week's body is scrolled to, shared by its gutter and its seven columns.
+@MainActor
+@Observable
+final class HourScroll {
+    var y: CGFloat
+
+    init(week: String, cal: Calendar) { y = Self.initial(week: week, cal: cal) }
+
+    /// Where a body opens: the current hour in the middle for the week holding today, noon
+    /// otherwise.
+    static func initial(week: String, cal: Calendar) -> CGFloat {
+        let today = CalDate.todayKey
+        let inWeek = today >= week && today < CalDate.addingDays(7, toKey: week, in: cal)
+        let ms = inWeek ? Date().timeIntervalSince1970 * 1000 : CalDate.ms(week, minutes: 12 * 60, in: cal)
+        let dayStart = CalDate.ms(CalDate.key(Date(timeIntervalSince1970: ms / 1000), in: cal), minutes: 0, in: cal)
+        let y = CGFloat((ms - dayStart) / 3_600_000) * WeekGeom.pxPerHour
+        return max(0, min(WeekGeom.maxHourScroll, y - WeekGeom.body / 2))
     }
 }
 
@@ -677,7 +703,7 @@ struct WeekStack: View {
         return ScrollView {
             LazyVStack(spacing: 0) {
                 ForEach(weeks, id: \.self) { w in
-                    WeekRow(store: store, weekStart: w, current: w == cursorWeek, cursor: cursor, onEvent: onEvent, onCreate: onCreate, onSetCursor: onSetCursor, onRefresh: onRefresh)
+                    WeekRow(store: store, weekStart: w, current: w == cursorWeek, cursor: cursor, revealAt: revealAt, onEvent: onEvent, onCreate: onCreate, onSetCursor: onSetCursor, onRefresh: onRefresh)
                         .padding(.bottom, WeekGeom.gap)
                 }
             }
@@ -715,6 +741,7 @@ struct WeekRow: View {
     let weekStart: String
     let current: Bool
     let cursor: String
+    let revealAt: RevealAt
     var onEvent: (CalEventFull) -> Void
     var onCreate: (Double, Double) -> Void
     var onSetCursor: (String) -> Void
@@ -723,6 +750,7 @@ struct WeekRow: View {
     @State private var live: EventPreview?
     @State private var pending: EventPreview?
     @State private var gridWidth: CGFloat = 0
+    @State private var hour: HourScroll?
 
     private var cal: Calendar { store.calendar }
     private var days: [String] { (0..<7).map { CalDate.addingDays($0, toKey: weekStart, in: cal) } }
@@ -736,7 +764,8 @@ struct WeekRow: View {
         let order = store.serverOrder
         let collapse = WeekFold.collapses(week: weekStart, store: store)
         let first = WeekFold.ribbon(day: days[0], collapse: collapse, store: store)
-        let bodyH = first.length
+        let bodyH = WeekGeom.body
+        let hour = hour ?? HourScroll(week: weekStart, cal: cal)
         // A month that turns inside the row is announced on the divider it turns at, with its year.
         let turns: [Int: String] = Dictionary(uniqueKeysWithValues: (1..<7).compactMap { i in
             CalUI.monthIndex(days[i]) != CalUI.monthIndex(days[i - 1]) ? (i, "\(CalUI.monthsLong[CalUI.monthIndex(days[i])]) \(days[i].prefix(4))") : nil
@@ -755,10 +784,17 @@ struct WeekRow: View {
                 // third hour — the ones inside the fold have no room and are not drawn.
                 ZStack(alignment: .topTrailing) {
                     Color.clear
-                    ForEach(first.hours.filter { $0.hour % 3 == 0 }, id: \.ms) { h in
-                        Text(hourLabel(h.hour)).font(W.font(9.5)).monospacedDigit().foregroundStyle(W.tertiary).fixedSize()
-                            .offset(y: WeekGeom.bodyTop + h.pos - Geist.naturalLine(size: 9.5) / 2)
+                    // The marks scroll with the columns, clipped to the twelve hours on show.
+                    ZStack(alignment: .topTrailing) {
+                        Color.clear
+                        ForEach(first.hours.filter { $0.hour % 3 == 0 }, id: \.ms) { h in
+                            Text(hourLabel(h.hour)).font(W.font(9.5)).monospacedDigit().foregroundStyle(W.tertiary).fixedSize()
+                                .offset(y: h.pos - hour.y - Geist.naturalLine(size: 9.5) / 2)
+                        }
                     }
+                    .frame(height: WeekGeom.body)
+                    .clipped()
+                    .offset(y: WeekGeom.bodyTop)
                 }
                 .frame(width: 36)
                 .padding(.trailing, 4)
@@ -766,7 +802,7 @@ struct WeekRow: View {
                     ForEach(Array(days.enumerated()), id: \.element) { col, day in
                         DayColumn(store: store, date: day, col: col, first: col == 0, day: dayMeta[day], habits: habits, cursor: cursor,
                                   preview: preview, space: space, turn: turns[col], nextTurn: turns[col + 1], order: order,
-                                  ribbon: WeekFold.ribbon(day: day, collapse: collapse, store: store),
+                                  ribbon: WeekFold.ribbon(day: day, collapse: collapse, store: store), hour: hour,
                                   onEvent: onEvent, onCreate: onCreate, onSetCursor: onSetCursor,
                                   onDrag: { e, mode, p0, p1, ended in drag(e, date: day, col: col, collapse: collapse, mode: mode, p0: p0, p1: p1, ended: ended) })
                     }
@@ -780,6 +816,11 @@ struct WeekRow: View {
         .padding(.top, 1)
         .frame(height: WeekGeom.habits + WeekGeom.header + bodyH + WeekGeom.tasks, alignment: .top)
         .overlay(RoundedRectangle(cornerRadius: W.radiusLg, style: .continuous).strokeBorder(current ? W.border : Color.clear, lineWidth: 1))
+        .onAppear { if self.hour == nil { self.hour = hour } }
+        // "Today" and the arrows ask for the hour as much as for the week.
+        .onChange(of: revealAt.nonce) { _, _ in
+            if CalUI.weekStart(revealAt.date, cal) == weekStart { self.hour?.y = HourScroll.initial(week: weekStart, cal: cal) }
+        }
     }
 
     /// "6a", "12p", "9p" — short enough for a 36px gutter.
@@ -830,6 +871,7 @@ private struct DayColumn: View {
     let order: [String: Int]
     /// This day's ruler — folded or not, the week decided.
     let ribbon: CalRibbon
+    let hour: HourScroll
     var onEvent: (CalEventFull) -> Void
     var onCreate: (Double, Double) -> Void
     var onSetCursor: (String) -> Void
@@ -841,7 +883,7 @@ private struct DayColumn: View {
         VStack(spacing: 0) {
             HabitRail(store: store, date: date, habits: habits)
             DayHeader(date: date, photo: photo, cal: store.calendar)
-            Track(store: store, date: date, col: col, first: first, day: day, cursor: cursor, preview: preview, space: space, turn: turn, nextTurn: nextTurn, order: order, ribbon: ribbon,
+            Track(store: store, date: date, col: col, first: first, day: day, cursor: cursor, preview: preview, space: space, turn: turn, nextTurn: nextTurn, order: order, ribbon: ribbon, hour: hour,
                   onEvent: onEvent, onCreate: onCreate, onSetCursor: onSetCursor, onDrag: onDrag)
         }
         .frame(maxWidth: .infinity)
@@ -951,6 +993,7 @@ private struct Track: View {
     let nextTurn: String?
     let order: [String: Int]
     let ribbon: CalRibbon
+    let hour: HourScroll
     var onEvent: (CalEventFull) -> Void
     var onCreate: (Double, Double) -> Void
     var onSetCursor: (String) -> Void
@@ -958,6 +1001,8 @@ private struct Track: View {
 
     @State private var sketch: (from: Double, to: Double)?
     @State private var now = Date()
+    /// The column's own scroll box; it follows the row's shared hour and reports its own.
+    @State private var ctl = ScrollController()
 
     private var cal: Calendar { store.calendar }
     private var dayStart: Double { ribbon.from }
@@ -996,6 +1041,8 @@ private struct Track: View {
             if !first { Rectangle().fill(W.border).frame(width: 1).frame(maxHeight: .infinity, alignment: .leading) }
             // Not a thumbnail, and not dimmed: the photo fills the column at full strength.
             DayPhotoBackdrop(day: day)
+            ScrollView(.vertical) {
+            ZStack(alignment: .topLeading) {
             // Hour rules behind the events: every hour faint, every sixth a shade stronger. Hours
             // inside the fold have no room and get none.
             ForEach(ribbon.hours.filter { $0.hour > 0 }, id: \.ms) { h in
@@ -1034,6 +1081,38 @@ private struct Track: View {
                     .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(W.foreground.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [3])))
                     .frame(height: max(b - a, 8)).padding(.horizontal, 2).offset(y: a).allowsHitTesting(false).zIndex(95)
             }
+            if today && nowMs >= dayStart && nowMs < dayEnd {
+                ZStack(alignment: .topLeading) {
+                    Rectangle().stroke(CalUI.red, style: StrokeStyle(lineWidth: 1, dash: [1, 1])).frame(height: 1).frame(maxWidth: .infinity)
+                    Text(CalUI.heyTime(nowMs, store.prefs.timeFormat, cal)).font(W.font(9)).monospacedDigit().foregroundStyle(CalUI.red)
+                        .webLine(9, 9).padding(.trailing, 4).background(W.background.opacity(0.8)).offset(y: -7)
+                }
+                .offset(y: posOf(nowMs))
+                .allowsHitTesting(false)
+                .zIndex(100)
+            }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: ribbon.length, alignment: .top)
+            .contentShape(Rectangle())
+            // Press to set the cursor; drag down the column to draw out a new event; a plain
+            // click makes a half hour.
+            .gesture(DragGesture(minimumDistance: 0).onChanged { v in
+                if sketch == nil {
+                    onSetCursor(date)
+                    let from = msAtY(v.startLocation.y)
+                    sketch = (from, from + 30 * 60_000)
+                }
+                if v.translation != .zero { sketch = (sketch!.from, msAtY(v.location.y)) }
+            }.onEnded { _ in
+                guard let s = sketch else { return }
+                sketch = nil
+                let a = min(s.from, s.to), b = max(s.from, s.to)
+                onCreate(a, b == a ? a + 30 * 60_000 : b)
+            })
+            .background(ScrollHook(controller: ctl))
+            }
+            .scrollIndicators(.hidden)
             // All-day things sit on the floor of the day — the ground it stands on, not a banner.
             if !pills.isEmpty {
                 VStack(spacing: 2) {
@@ -1049,36 +1128,17 @@ private struct Track: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 .zIndex(80)
             }
-            if today && nowMs >= dayStart && nowMs < dayEnd {
-                ZStack(alignment: .topLeading) {
-                    Rectangle().stroke(CalUI.red, style: StrokeStyle(lineWidth: 1, dash: [1, 1])).frame(height: 1).frame(maxWidth: .infinity)
-                    Text(CalUI.heyTime(nowMs, store.prefs.timeFormat, cal)).font(W.font(9)).monospacedDigit().foregroundStyle(CalUI.red)
-                        .webLine(9, 9).padding(.trailing, 4).background(W.background.opacity(0.8)).offset(y: -7)
-                }
-                .offset(y: posOf(nowMs))
-                .allowsHitTesting(false)
-                .zIndex(100)
-            }
         }
         .frame(maxWidth: .infinity)
-        .frame(height: ribbon.length, alignment: .top)
+        .frame(height: WeekGeom.body, alignment: .top)
         .clipped()
-        .contentShape(Rectangle())
-        // Press to set the cursor; drag down the column to draw out a new event; a plain click
-        // makes a half hour.
-        .gesture(DragGesture(minimumDistance: 0).onChanged { v in
-            if sketch == nil {
-                onSetCursor(date)
-                let from = msAtY(v.startLocation.y)
-                sketch = (from, from + 30 * 60_000)
-            }
-            if v.translation != .zero { sketch = (sketch!.from, msAtY(v.location.y)) }
-        }.onEnded { _ in
-            guard let s = sketch else { return }
-            sketch = nil
-            let a = min(s.from, s.to), b = max(s.from, s.to)
-            onCreate(a, b == a ? a + 30 * 60_000 : b)
-        })
+        // The seven columns and the gutter scroll as one: this box follows the row's hour and
+        // reports its own scrolling back.
+        .onAppear {
+            ctl.onScroll = { if abs(ctl.offset.y - hour.y) > 0.5 { hour.y = ctl.offset.y } }
+        }
+        .onChange(of: ctl.viewport.height) { _, h in if h > 0, abs(ctl.offset.y - hour.y) > 0.5 { ctl.scrollTo(y: hour.y, animated: false) } }
+        .onChange(of: hour.y) { _, y in if abs(ctl.offset.y - y) > 0.5 { ctl.scrollTo(y: y, animated: false) } }
         .task(id: today) {
             guard today else { return }
             while !Task.isCancelled { try? await Task.sleep(for: .seconds(60)); now = Date() }
