@@ -1,11 +1,11 @@
 import SwiftUI
 import AppKit
 
-/// `Calendar.tsx` + `CalendarContext.tsx`: the toolbar, then the week stack, the day ribbon or
-/// the year, over one shared `CalendarStore`. The context's state — cursor, view, the loaded
-/// window, `reveal`, the visible month — lives here, exactly as the provider keeps it.
+/// The calendar, in the style of Apple's Calendar app: a toolbar, then one of four views —
+/// day, week, month, year — over one shared `CalendarStore`. The page owns the cursor, the
+/// view, the loaded window and the keyboard; the views only draw and report.
 struct CalendarPage: View {
-    /// `?d=YYYY-MM-DD`: the day to open on. Nil lands on today and asks to be shown it.
+    /// `?d=YYYY-MM-DD`: the day to open on. Nil lands on today.
     var initialDate: String? = nil
 
     @Environment(UIState.self) private var ui
@@ -14,21 +14,21 @@ struct CalendarPage: View {
     @Environment(PopLayerState.self) private var pops
     @Environment(Router.self) private var router
     @State private var store = CalendarStore()
-    @State private var view = "week"
+    @State private var view: CalView = .week
     @State private var viewChosen = false
     @State private var cursor: String
     @State private var win: CalWindow
     @State private var revealAt: RevealAt
-    @State private var visibleMonth: String
+    /// The week/day grid's scroll box, held here so PageUp/PageDown can move it by a viewport.
+    @State private var gridScroll: ScrollController = { let c = ScrollController(); c.hidesScrollers = true; return c }()
 
     init(initialDate: String? = nil) {
         self.initialDate = initialDate
         let valid = initialDate.flatMap { $0.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil ? $0 : nil }
         let start = valid ?? CalDate.todayKey
         _cursor = State(initialValue: start)
-        _win = State(initialValue: CalendarPage.windowFor("week", start, CalDate.cal))
+        _win = State(initialValue: CalendarPage.windowFor(.week, start, CalDate.cal))
         _revealAt = State(initialValue: RevealAt(date: start, nonce: 0))
-        _visibleMonth = State(initialValue: String(start.prefix(7)))
     }
 
     private var cal: Calendar { store.calendar }
@@ -38,24 +38,30 @@ struct CalendarPage: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar
-            switch view {
-            case "year":
-                YearView(store: store, cursor: cursor, revealAt: revealAt, onPick: { setCursor($0); setView("days") }, onEvent: edit)
-            case "days":
-                DayRibbonView(store: store, cursor: cursor, revealAt: revealAt, onEvent: edit, onCreate: createSpan,
-                              onVisibleMonth: { m in DispatchQueue.main.async { if visibleMonth != m { visibleMonth = m } } })
-            default:
-                // The scroll callbacks can fire from inside AppKit's layout; the state they set
-                // waits for the next turn of the loop, as a browser's scroll event would.
-                WeekStack(store: store, cursor: cursor, win: win, revealAt: revealAt, onEvent: edit, onCreate: createSpan, onSetCursor: setCursor,
-                          onExtend: { side, days in DispatchQueue.main.async { extend(side, days) } },
-                          onVisibleMonth: { m in DispatchQueue.main.async { if visibleMonth != m { visibleMonth = m } } }, onRefresh: refresh)
+            Group {
+                switch view {
+                case .day:
+                    DayView(store: store, cursor: cursor, revealAt: revealAt, scroll: gridScroll, onEvent: edit, onCreate: createSpan, onSetCursor: setCursor, onRefresh: refresh)
+                case .week:
+                    WeekView(store: store, cursor: cursor, revealAt: revealAt, scroll: gridScroll, onEvent: edit, onCreate: createSpan, onSetCursor: setCursor, onRefresh: refresh)
+                case .month:
+                    MonthView(store: store, cursor: cursor, onEvent: edit, onSetCursor: setCursor, onOpenDay: { setCursor($0); setView(.day) })
+                case .year:
+                    YearView(store: store, cursor: cursor, onPick: { setCursor($0); setView(.day) })
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // `border border-border rounded-lg bg-background overflow-hidden`.
+            .padding(1)
+            .background(W.background)
+            .clipShape(RoundedRectangle(cornerRadius: W.radiusLg, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: W.radiusLg, style: .continuous).strokeBorder(W.border, lineWidth: 1))
+            .padding(.top, 8)
         }
         .task {
             await store.loadPrefs()
-            // `CalendarContext.tsx`: the saved default view applies until a view is picked.
-            if !viewChosen, ["days", "week", "year"].contains(store.prefs.defaultView) { view = store.prefs.defaultView }
+            // The saved default view applies until a view is picked.
+            if !viewChosen, let v = CalView(pref: store.prefs.defaultView) { view = v }
             win = Self.windowFor(view, cursor, cal)
             // Opening the calendar lands on today — asked to be *shown* it, since the cursor is
             // already there. A URL that names a date is left alone.
@@ -66,122 +72,134 @@ struct CalendarPage: View {
         }
         .onChange(of: view) { _, _ in win = Self.windowFor(view, cursor, cal) }
         .onChange(of: store.prefs.weekStart) { _, _ in win = Self.windowFor(view, cursor, cal) }
-        .onChange(of: String(cursor.prefix(4))) { _, _ in if view == "year" { win = Self.windowFor(view, cursor, cal) } }
         .onChange(of: win) { _, w in Task { await store.ensureRange(fromKey: w.from, toKey: w.to) } }
         .onChange(of: CalendarBus.shared.revision) { _, _ in Task { await refresh() } }
-        // ↑ ↓ and Page Up/Down are the only keys the sidebar also wants, so they alone check
-        // where focus is; the rest work from any region.
+        // The arrows, Page Up/Down and Enter are the keys the sidebar also wants, so they alone
+        // check where focus is; the letters work from any region.
         .onKeys([
-            "ArrowUp": { setCursor(step(-1)) }, "ArrowDown": { setCursor(step(1)) },
-            "PageUp": { setCursor(CalDate.addingDays(-7, toKey: cursor, in: cal)) }, "PageDown": { setCursor(CalDate.addingDays(7, toKey: cursor, in: cal)) },
+            "ArrowUp": { move(-7) }, "ArrowDown": { move(7) },
+            "ArrowLeft": { move(-1) }, "ArrowRight": { move(1) },
+            "PageUp": { page(-1) }, "PageDown": { page(1) },
+            "Enter": { if view == .month || view == .year { setView(.day) } },
         ], enabled: !overlayOpen && ui.region == .content)
         .onKeys([
-            "t": { reveal(today) }, "d": { setView("days") }, "w": { setView("week") }, "y": { setView("year") },
+            "t": { reveal(today) }, "d": { setView(.day) }, "w": { setView(.week) }, "m": { setView(.month) }, "y": { setView(.year) },
             "n": { create(day: cursor, start: 9 * 60, end: 10 * 60) },
             "j": { router.go(.journal(cursor)) }, "b": { router.go(.habits) },
         ], enabled: !overlayOpen)
     }
 
-    // MARK: Context
+    // MARK: State
 
-    /// `windowFor`: the window a view needs loaded around a date. Day and week grow as you
-    /// scroll; the year snaps.
-    static func windowFor(_ view: String, _ date: String, _ cal: Calendar) -> CalWindow {
-        switch view {
-        case "year":
+    /// The window a view needs loaded around a date: the month and its neighbours for the
+    /// day, week and month; the whole year for the year.
+    static func windowFor(_ view: CalView, _ date: String, _ cal: Calendar) -> CalWindow {
+        if view == .year {
             let y = String(date.prefix(4))
             return CalWindow(from: "\(y)-01-01", to: "\(y)-12-31")
-        case "week":
-            let ws = CalUI.weekStart(date, cal)
-            return CalWindow(from: CalDate.addingDays(-35, toKey: ws, in: cal), to: CalDate.addingDays(70, toKey: ws, in: cal))
-        default:
-            return CalWindow(from: CalDate.addingDays(-3, toKey: date, in: cal), to: CalDate.addingDays(4, toKey: date, in: cal))
         }
+        guard let d = CalDate.date(fromKey: date, in: cal) else { return CalWindow(from: date, to: date) }
+        let first = CalDate.addingMonths(-1, to: CalDate.startOfMonth(d, in: cal), in: cal)
+        let after = CalDate.addingMonths(2, to: CalDate.startOfMonth(d, in: cal), in: cal)
+        return CalWindow(from: CalDate.key(first, in: cal), to: CalDate.key(CalDate.addingDays(-1, to: after, in: cal), in: cal))
     }
 
     private func setCursor(_ d: String) {
         cursor = d
-        visibleMonth = String(d.prefix(7))
-        var w = win
-        if CalUI.daysBetween(w.from, d, cal) < 7 { w.from = CalDate.addingDays(-21, toKey: d, in: cal) }
-        if CalUI.daysBetween(d, w.to, cal) < 7 { w.to = CalDate.addingDays(45, toKey: d, in: cal) }
-        win = w
+        win = Self.windowFor(view, d, cal)
     }
 
-    /// `reveal`: distinct from `setCursor` because "Today" has to work when the cursor is
-    /// already on today and you have simply scrolled away from it.
+    /// Distinct from `setCursor` because "Today" has to work when the cursor is already on
+    /// today and you have simply scrolled away from it.
     private func reveal(_ d: String) {
         setCursor(d)
         revealAt = RevealAt(date: d, nonce: revealAt.nonce + 1)
     }
 
-    private func setView(_ v: String) { view = v; viewChosen = true }
+    private func setView(_ v: CalView) { view = v; viewChosen = true }
 
-    private func extend(_ side: String, _ days: Int) {
-        if side == "start" { win.from = CalDate.addingDays(-days, toKey: win.from, in: cal) }
-        else { win.to = CalDate.addingDays(days, toKey: win.to, in: cal) }
+    private func move(_ days: Int) { setCursor(CalDate.addingDays(days, toKey: cursor, in: cal)) }
+
+    /// Page Up/Down: the grid scrolls by a viewport; the month and year step by one of themselves.
+    private func page(_ delta: Int) {
+        switch view {
+        case .day, .week:
+            gridScroll.scrollTo(y: gridScroll.offset.y + CGFloat(delta) * gridScroll.viewport.height, animated: true)
+        case .month: setCursor(stepMonths(delta))
+        case .year: setCursor(stepYears(delta))
+        }
     }
 
     private func refresh() async { await store.refreshRange(fromKey: win.from, toKey: win.to) }
 
-    /// `step` in CalendarToolbar.tsx: what ‹ › and ↑ ↓ move by in each view.
+    /// What ‹ › move by in each view.
     private func step(_ delta: Int) -> String {
         switch view {
-        case "week": return CalDate.addingDays(delta * 7, toKey: CalUI.weekStart(cursor, cal), in: cal)
-        case "year":
-            let y = (Int(cursor.prefix(4)) ?? 2000) + delta
-            return String(format: "%04d", y) + String(cursor.dropFirst(4))
-        default: return CalDate.addingDays(delta, toKey: cursor, in: cal)
+        case .day: return CalDate.addingDays(delta, toKey: cursor, in: cal)
+        case .week: return CalDate.addingDays(delta * 7, toKey: cursor, in: cal)
+        case .month: return stepMonths(delta)
+        case .year: return stepYears(delta)
         }
     }
 
-    // MARK: Toolbar (`CalendarToolbar.tsx`)
+    private func stepMonths(_ delta: Int) -> String {
+        guard let d = CalDate.date(fromKey: cursor, in: cal) else { return cursor }
+        return CalDate.key(CalDate.addingMonths(delta, to: d, in: cal), in: cal)
+    }
 
-    /// The title follows what you are actually looking at: scrolling the week stack past a
-    /// month boundary renames the header, even though the cursor has not moved.
+    private func stepYears(_ delta: Int) -> String {
+        guard let d = CalDate.date(fromKey: cursor, in: cal) else { return cursor }
+        return CalDate.key(CalDate.addingMonths(delta * 12, to: d, in: cal), in: cal)
+    }
+
+    // MARK: Toolbar
+
+    /// Month and year of the visible period: the week's Thursday, the day, the month; the year alone.
     private var title: String {
-        view == "year" ? String(cursor.prefix(4)) : CalUI.monthLabel("\(visibleMonth)-01", cal)
+        switch view {
+        case .year: return String(cursor.prefix(4))
+        case .week:
+            let ws = CalUI.weekStart(cursor, cal)
+            let thursday = (0..<7).map { CalDate.addingDays($0, toKey: ws, in: cal) }.first { CalUI.dow($0, cal) == 4 } ?? ws
+            return CalUI.monthLabel(thursday, cal)
+        default: return CalUI.monthLabel(cursor, cal)
+        }
     }
 
     private var toolbar: some View {
         let syncing = store.calendars.contains { $0.syncStatus == "syncing" }
-        return HStack(spacing: 6) {
+        return HStack(spacing: 8) {
             HStack(spacing: 0) {
                 WButton(icon: "chevronLeft", variant: .ghost, size: .iconSm, help: "Previous") { reveal(step(-1)) }
                 WButton(icon: "chevronRight", variant: .ghost, size: .iconSm, help: "Next") { reveal(step(1)) }
             }
-            // `h-7 px-2 text-sm`
-            Button { reveal(today) } label: { Text("Today").font(W.font(14, 500)).padding(.horizontal, -2) }
+            Button { reveal(today) } label: { Text("Today") }
                 .buttonStyle(.web(.ghost, .sm))
-            Text(title).font(W.font(14, 500)).monospacedDigit().foregroundStyle(W.foreground).padding(.leading, 4)
+                .help("Today  t")
+            Text(title).font(W.font(15, 600)).foregroundStyle(W.foreground).lineLimit(1)
             Spacer(minLength: 0)
-            HStack(spacing: 0) {
-                ForEach([("days", "Day", "d"), ("week", "Week", "w"), ("year", "Year", "y")], id: \.0) { v in
-                    ViewTab(label: v.1, key: v.2, active: view == v.0) { setView(v.0) }
-                }
-            }
-            .padding(2)
-            .overlay(RoundedRectangle(cornerRadius: W.radiusMd, style: .continuous).strokeBorder(W.border, lineWidth: 1))
+            ViewSwitch(view: view) { setView($0) }
             WButton(icon: "calendarDays", variant: .ghost, size: .iconSm, expanded: pops.isOpen("cal-visible"), help: "Calendars") {
                 pops.toggle("cal-visible", side: .bottom, align: .end) { CalendarsMenu(store: store) }
             }
             .popAnchor("cal-visible")
-            // `size sm h-7 gap-1.5 px-2.5 text-xs` with the `n` kbd in the button's own ink.
+            // `h-8 px-3 text-[13px]` with the plus icon: the editor for the next half hour, an hour long.
             Button {
                 let m = CalUI.nextHalfHour(cal)
                 create(day: cursor, start: m, end: m + 60)
             } label: {
                 HStack(spacing: 6) {
-                    Icon("plus", size: 14)
-                    Text("New").font(W.font(12, 500))
-                    Kbd("n", onDark: true).padding(.leading, 2)
+                    Icon("plus", size: 16)
+                    Text("New").font(W.font(13, 500))
                 }
+                .padding(.horizontal, 2)
             }
-            .buttonStyle(.web(.default, .sm))
-            .help("New")
-            if store.loading || syncing { RingSpinner().help("Syncing") }
+            .buttonStyle(.web(.default))
+            .help("New  n")
+            if store.loading || syncing { RingSpinner().help("Loading") }
         }
-        .padding(.bottom, 8)
+        .frame(height: 44)
+        .edgeLine(.bottom)
     }
 
     // MARK: Editor
@@ -190,7 +208,7 @@ struct CalendarPage: View {
         sheet.present(title: "Event", width: 480) { EventSheet(store: store, target: .edit(e)) }
     }
 
-    /// A sketch drawn on a column or the ribbon: the editor opens on those instants.
+    /// A sketch drawn on a column: the editor opens on those instants.
     private func createSpan(_ startsAt: Double, _ endsAt: Double) {
         let day = CalDate.key(Date(timeIntervalSince1970: startsAt / 1000), in: cal)
         let base = CalDate.ms(day, minutes: 0, in: cal)
@@ -202,7 +220,34 @@ struct CalendarPage: View {
     }
 }
 
-/// `revealAt` in the context: a date and a nonce, so asking twice for the same day still asks.
+/// The four views, in the order the switch shows them.
+enum CalView: String, CaseIterable {
+    case day, week, month, year
+
+    var label: String {
+        switch self {
+        case .day: return "Day"
+        case .week: return "Week"
+        case .month: return "Month"
+        case .year: return "Year"
+        }
+    }
+
+    var key: String { String(rawValue.prefix(1)) }
+
+    /// The settings' `default_view`, which still says `days` for the day.
+    init?(pref: String) {
+        switch pref {
+        case "day", "days": self = .day
+        case "week": self = .week
+        case "month": self = .month
+        case "year": self = .year
+        default: return nil
+        }
+    }
+}
+
+/// `revealAt`: a date and a nonce, so asking twice for the same day still asks.
 struct RevealAt: Equatable {
     var date: String
     var nonce: Int
@@ -219,9 +264,25 @@ enum MacEventTarget: Hashable {
     case edit(CalEventFull)
 }
 
-/// One of the Day / Week / Year tabs: `h-6 rounded-[4px] px-2 text-xs`, the active one
-/// reversed out (`bg-foreground text-background`).
-private struct ViewTab: View {
+/// The view switch: a `bg-muted` pill, radius 6, padding 2; items `h-7 px-3 text-[13px]`, the
+/// active one `bg-background text-foreground shadow-sm` at radius 4.
+private struct ViewSwitch: View {
+    let view: CalView
+    var onPick: (CalView) -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(CalView.allCases, id: \.self) { v in
+                SwitchItem(label: v.label, key: v.key, active: v == view) { onPick(v) }
+            }
+        }
+        .padding(2)
+        .background(W.muted)
+        .rounded(W.radiusLg)
+    }
+}
+
+private struct SwitchItem: View {
     let label: String
     let key: String
     let active: Bool
@@ -231,12 +292,13 @@ private struct ViewTab: View {
     var body: some View {
         Button(action: action) {
             Text(label)
-                .font(W.font(12))
-                .foregroundStyle(active ? W.background : (hovering ? W.foreground : W.mutedForeground))
-                .padding(.horizontal, 8)
-                .frame(height: 24)
-                .background(active ? W.foreground : Color.clear)
-                .rounded(4)
+                .font(W.font(13))
+                .foregroundStyle(active ? W.foreground : (hovering ? W.foreground : W.mutedForeground))
+                .padding(.horizontal, 12)
+                .frame(height: 28)
+                .background(active ? W.background : Color.clear)
+                .rounded(W.radiusMd)
+                .shadow(color: .black.opacity(active ? 0.05 : 0), radius: 1, y: 1)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -259,8 +321,7 @@ private struct RingSpinner: View {
     }
 }
 
-/// `CalendarToolbar.tsx:74-101`: the calendars popover — a dot, the name, an eye, and along
-/// the bottom Refresh all and Manage.
+/// The calendars popover — a dot, the name, an eye, and along the bottom Refresh all and Manage.
 private struct CalendarsMenu: View {
     let store: CalendarStore
     @Environment(PopLayerState.self) private var pops
@@ -322,7 +383,7 @@ private struct CalendarRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Circle().fill(Color(hex: calendar.color)).frame(width: 8, height: 8)
+                Circle().fill(EventSurface.eventBar(calendar.color)).frame(width: 8, height: 8)
                 Text(calendar.name).font(W.sm).foregroundStyle(calendar.visible ? W.foreground : W.mutedForeground).truncate()
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if calendar.syncStatus == "error" { Text("error").font(W.font(10)).foregroundStyle(W.mutedForeground) }
@@ -339,17 +400,24 @@ private struct CalendarRow: View {
     }
 }
 
-// MARK: - Shared helpers (`caldate.ts`, `scale.ts`)
+// MARK: - Shared helpers
 
 enum CalUI {
-    static let weekdays = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
-    static let monthsLong = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"]
-    static let months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+    static let weekdayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+    static let weekdayAbbr = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    static let monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    static let monthAbbr = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     static let dayMs: Double = 86_400_000
-    /// Tailwind's `red-500`.
-    static let red = Color(hex: "#ef4444")
+    static let hourMs: Double = 3_600_000
 
-    /// `weekStartOf`: the first day of the week containing `key`, by the owner's first weekday.
+    /// The one accent: `#ff3b30` in light, `#ff453a` in dark.
+    static let red = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(srgbRed: 1, green: 0x45 / 255, blue: 0x3a / 255, alpha: 1)
+            : NSColor(srgbRed: 1, green: 0x3b / 255, blue: 0x30 / 255, alpha: 1)
+    })
+
+    /// The first day of the week containing `key`, by the owner's first weekday.
     static func weekStart(_ key: String, _ cal: Calendar) -> String {
         guard let d = CalDate.date(fromKey: key, in: cal) else { return key }
         let weekday = cal.component(.weekday, from: d) - 1
@@ -358,7 +426,7 @@ enum CalUI {
         return CalDate.addingDays(-back, toKey: key, in: cal)
     }
 
-    /// `daysBetween`: calendar days from `a` to `b`, positive when `b` is later.
+    /// Calendar days from `a` to `b`, positive when `b` is later.
     static func daysBetween(_ a: String, _ b: String, _ cal: Calendar) -> Int {
         guard let x = CalDate.date(fromKey: a, in: cal), let y = CalDate.date(fromKey: b, in: cal) else { return 0 }
         return cal.dateComponents([.day], from: cal.startOfDay(for: x), to: cal.startOfDay(for: y)).day ?? 0
@@ -370,62 +438,134 @@ enum CalUI {
         return cal.component(.weekday, from: d) - 1
     }
 
+    static func isWeekend(_ key: String, _ cal: Calendar) -> Bool { let d = dow(key, cal); return d == 0 || d == 6 }
     static func dayNumber(_ key: String) -> Int { Int(key.suffix(2)) ?? 0 }
     static func monthIndex(_ key: String) -> Int { (Int(key.dropFirst(5).prefix(2)) ?? 1) - 1 }
 
-    /// `monthLabel`: "January 2026".
+    /// "September 2026".
     static func monthLabel(_ key: String, _ cal: Calendar) -> String {
-        guard let d = CalDate.date(fromKey: key, in: cal) else { return key }
-        let f = DateFormatter(); f.calendar = cal; f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "MMMM yyyy"
-        return f.string(from: d)
+        "\(monthNames[monthIndex(key)]) \(key.prefix(4))"
     }
 
-    /// `nextHalfHour`: minutes past midnight of the next half hour from now.
+    /// Minutes past midnight of the next half hour from now.
     static func nextHalfHour(_ cal: Calendar) -> Int {
         let now = Date()
         let h = cal.component(.hour, from: now), m = cal.component(.minute, from: now)
         return (h * 60 + (m < 30 ? 30 : 60)) % 1440
     }
 
-    /// `heyTime` in scale.ts: "11:34AM", "11AM", or "23:34" — never a space.
-    static func heyTime(_ ms: Double, _ format: String, _ cal: Calendar = CalDate.cal) -> String {
+    static func is24(_ format: String) -> Bool { format == "24" }
+
+    /// The gutter's hour: `12 AM`, `1 AM`, … `Noon`, … `11 PM`; `00:00` … `23:00` on a 24-hour clock.
+    static func hourLabel(_ h: Int, _ format: String) -> String {
+        if is24(format) { return String(format: "%02d:00", h) }
+        if h == 0 { return "12 AM" }
+        if h == 12 { return "Noon" }
+        return h < 12 ? "\(h) AM" : "\(h - 12) PM"
+    }
+
+    /// A time: `9 AM`, `2:30 PM`; `09:00`, `14:30` on a 24-hour clock.
+    static func timeLabel(_ ms: Double, _ format: String, _ cal: Calendar) -> String {
         let d = Date(timeIntervalSince1970: ms / 1000)
         let h = cal.component(.hour, from: d), m = cal.component(.minute, from: d)
-        if format == "24" { return String(format: "%02d:%02d", h, m) }
+        if is24(format) { return String(format: "%02d:%02d", h, m) }
         let hh = h % 12 == 0 ? 12 : h % 12
         let ap = h < 12 ? "AM" : "PM"
-        return m == 0 ? "\(hh)\(ap)" : "\(hh):\(String(format: "%02d", m))\(ap)"
+        return m == 0 ? "\(hh) \(ap)" : "\(hh):\(String(format: "%02d", m)) \(ap)"
     }
 
-    /// `heyRange`: "9AM- 10AM".
-    static func heyRange(_ a: Double, _ b: Double, _ format: String, _ cal: Calendar = CalDate.cal) -> String {
-        "\(heyTime(a, format, cal))- \(heyTime(b, format, cal))"
+    /// `9:00 AM – 10:30 AM`, the line under a block's title.
+    static func rangeLabel(_ a: Double, _ b: Double, _ format: String, _ cal: Calendar) -> String {
+        "\(timeLabel(a, format, cal)) – \(timeLabel(b, format, cal))"
     }
 
-    /// `object-position: "50% 30%"` → unit point.
-    static func objectPosition(_ s: String) -> CGPoint {
-        let parts = s.split(separator: " ").map { Double($0.replacingOccurrences(of: "%", with: "")) ?? 50 }
-        let x = parts.count > 0 ? parts[0] : 50, y = parts.count > 1 ? parts[1] : 50
-        return CGPoint(x: min(max(x, 0), 100) / 100, y: min(max(y, 0), 100) / 100)
+    /// The now pill's `9:21` (`09:21` on a 24-hour clock).
+    static func clockLabel(_ ms: Double, _ format: String, _ cal: Calendar) -> String {
+        let d = Date(timeIntervalSince1970: ms / 1000)
+        let h = cal.component(.hour, from: d), m = cal.component(.minute, from: d)
+        if is24(format) { return String(format: "%02d:%02d", h, m) }
+        return "\(h % 12 == 0 ? 12 : h % 12):\(String(format: "%02d", m))"
+    }
+
+    /// The first and last day keys an event covers: an all-day item's dates, a timed one's
+    /// days on the clock (the end instant exclusive).
+    static func dayRange(_ e: CalEventFull, _ cal: Calendar) -> (first: String, last: String) {
+        if e.allDay, let s = e.startDate { return (s, e.endDate ?? s) }
+        let first = CalDate.key(e.start, in: cal)
+        let last = CalDate.key(Date(timeIntervalSince1970: max(e.endsAt - 1, e.startsAt) / 1000), in: cal)
+        return (first, max(first, last))
     }
 }
 
-/// The hand-drawn face a "maybe" is lettered in: `"Bradley Hand", "Brush Script MT",
-/// "Segoe Script", "Comic Sans MS", cursive`.
-enum Hand {
-    static func font(_ size: CGFloat) -> Font {
-        for name in ["BradleyHandITCTT-Bold", "BrushScriptMT", "SegoeScript", "ComicSansMS"] {
-            if let f = NSFont(name: name, size: size) { return Font(f).italic() }
+// MARK: - Event surfaces (`eventColors`)
+
+/// A calendar's colour as the three things drawn from it: the fill at 22%, the bar at full
+/// strength, and the ink — the colour pulled 25% toward black in light mode and toward white
+/// in dark mode, so the title reads on the fill.
+struct EventSurface {
+    /// The colour a calendar without one gets.
+    static let defaultHex = "#6b6b6b"
+
+    let hex: String
+    let fill: Color
+    let bar: Color
+    let ink: Color
+
+    init(hex raw: String) {
+        let hex = Self.normalize(raw) ?? Self.defaultHex
+        self.hex = hex
+        fill = Self.eventFill(hex)
+        bar = Self.eventBar(hex)
+        ink = Self.ink(hex)
+    }
+
+    init(_ e: CalEventFull) { self.init(hex: e.calendarColor) }
+
+    /// `eventFill(hex)`: the colour at 22% alpha.
+    static func eventFill(_ raw: String, alpha: Double = 0.22) -> Color {
+        Color(hex: normalize(raw) ?? defaultHex).opacity(alpha)
+    }
+
+    /// `eventBar(hex)`: the colour itself.
+    static func eventBar(_ raw: String) -> Color { Color(hex: normalize(raw) ?? defaultHex) }
+
+    /// `eventInk(hex, dark)`: mixed 25% toward white in dark mode, toward black in light mode.
+    static func eventInk(_ raw: String, dark: Bool) -> Color {
+        let (r, g, b) = rgb(normalize(raw) ?? defaultHex)
+        let t = dark ? 1.0 : 0.0
+        return Color(.sRGB, red: r + (t - r) * 0.25, green: g + (t - g) * 0.25, blue: b + (t - b) * 0.25, opacity: 1)
+    }
+
+    /// The ink as one colour that follows the window's appearance.
+    static func ink(_ raw: String) -> Color {
+        let hex = normalize(raw) ?? defaultHex
+        let (r, g, b) = rgb(hex)
+        func mixed(_ t: CGFloat) -> NSColor { NSColor(srgbRed: r + (t - r) * 0.25, green: g + (t - g) * 0.25, blue: b + (t - b) * 0.25, alpha: 1) }
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? mixed(1) : mixed(0)
+        })
+    }
+
+    private static func rgb(_ hex: String) -> (CGFloat, CGFloat, CGFloat) {
+        let v = UInt32(hex.dropFirst(), radix: 16) ?? 0x6b6b6b
+        return (CGFloat((v >> 16) & 0xff) / 255, CGFloat((v >> 8) & 0xff) / 255, CGFloat(v & 0xff) / 255)
+    }
+
+    static func normalize(_ hex: String) -> String? {
+        let v = hex.trimmingCharacters(in: .whitespaces)
+        if v.range(of: "^#[0-9a-fA-F]{6}$", options: .regularExpression) != nil { return v.lowercased() }
+        if v.range(of: "^#[0-9a-fA-F]{3}$", options: .regularExpression) != nil {
+            let c = Array(v.dropFirst())
+            return "#\(c[0])\(c[0])\(c[1])\(c[1])\(c[2])\(c[2])".lowercased()
         }
-        return Font.system(size: size, design: .default).italic()
+        return nil
     }
 }
 
 // MARK: - Scroll control
 
 /// The scroll view behind a SwiftUI `ScrollView`, so a view can read and set the offset the
-/// way the web reads `scrollTop` and calls `scrollTo` — landing centred, holding the head
-/// still while rows are prepended, animating a nudge and jumping a leap.
+/// way the web reads `scrollTop` and calls `scrollTo`.
 @MainActor
 @Observable
 final class ScrollController {
@@ -437,7 +577,7 @@ final class ScrollController {
     @ObservationIgnored var onContentResize: ((CGSize, CGSize) -> Void)?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
 
-    /// No scroller at all, ever — for the week's hour scroll, which the gutter already reads.
+    /// No scroller at all, ever — the grid's hour scroll, whose gutter is its own ruler.
     var hidesScrollers = false
 
     func attach(_ sv: NSScrollView) {
@@ -508,7 +648,10 @@ final class ScrollController {
 struct ScrollHook: NSViewRepresentable {
     let controller: ScrollController
     func makeNSView(context: Context) -> HookView { let v = HookView(); v.controller = controller; return v }
-    func updateNSView(_ view: HookView, context: Context) { view.controller = controller }
+    func updateNSView(_ view: HookView, context: Context) {
+        view.controller = controller
+        if let sv = view.enclosingScrollView { controller.attach(sv) }
+    }
     final class HookView: NSView {
         var controller: ScrollController?
         override func viewDidMoveToWindow() {
@@ -519,339 +662,280 @@ struct ScrollHook: NSViewRepresentable {
     }
 }
 
-// MARK: - Week (`WeekView.tsx`)
+// MARK: - Lane packing (all-day and multi-day spans)
 
-/// The week's geometry, in points: `HABITS_PX + HEADER_PX + BODY_PX + TASKS_PX`.
-enum WeekGeom {
-    static let habits: CGFloat = 22
-    static let header: CGFloat = 34
-    /// All 24 hours at one scale — 24 to the hour (raised from HEY's 19.2, at which a half-hour
-    /// meeting had no room for its own name).
-    static let body: CGFloat = 576
-    /// The body shows twelve hours at a time; the full day is drawn twice as tall inside it and
-    /// scrolls within the row, landing on the current hour, so the row keeps its height.
-    static let hoursOnScreen: CGFloat = 12
-    static let inner: CGFloat = body / hoursOnScreen * 24
-    static let maxHourScroll: CGFloat = inner - body
-    static let tasks: CGFloat = 28
-    /// The shortest a block is drawn — 25 minutes at this scale.
-    static let floor: CGFloat = 8
-    static let row: CGFloat = habits + header + body + tasks
-    static let gap: CGFloat = 12
-    static let stride: CGFloat = row + gap
-    static let pxPerHour: CGFloat = inner / 24
-    static let allDayMax = 3
-    static let bodyTop: CGFloat = habits + header
+/// An event laid across a run of day columns: which columns it covers, which lane it sits in,
+/// and whether it was cut at either end by the visible range.
+struct SpanPlacement: Identifiable {
+    let event: CalEventFull
+    let start: Int
+    let end: Int
+    let lane: Int
+    let cutStart: Bool
+    let cutEnd: Bool
+    var id: String { event.id }
 }
 
-/// The week's night fold — the one place the Mac departs from the web, by the user's own
-/// decision: with `collapse_night` on, each week folds the night (night_start → night_end)
-/// into a thin 16pt band, unless something in that week is actually scheduled in the night,
-/// in which case the whole week is drawn at the full 24-hour scale. Every position in a
-/// column — rules, marks, events, the now line, a drag, a sketch — reads through the day's
-/// ribbon, so the fold is consistent for drawing and dragging.
-@MainActor
-enum WeekFold {
-    static let nightPx: CGFloat = 16
-
-    static func ribbon(day: String, collapse: Bool, store: CalendarStore) -> CalRibbon {
-        let cal = store.calendar
-        let from = CalDate.ms(day, minutes: 0, in: cal)
-        let to = CalDate.ms(CalDate.addingDays(1, toKey: day, in: cal), minutes: 0, in: cal)
-        return CalRibbon(from: from, to: to, pxPerHour: WeekGeom.pxPerHour, nightStart: store.prefs.nightStart, nightEnd: store.prefs.nightEnd, nightPx: nightPx, collapseNight: collapse, in: cal)
-    }
-
-    /// Retired: the body now shows twelve hours with the current hour in the middle and the
-    /// rest a scroll away, so the night is never folded.
-    static func collapses(week: String, store: CalendarStore) -> Bool {
-        return false
-        // swiftlint:disable:next unreachable_code
-        guard store.prefs.collapseNight else { return false }
-        let cal = store.calendar
-        for i in 0..<7 {
-            let day = CalDate.addingDays(i, toKey: week, in: cal)
-            let r = ribbon(day: day, collapse: true, store: store)
-            let timed = store.events(onKey: day).timed
-            for run in r.runs where run.night {
-                if timed.contains(where: { $0.startsAt < run.to && $0.endsAt > run.from }) { return false }
-            }
+enum SpanLanes {
+    /// Packs `events` over `days`: earliest first, longer first among equals, each taking the
+    /// first lane free at its start column.
+    static func place(_ events: [CalEventFull], days: [String], cal: Calendar) -> [SpanPlacement] {
+        guard let first = days.first else { return [] }
+        let n = days.count
+        struct Raw { let e: CalEventFull; let start: Int; let end: Int; let cutStart: Bool; let cutEnd: Bool }
+        var raw: [Raw] = []
+        var seen: Set<String> = []
+        for e in events where !seen.contains(e.id) {
+            seen.insert(e.id)
+            let r = CalUI.dayRange(e, cal)
+            let a = CalUI.daysBetween(first, r.first, cal), b = CalUI.daysBetween(first, r.last, cal)
+            if b < 0 || a > n - 1 { continue }
+            raw.append(Raw(e: e, start: max(a, 0), end: min(max(b, a), n - 1), cutStart: a < 0, cutEnd: b > n - 1))
         }
-        return true
-    }
-
-    /// The body's height this week: the ribbon's length (460 unfolded, shorter folded).
-    static func bodyHeight(week: String, store: CalendarStore) -> CGFloat {
-        ribbon(day: week, collapse: collapses(week: week, store: store), store: store).length
-    }
-
-    static func rowHeight(week: String, store: CalendarStore) -> CGFloat { WeekGeom.row }
-}
-
-/// The hour a week's body is scrolled to, shared by its gutter and its seven columns.
-@MainActor
-@Observable
-final class HourScroll {
-    var y: CGFloat
-
-    init(week: String, cal: Calendar) { y = Self.initial(week: week, cal: cal) }
-
-    /// Where a body opens: the current hour in the middle for the week holding today, noon
-    /// otherwise.
-    static func initial(week: String, cal: Calendar) -> CGFloat {
-        let today = CalDate.todayKey
-        let inWeek = today >= week && today < CalDate.addingDays(7, toKey: week, in: cal)
-        let ms = inWeek ? Date().timeIntervalSince1970 * 1000 : CalDate.ms(week, minutes: 12 * 60, in: cal)
-        let dayStart = CalDate.ms(CalDate.key(Date(timeIntervalSince1970: ms / 1000), in: cal), minutes: 0, in: cal)
-        let y = CGFloat((ms - dayStart) / 3_600_000) * WeekGeom.pxPerHour
-        return max(0, min(WeekGeom.maxHourScroll, y - WeekGeom.body / 2))
+        raw.sort { x, y in
+            if x.start != y.start { return x.start < y.start }
+            if x.end != y.end { return x.end > y.end }
+            return (x.e.title, x.e.id) < (y.e.title, y.e.id)
+        }
+        var laneEnds: [Int] = []
+        var out: [SpanPlacement] = []
+        for r in raw {
+            let lane = laneEnds.firstIndex { $0 < r.start } ?? laneEnds.count
+            if lane == laneEnds.count { laneEnds.append(r.end) } else { laneEnds[lane] = r.end }
+            out.append(SpanPlacement(event: r.e, start: r.start, end: r.end, lane: lane, cutStart: r.cutStart, cutEnd: r.cutEnd))
+        }
+        return out
     }
 }
 
-/// The stack's scroll bookkeeping, a class so the scroll callbacks always see current values.
-@MainActor
-final class WeekStackModel {
-    let scroll = ScrollController()
-    var weeks: [String] = []
-    var win = CalWindow(from: "", to: "")
-    var cursorWeek = ""
-    var cal = CalDate.cal
-    var landed = false
-    var asked = (start: "", end: "")
-    var pendingShift: CGFloat = 0
-    /// Each week's own row height — the night fold makes them differ.
-    var heights: [CGFloat] = []
-    var onExtend: (String, Int) -> Void = { _, _ in }
-    var onVisibleMonth: (String) -> Void = { _ in }
+// MARK: - The time grid (week and day)
 
-    private func height(_ i: Int) -> CGFloat { heights.indices.contains(i) ? heights[i] : WeekGeom.row }
-    private func rowTop(_ i: Int) -> CGFloat { 8 + (0..<min(i, heights.count)).reduce(0) { $0 + heights[$1] + WeekGeom.gap } }
-    private func target(_ i: Int) -> CGFloat { max(0, rowTop(i) - (scroll.viewport.height - height(i)) / 2) }
-    private var expectedHeight: CGFloat { 16 + heights.reduce(0) { $0 + $1 + WeekGeom.gap } }
+/// The grid both the week and the day draw: a 56px hour gutter, then equal day columns; a
+/// 44px day header, an all-day row, and a scrolling 24-hour body at twelve hours a viewport.
+struct TimeGrid: View {
+    enum Style { case week, day }
 
-    /// Put the cursor's week in the middle of the viewport, now, without animating.
-    func tryLand() {
-        guard !landed, scroll.viewport.height > 0, let i = weeks.firstIndex(of: cursorWeek) else { return }
-        let t = target(i)
-        guard scroll.content.height >= expectedHeight - 1 || scroll.content.height >= t + scroll.viewport.height else { return }
-        landed = true
-        scroll.scrollTo(y: t, animated: false)
-    }
-
-    /// Follow the cursor when it leaves the screen; `force` (reveal) brings it in regardless.
-    func show(week: String, force: Bool) {
-        guard landed, let i = weeks.firstIndex(of: week) else { return }
-        let vh = scroll.viewport.height
-        let t = target(i)
-        if !force {
-            let top = rowTop(i) - scroll.offset.y
-            if top >= 0 && top + height(i) <= vh { return }
-        }
-        // A jump of more than a screen and a half is a different place, not a nudge.
-        let far = abs(t - scroll.offset.y) > vh * 1.5
-        scroll.scrollTo(y: t, animated: !far)
-    }
-
-    func scrolled() {
-        guard landed else { return }
-        let vh = scroll.viewport.height
-        guard !weeks.isEmpty else { return }
-        if scroll.offset.y < height(0) + WeekGeom.gap && asked.start != win.from { asked.start = win.from; onExtend("start", 28) }
-        if scroll.content.height - scroll.offset.y - vh < height(weeks.count - 1) + WeekGeom.gap && asked.end != win.to { asked.end = win.to; onExtend("end", 28) }
-        // The row nearest the top of the viewport wins, and its middle day names the month.
-        var best = 0, bestD = CGFloat.infinity
-        var top: CGFloat = 8
-        for i in weeks.indices {
-            let d = abs(top - scroll.offset.y)
-            if d < bestD { best = i; bestD = d }
-            top += height(i) + WeekGeom.gap
-        }
-        onVisibleMonth(String(CalDate.addingDays(3, toKey: weeks[best], in: cal).prefix(7)))
-    }
-
-    func contentResized(_ old: CGSize, _ new: CGSize) {
-        if pendingShift != 0 && new.height != old.height {
-            scroll.scrollTo(y: scroll.offset.y + pendingShift, animated: false)
-            pendingShift = 0
-        }
-        tryLand()
-    }
-}
-
-/// A vertical stack of week rows that runs on forever in both directions; the week the
-/// cursor is in wears a thin rounded frame.
-struct WeekStack: View {
     let store: CalendarStore
-    let cursor: String
-    let win: CalWindow
-    let revealAt: RevealAt
-    var onEvent: (CalEventFull) -> Void
-    var onCreate: (Double, Double) -> Void
-    var onSetCursor: (String) -> Void
-    var onExtend: (String, Int) -> Void
-    var onVisibleMonth: (String) -> Void
-    var onRefresh: () async -> Void
-
-    @State private var model = WeekStackModel()
-
-    private var cal: Calendar { store.calendar }
-    private var cursorWeek: String { CalUI.weekStart(cursor, cal) }
-    /// Every week the loaded window touches, oldest first.
-    private var weeks: [String] {
-        let first = CalUI.weekStart(win.from, cal), last = CalUI.weekStart(win.to, cal)
-        let n = min(max(CalUI.daysBetween(first, last, cal) / 7 + 1, 1), 520)
-        return (0..<n).map { CalDate.addingDays($0 * 7, toKey: first, in: cal) }
-    }
-
-    var body: some View {
-        let weeks = weeks
-        let cursorWeek = cursorWeek
-        model.weeks = weeks; model.win = win; model.cursorWeek = cursorWeek; model.cal = cal
-        model.heights = weeks.map { WeekFold.rowHeight(week: $0, store: store) }
-        model.onExtend = onExtend; model.onVisibleMonth = onVisibleMonth
-        return ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(weeks, id: \.self) { w in
-                    WeekRow(store: store, weekStart: w, current: w == cursorWeek, cursor: cursor, revealAt: revealAt, onEvent: onEvent, onCreate: onCreate, onSetCursor: onSetCursor, onRefresh: onRefresh)
-                        .padding(.bottom, WeekGeom.gap)
-                }
-            }
-            .padding(.horizontal, 4).padding(.vertical, 8)
-            .background(ScrollHook(controller: model.scroll))
-        }
-        // Overlay scrollers, like the browser's: the grid keeps the full width.
-        .scrollIndicators(.never)
-        .onAppear {
-            model.scroll.onScroll = { model.scrolled() }
-            model.scroll.onContentResize = { old, new in model.contentResized(old, new) }
-            model.tryLand()
-        }
-        .onChange(of: model.scroll.viewport.height) { _, _ in model.tryLand() }
-        .onChange(of: weeks.first) { old, new in
-            // Grown at the head: hold what you were reading still. Replaced: land again.
-            if let old, let new, weeks.contains(old) {
-                let k = max(0, CalUI.daysBetween(new, old, cal) / 7)
-                model.pendingShift = (0..<min(k, model.heights.count)).reduce(0) { $0 + model.heights[$1] + WeekGeom.gap }
-            } else {
-                model.landed = false
-                model.tryLand()
-            }
-        }
-        .onChange(of: cursorWeek) { _, w in model.show(week: w, force: false) }
-        .onChange(of: revealAt.nonce) { _, _ in model.show(week: CalUI.weekStart(revealAt.date, cal), force: true) }
-    }
-}
-
-/// One week: the month standing on its side at the left edge, the hour gutter, seven columns,
-/// and the week's loose tasks along the floor. Dragging lives on the row, because a block
-/// that moves to Thursday leaves Wednesday's column halfway through the gesture.
-struct WeekRow: View {
-    let store: CalendarStore
-    let weekStart: String
-    let current: Bool
+    let days: [String]
+    let style: Style
     let cursor: String
     let revealAt: RevealAt
+    let scroll: ScrollController
     var onEvent: (CalEventFull) -> Void
     var onCreate: (Double, Double) -> Void
     var onSetCursor: (String) -> Void
     var onRefresh: () async -> Void
+
+    static let gutter: CGFloat = 56
+    static let headerH: CGFloat = 44
+    static let pillH: CGFloat = 20
+    static let pillGap: CGFloat = 2
+    static let maxPillRows = 3
 
     @State private var live: EventPreview?
     @State private var pending: EventPreview?
-    @State private var gridWidth: CGFloat = 0
-    @State private var hour: HourScroll?
+    @State private var now = Date()
+    /// "week-2026-09-07-3": what the grid last scrolled into place for.
+    @State private var landedFor = ""
 
     private var cal: Calendar { store.calendar }
-    private var days: [String] { (0..<7).map { CalDate.addingDays($0, toKey: weekStart, in: cal) } }
-    private var space: String { "week-\(weekStart)" }
+    private var space: String { "grid" }
     private var preview: EventPreview? { live ?? pending }
+    private var format: String { store.prefs.timeFormat }
 
     var body: some View {
-        let days = days
-        let habits = store.habitList(near: weekStart)
-        let dayMeta = store.dayByKey
-        let order = store.serverOrder
-        let collapse = WeekFold.collapses(week: weekStart, store: store)
-        let first = WeekFold.ribbon(day: days[0], collapse: collapse, store: store)
-        let bodyH = WeekGeom.body
-        let hour = hour ?? HourScroll(week: weekStart, cal: cal)
-        // A month that turns inside the row is announced on the divider it turns at, with its year.
-        let turns: [Int: String] = Dictionary(uniqueKeysWithValues: (1..<7).compactMap { i in
-            CalUI.monthIndex(days[i]) != CalUI.monthIndex(days[i - 1]) ? (i, "\(CalUI.monthsLong[CalUI.monthIndex(days[i])]) \(days[i].prefix(4))") : nil
-        })
-        VStack(spacing: -2) {
-            HStack(alignment: .top, spacing: 0) {
-                // The month, once, on its side — taking no width from the days.
-                Text(CalUI.monthsLong[CalUI.monthIndex(weekStart)])
-                    .font(W.font(15)).tracking(0.9).foregroundStyle(W.foreground.opacity(0.25))
-                    .fixedSize()
-                    .rotationEffect(.degrees(90))
-                    .frame(width: 24)
-                    .frame(maxHeight: .infinity)
-                    .clipped()
-                // The hour gutter: `right-1 text-[9.5px] tnum leading-none text-tertiary`, every
-                // third hour — the ones inside the fold have no room and are not drawn.
-                ZStack(alignment: .topTrailing) {
-                    Color.clear
-                    // The marks scroll with the columns, clipped to the twelve hours on show.
-                    ZStack(alignment: .topTrailing) {
-                        Color.clear
-                        ForEach(first.hours.filter { $0.hour % 3 == 0 }, id: \.ms) { h in
-                            Text(hourLabel(h.hour)).font(W.font(9.5)).monospacedDigit().foregroundStyle(W.tertiary).fixedSize()
-                                .offset(y: h.pos - hour.y - Geist.naturalLine(size: 9.5) / 2)
-                        }
-                    }
-                    .frame(height: WeekGeom.body)
-                    .clipped()
-                    .offset(y: WeekGeom.bodyTop)
+        GeometryReader { g in
+            let width = g.size.width
+            let colW = max(1, (width - Self.gutter) / CGFloat(days.count))
+            let pills = allDayPlacements()
+            let lanes = (pills.map(\.lane).max() ?? -1) + 1
+            let shownLanes = min(lanes, Self.maxPillRows)
+            let extra = (0..<days.count).map { col in pills.filter { $0.lane >= shownLanes && $0.start <= col && $0.end >= col }.count }
+            let more = extra.contains { $0 > 0 }
+            let allDayH = max(28, 8 + CGFloat(shownLanes) * Self.pillH + CGFloat(max(0, shownLanes - 1)) * Self.pillGap + (more ? 16 : 0))
+            let gridH = max(0, g.size.height - Self.headerH - allDayH)
+            let pph = max(44, floor(gridH / 12))
+            VStack(spacing: 0) {
+                header(colW: colW).frame(width: width, height: Self.headerH, alignment: .topLeading).edgeLine(.bottom)
+                allDayRow(colW: colW, pills: pills, shownLanes: shownLanes, extra: extra).frame(width: width, height: allDayH, alignment: .topLeading).edgeLine(.bottom)
+                ScrollView(.vertical) {
+                    gridBody(width: width, colW: colW, pph: pph)
+                        .frame(width: width, height: 24 * pph, alignment: .topLeading)
+                        .coordinateSpace(name: space)
+                        .background(ScrollHook(controller: scroll))
                 }
-                .frame(width: 36)
-                .padding(.trailing, 4)
-                HStack(spacing: 0) {
-                    ForEach(Array(days.enumerated()), id: \.element) { col, day in
-                        DayColumn(store: store, date: day, col: col, first: col == 0, day: dayMeta[day], habits: habits, cursor: cursor,
-                                  preview: preview, space: space, turn: turns[col], nextTurn: turns[col + 1], order: order,
-                                  ribbon: WeekFold.ribbon(day: day, collapse: collapse, store: store), hour: hour,
-                                  onEvent: onEvent, onCreate: onCreate, onSetCursor: onSetCursor,
-                                  onDrag: { e, mode, p0, p1, ended in drag(e, date: day, col: col, collapse: collapse, mode: mode, p0: p0, p1: p1, ended: ended) })
-                    }
-                }
-                .coordinateSpace(name: space)
-                .background(GeometryReader { g in Color.clear.onAppear { gridWidth = g.size.width }.onChange(of: g.size.width) { _, w in gridWidth = w } })
+                .scrollIndicators(.hidden)
+                .frame(height: gridH)
             }
-            .frame(height: WeekGeom.habits + WeekGeom.header + bodyH)
-            WeekTasksView(weekStart: weekStart).frame(height: WeekGeom.tasks)
         }
-        .padding(.top, 1)
-        .frame(height: WeekGeom.habits + WeekGeom.header + bodyH + WeekGeom.tasks, alignment: .top)
-        .overlay(RoundedRectangle(cornerRadius: W.radiusLg, style: .continuous).strokeBorder(current ? W.border : Color.clear, lineWidth: 1))
-        .onAppear { if self.hour == nil { self.hour = hour } }
-        // "Today" and the arrows ask for the hour as much as for the week.
-        .onChange(of: revealAt.nonce) { _, _ in
-            if CalUI.weekStart(revealAt.date, cal) == weekStart { self.hour?.y = HourScroll.initial(week: weekStart, cal: cal) }
+        .onAppear { land() }
+        .onChange(of: scroll.viewport.height) { _, _ in land() }
+        .onChange(of: scroll.content.height) { _, _ in land() }
+        .onChange(of: landKey) { _, _ in land() }
+        .task {
+            while !Task.isCancelled { try? await Task.sleep(for: .seconds(30)); now = Date() }
         }
     }
 
-    /// "6a", "12p", "9p" — short enough for a 36px gutter.
-    private func hourLabel(_ h: Int) -> String {
-        if h == 0 { return "12a" }
-        if h == 12 { return "12p" }
-        return h < 12 ? "\(h)a" : "\(h - 12)p"
+    // MARK: Scroll
+
+    private var landKey: String { "\(days.first ?? "")-\(days.count)-\(revealAt.nonce)" }
+
+    /// Where the body opens: the current time in the middle when the grid holds today, else 8 AM
+    /// at the top. Re-applied whenever the shown days change and whenever "Today" or ‹ › ask.
+    private func land() {
+        let key = landKey
+        guard landedFor != key, scroll.viewport.height > 0 else { return }
+        let vh = scroll.viewport.height
+        let pph = max(44, floor(vh / 12))
+        guard scroll.content.height >= 24 * pph - 1 else { return }
+        landedFor = key
+        let today = CalDate.todayKey
+        let y: CGFloat
+        if days.contains(today) {
+            let ms = Date().timeIntervalSince1970 * 1000
+            let dayStart = CalDate.ms(today, minutes: 0, in: cal)
+            y = CGFloat((ms - dayStart) / CalUI.hourMs) * pph - vh / 2
+        } else {
+            y = 8 * pph
+        }
+        scroll.scrollTo(y: max(0, y), animated: false)
     }
 
-    /// The pointer's travel as a column shift and a delta in time read off the day's ribbon —
-    /// so the folded night counts for what it is rather than what it measures.
-    private func drag(_ e: CalEventFull, date: String, col: Int, collapse: Bool, mode: EventDrag.Mode, p0: CGPoint, p1: CGPoint, ended: Bool) {
-        let colW = gridWidth / 7
+    // MARK: Header
+
+    private func header(colW: CGFloat) -> some View {
+        let today = CalDate.todayKey
+        return ZStack(alignment: .topLeading) {
+            ForEach(Array(days.enumerated()), id: \.element) { i, day in
+                HStack(spacing: 4) {
+                    Text(style == .day ? CalUI.weekdayNames[CalUI.dow(day, cal)] : CalUI.weekdayAbbr[CalUI.dow(day, cal)])
+                        .font(W.font(13)).foregroundStyle(W.mutedForeground)
+                    DayNumber(number: CalUI.dayNumber(day), today: day == today, cursor: day == cursor, size: 24, font: W.font(13, 600))
+                }
+                .frame(width: colW, height: Self.headerH)
+                .offset(x: Self.gutter + CGFloat(i) * colW)
+            }
+            separators(colW: colW, height: Self.headerH)
+        }
+    }
+
+    /// Column separators: `border-l border-border` on every day column.
+    private func separators(colW: CGFloat, height: CGFloat?) -> some View {
+        ForEach(0..<days.count, id: \.self) { i in
+            Rectangle().fill(W.border).frame(width: 1).frame(height: height).frame(maxHeight: height == nil ? .infinity : nil).offset(x: Self.gutter + CGFloat(i) * colW)
+        }
+        .allowsHitTesting(false)
+    }
+
+    // MARK: All-day row
+
+    /// Every all-day event touching the shown days, the dragged one drawn where it is going.
+    private func allDayPlacements() -> [SpanPlacement] {
+        var events: [CalEventFull] = []
+        var seen: Set<String> = []
+        for day in days {
+            for e in store.events(onKey: day).allDay where !seen.contains(e.id) { seen.insert(e.id); events.append(e) }
+        }
+        if let p = preview, p.event.allDay {
+            events = events.filter { $0.id != p.id } + [p.shown]
+        }
+        return SpanLanes.place(events, days: days, cal: cal)
+    }
+
+    private func allDayRow(colW: CGFloat, pills: [SpanPlacement], shownLanes: Int, extra: [Int]) -> some View {
+        ZStack(alignment: .topLeading) {
+            Text("all-day").font(W.font(11)).foregroundStyle(W.mutedForeground)
+                .frame(width: Self.gutter - 8, height: Self.pillH, alignment: .trailing)
+                .offset(y: 4)
+            separators(colW: colW, height: nil)
+            ForEach(pills.filter { $0.lane < shownLanes }) { p in
+                AllDayPill(event: p.event, bar: !p.cutStart, dragging: preview?.id == p.event.id, space: space,
+                           onTap: { onSetCursor(days[p.start]); onEvent(p.event) },
+                           onDrag: { p0, p1, ended in drag(p.event, dayIndex: p.start, mode: .move, p0: p0, p1: p1, ended: ended, colW: colW, pph: 1) })
+                    .frame(width: CGFloat(p.end - p.start + 1) * colW - 4, height: Self.pillH)
+                    .offset(x: Self.gutter + CGFloat(p.start) * colW + 2, y: 4 + CGFloat(p.lane) * (Self.pillH + Self.pillGap))
+            }
+            ForEach(Array(extra.enumerated()), id: \.offset) { i, n in
+                if n > 0 {
+                    Text("+\(n) more").font(W.font(11)).foregroundStyle(W.mutedForeground).lineLimit(1)
+                        .frame(width: colW - 4, height: 16, alignment: .leading)
+                        .padding(.leading, 6)
+                        .offset(x: Self.gutter + CGFloat(i) * colW + 2, y: 4 + CGFloat(shownLanes) * (Self.pillH + Self.pillGap))
+                }
+            }
+        }
+        .coordinateSpace(name: space)
+    }
+
+    // MARK: Body
+
+    private func gridBody(width: CGFloat, colW: CGFloat, pph: CGFloat) -> some View {
+        let today = CalDate.todayKey
+        let nowMs = now.timeIntervalSince1970 * 1000
+        let todayIndex = days.firstIndex(of: today)
+        let nowY: CGFloat? = todayIndex.map { _ in CGFloat((nowMs - CalDate.ms(today, minutes: 0, in: cal)) / CalUI.hourMs) * pph }
+        let daysW = width - Self.gutter
+        return ZStack(alignment: .topLeading) {
+            // Column tints: weekends `bg-muted/30`, today and the cursor day `bg-muted/50`.
+            ForEach(Array(days.enumerated()), id: \.element) { i, day in
+                let strong = day == today || day == cursor
+                let weekend = CalUI.isWeekend(day, cal)
+                if strong || weekend {
+                    Rectangle().fill(W.muted.opacity(strong ? 0.5 : 0.3)).frame(width: colW, height: 24 * pph).offset(x: Self.gutter + CGFloat(i) * colW)
+                }
+            }
+            // Hour lines across the day columns; half hours dotted.
+            ForEach(1..<24, id: \.self) { h in
+                Rectangle().fill(W.border).frame(width: daysW, height: 1).offset(x: Self.gutter, y: CGFloat(h) * pph)
+            }
+            ForEach(0..<24, id: \.self) { h in
+                DottedRule().frame(width: daysW, height: 1).offset(x: Self.gutter, y: (CGFloat(h) + 0.5) * pph)
+            }
+            separators(colW: colW, height: 24 * pph)
+            // The gutter: every hour but midnight, centred on its line; the one under the now pill hides.
+            ForEach(1..<24, id: \.self) { h in
+                let y = CGFloat(h) * pph
+                if nowY.map({ abs($0 - y) >= 10 }) ?? true {
+                    Text(CalUI.hourLabel(h, format)).font(W.font(11)).foregroundStyle(W.mutedForeground).lineLimit(1)
+                        .frame(width: Self.gutter - 8, height: 16, alignment: .trailing)
+                        .offset(y: y - 8)
+                }
+            }
+            ForEach(Array(days.enumerated()), id: \.element) { i, day in
+                GridColumn(store: store, day: day, dayIndex: i, colW: colW, pph: pph, preview: preview, space: space, format: format,
+                           onEvent: onEvent, onCreate: onCreate, onSetCursor: onSetCursor,
+                           onDrag: { e, mode, p0, p1, ended in drag(e, dayIndex: i, mode: mode, p0: p0, p1: p1, ended: ended, colW: colW, pph: pph) })
+                    .frame(width: colW, height: 24 * pph)
+                    .offset(x: Self.gutter + CGFloat(i) * colW)
+            }
+            if let i = todayIndex, let nowY, nowY >= 0, nowY <= 24 * pph {
+                let x = Self.gutter + CGFloat(i) * colW
+                Rectangle().fill(CalUI.red).frame(width: colW, height: 1).offset(x: x, y: nowY)
+                Circle().fill(CalUI.red).frame(width: 7, height: 7).offset(x: x - 3.5, y: nowY - 3)
+                Text(CalUI.clockLabel(nowMs, format, cal)).font(W.font(10, 600)).foregroundStyle(.white)
+                    .padding(.horizontal, 6).frame(height: 16)
+                    .background(Capsule().fill(CalUI.red))
+                    .frame(width: Self.gutter - 8, alignment: .trailing)
+                    .offset(y: nowY - 8)
+            }
+        }
+        .allowsHitTesting(true)
+    }
+
+    // MARK: Drags
+
+    /// The pointer's travel as a column shift and a delta in time; the helpers do the rest.
+    private func drag(_ e: CalEventFull, dayIndex: Int, mode: EventDrag.Mode, p0: CGPoint, p1: CGPoint, ended: Bool, colW: CGFloat, pph: CGFloat) {
         let dx = p1.x - p0.x
-        let days = mode == .move && colW > 0 ? max(-col, min(6 - col, Int((dx / colW).rounded()))) : 0
+        let shift = mode == .move && colW > 0 ? max(-dayIndex, min(days.count - 1 - dayIndex, Int((dx / colW).rounded()))) : 0
         let span: EventDrag.Span
         if e.allDay {
-            span = EventDrag.allDaySpan(e, days: days, in: cal)
+            span = EventDrag.allDaySpan(e, days: shift, in: cal)
         } else {
-            let ribbon = WeekFold.ribbon(day: date, collapse: collapse, store: store)
-            let delta = ribbon.at(p1.y - WeekGeom.bodyTop) - ribbon.at(p0.y - WeekGeom.bodyTop)
-            let dayStart = ribbon.from
-            span = EventDrag.span(e, mode: mode, deltaMs: delta, days: days, bounds: (EventDrag.shiftDays(dayStart, days, in: cal), EventDrag.shiftDays(dayStart, days + 1, in: cal)), in: cal)
+            let delta = Double((p1.y - p0.y) / pph) * CalUI.hourMs
+            let dayStart = CalDate.ms(days[dayIndex], minutes: 0, in: cal)
+            span = EventDrag.span(e, mode: mode, deltaMs: delta, days: shift, bounds: (EventDrag.shiftDays(dayStart, shift, in: cal), EventDrag.shiftDays(dayStart, shift + 1, in: cal)), in: cal)
         }
         if !ended { live = EventPreview(event: e, span: span); return }
         live = nil
@@ -862,756 +946,235 @@ struct WeekRow: View {
     }
 }
 
-/// One day: habits on their rail, the header, then the track, and the photo picker that
-/// appears over the day's top-left corner on hover.
-private struct DayColumn: View {
+/// `border-border/50` dotted: one-point dots, one point apart.
+private struct DottedRule: View {
+    var body: some View {
+        GeometryReader { g in
+            Path { p in p.move(to: CGPoint(x: 0, y: 0.5)); p.addLine(to: CGPoint(x: g.size.width, y: 0.5)) }
+                .stroke(W.border.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [1, 1]))
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// A day's number in a header: plain, or in a filled circle for today, or ringed for the cursor.
+struct DayNumber: View {
+    let number: Int
+    let today: Bool
+    let cursor: Bool
+    var size: CGFloat = 24
+    var font: Font = W.font(13, 600)
+
+    var body: some View {
+        Text("\(number)")
+            .font(font)
+            .foregroundStyle(today ? W.background : W.foreground)
+            .frame(width: size, height: size)
+            .background(today ? W.foreground : Color.clear)
+            .overlay { if cursor && !today { Circle().strokeBorder(W.foreground, lineWidth: 1) } }
+            .clipShape(Circle())
+    }
+}
+
+/// One day column of the body: its events as blocks, the dragged ghost, and the sketch you
+/// draw on empty space.
+private struct GridColumn: View {
     let store: CalendarStore
-    let date: String
-    let col: Int
-    let first: Bool
-    let day: CalDay?
-    let habits: [CalHabit]
-    let cursor: String
+    let day: String
+    let dayIndex: Int
+    let colW: CGFloat
+    let pph: CGFloat
     let preview: EventPreview?
     let space: String
-    let turn: String?
-    let nextTurn: String?
-    let order: [String: Int]
-    /// This day's ruler — folded or not, the week decided.
-    let ribbon: CalRibbon
-    let hour: HourScroll
-    var onEvent: (CalEventFull) -> Void
-    var onCreate: (Double, Double) -> Void
-    var onSetCursor: (String) -> Void
-    var onDrag: (CalEventFull, EventDrag.Mode, CGPoint, CGPoint, Bool) -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        let photo = !(day?.coverURL.isEmpty ?? true)
-        VStack(spacing: 0) {
-            HabitRail(store: store, date: date, habits: habits)
-            DayHeader(date: date, photo: photo, cal: store.calendar)
-            Track(store: store, date: date, col: col, first: first, day: day, cursor: cursor, preview: preview, space: space, turn: turn, nextTurn: nextTurn, order: order, ribbon: ribbon, hour: hour,
-                  onEvent: onEvent, onCreate: onCreate, onSetCursor: onSetCursor, onDrag: onDrag)
-        }
-        .frame(maxWidth: .infinity)
-        .overlay(alignment: .topLeading) {
-            // HEY's entry point: hover the day's top-left corner and a photo icon appears over it.
-            DayPhotoButton(store: store, date: date, day: day)
-                .opacity(hovering ? 1 : (photo ? 0.8 : 0))
-                .animation(.easeOut(duration: 0.15), value: hovering)
-                .padding(.leading, 6)
-                .padding(.top, WeekGeom.bodyTop + 6)
-                .zIndex(30)
-        }
-        .onHover { hovering = $0 }
-    }
-}
-
-/// The habits, as small circles straddling a hairline the width of the column. Outlined when
-/// undone, filled in the habit's own colour when done.
-private struct HabitRail: View {
-    let store: CalendarStore
-    let date: String
-    let habits: [CalHabit]
-
-    var body: some View {
-        let dow = CalUI.dow(date, store.calendar)
-        let mine = habits.filter { $0.days.isEmpty || $0.days.contains(dow) }
-        ZStack {
-            Rectangle().fill(W.border).frame(height: 1).padding(.horizontal, 6).allowsHitTesting(false)
-            HStack(spacing: 4) {
-                ForEach(mine) { h in
-                    HabitDot(habit: h, done: h.completions.contains(date)) { Task { do { try await store.toggleHabit(h, date: date) } catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) } } }
-                }
-            }
-        }
-        .frame(height: WeekGeom.habits)
-    }
-}
-
-private struct HabitDot: View {
-    let habit: CalHabit
-    let done: Bool
-    var action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        let s = EventSurface(hex: habit.color)
-        Button(action: action) {
-            Text(habit.icon.isEmpty ? String(habit.name.prefix(1)).uppercased() : habit.icon)
-                .font(W.font(9.5))
-                .foregroundStyle(done ? s.ink : (hovering ? W.foreground : W.tertiary))
-                .frame(width: 19, height: 19)
-                .background(done ? s.fill : W.background)
-                .overlay(Circle().strokeBorder(done ? Color.clear : (hovering ? W.foreground.opacity(0.4) : W.border), lineWidth: 1))
-                .clipShape(Circle())
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help("\(habit.name)\(done ? " · done" : "")")
-        .zIndex(10)
-    }
-}
-
-/// `SUN 30`, right-aligned and deliberately small; today reversed out of a solid blob.
-private struct DayHeader: View {
-    let date: String
-    let photo: Bool
-    let cal: Calendar
-
-    var body: some View {
-        let today = date == CalDate.todayKey
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text(CalUI.weekdays[CalUI.dow(date, cal)])
-                .font(W.font(11)).tracking(1.1).webLine(11, 11)
-                .foregroundStyle(today ? W.background : (photo ? Color.white : W.tertiary))
-            Text("\(CalUI.dayNumber(date))")
-                .font(W.font(16, 700)).monospacedDigit().webLine(16, 16, weight: 700)
-                .foregroundStyle(today ? W.background : (photo ? Color.white : W.foreground))
-        }
-        .padding(.horizontal, today ? 8 : 0)
-        .padding(.vertical, today ? 3 : 0)
-        .background(today ? W.foreground : Color.clear)
-        .clipShape(Capsule())
-        // Over a photo the number goes white with a shadow, as HEY does.
-        .shadow(color: !today && photo ? Color.black.opacity(0.9) : .clear, radius: 1.5)
-        .shadow(color: !today && photo ? Color.black.opacity(0.8) : .clear, radius: 1, y: 1)
-        .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.horizontal, 6)
-        .frame(height: WeekGeom.header)
-        .zIndex(20)
-    }
-}
-
-/// The body of a column: the day's photo, its events, its all-day pills on the floor, and —
-/// on today only — a dotted line where the hour hand is. Midnight at the top, midnight at the
-/// bottom, 24 hours in between at one rate.
-private struct Track: View {
-    let store: CalendarStore
-    let date: String
-    let col: Int
-    let first: Bool
-    let day: CalDay?
-    let cursor: String
-    let preview: EventPreview?
-    let space: String
-    let turn: String?
-    let nextTurn: String?
-    let order: [String: Int]
-    let ribbon: CalRibbon
-    let hour: HourScroll
+    let format: String
     var onEvent: (CalEventFull) -> Void
     var onCreate: (Double, Double) -> Void
     var onSetCursor: (String) -> Void
     var onDrag: (CalEventFull, EventDrag.Mode, CGPoint, CGPoint, Bool) -> Void
 
     @State private var sketch: (from: Double, to: Double)?
-    @State private var now = Date()
-    /// The column's own scroll box; it follows the row's shared hour and reports its own.
-    @State private var ctl: ScrollController = { let c = ScrollController(); c.hidesScrollers = true; return c }()
 
     private var cal: Calendar { store.calendar }
-    private var dayStart: Double { ribbon.from }
-    private var dayEnd: Double { ribbon.to }
-    /// Every position reads off the ribbon, so the folded night measures 16pt and no more.
-    private func posOf(_ ms: Double) -> CGFloat { ribbon.pos(ms) }
-    private func msAtY(_ y: CGFloat) -> Double { EventDrag.snap(ribbon.at(y)) }
+    private var dayStart: Double { CalDate.ms(day, minutes: 0, in: cal) }
+    private var dayEnd: Double { CalDate.ms(CalDate.addingDays(1, toKey: day, in: cal), minutes: 0, in: cal) }
+    private func y(_ ms: Double) -> CGFloat { CGFloat((ms - dayStart) / CalUI.hourMs) * pph }
+    private func msAt(_ y: CGFloat) -> Double { EventDrag.snap(min(max(dayStart + Double(y / pph) * CalUI.hourMs, dayStart), dayEnd)) }
 
     var body: some View {
-        let events = store.events(onKey: date)
-        let today = date == CalDate.todayKey
-        let photo = !(day?.coverURL.isEmpty ?? true)
         let dayStart = dayStart, dayEnd = dayEnd
-        // A dragged event is drawn where it is going, which may be another column: every column
-        // drops it from its own list, and the one its span lands in draws it on top, full width.
-        let rest = events.timed.filter { $0.id != preview?.id }
+        // The dragged event is drawn where it is going, which may be another column: every
+        // column drops it from its own list, and the ones its span lands in draw the ghost.
+        let events = store.events(onKey: day).timed.filter { $0.id != preview?.id }
         let ghost: CalEventFull? = preview.flatMap { p in (!p.event.allDay && p.span.endsAt > dayStart && p.span.startsAt < dayEnd) ? p.shown : nil }
-        // The web keeps the range's own order for the pills; the shared index alphabetises.
-        let allDay = events.allDay.sorted { (order[$0.id] ?? .max, $0.id) < (order[$1.id] ?? .max, $1.id) }
-        let pills: [CalEventFull] = {
-            guard let p = preview else { return allDay }
-            let kept = allDay.filter { $0.id != p.id }
-            guard p.event.allDay, let a = p.span.startDate else { return kept }
-            let b = p.span.endDate ?? a
-            return date >= a && date <= b ? kept + [p.shown] : kept
-        }()
-        // The floor in time is the week's 8pt at the *daytime* rate: a block in the fold is
-        // drawn no shorter than that either, so the columns still match what is on screen.
-        // Columns split only on true overlap; the drawn minimum is handled by pushing, not widening.
-        let layout = CalDate.layoutColumns(rest, floorMs: 0)
-        let placed = CalDate.placeBlocks(rest.map { (top: posOf(max($0.startsAt, dayStart)), bottom: posOf(min($0.endsAt, dayEnd))) }, slots: layout, minPx: 16, gapPx: 2)
-        let extra = pills.count - WeekGeom.allDayMax
-        let nowMs = now.timeIntervalSince1970 * 1000
+        let layout = CalDate.layoutColumns(events, floorMs: 0)
+        let placed = CalDate.placeBlocks(events.map { (top: y(max($0.startsAt, dayStart)), bottom: y(min($0.endsAt, dayEnd))) }, slots: layout, minPx: 16, gapPx: 2)
         ZStack(alignment: .topLeading) {
-            (cursor == date ? W.muted.opacity(0.25) : Color.clear)
-            if !first { Rectangle().fill(W.border).frame(width: 1).frame(maxHeight: .infinity, alignment: .leading) }
-            // Not a thumbnail, and not dimmed: the photo fills the column at full strength.
-            DayPhotoBackdrop(day: day)
-            // The scroll box's content is given the column's exact width: left to itself it
-            // would keep a scroller's worth of room on the right that nothing ever fills.
-            GeometryReader { box in
-            ScrollView(.vertical) {
-            ZStack(alignment: .topLeading) {
-            // Hour rules behind the events: every hour faint, every sixth a shade stronger. Hours
-            // inside the fold have no room and get none.
-            ForEach(ribbon.hours.filter { $0.hour > 0 }, id: \.ms) { h in
-                Rectangle().fill(h.hour % 6 == 0 ? W.border : W.border.opacity(0.4)).frame(height: 1).offset(y: h.pos).allowsHitTesting(false)
-            }
-            // The folded night: a darker band, so the fold reads as one.
-            ForEach(ribbon.runs.filter(\.night), id: \.from) { r in
-                Rectangle().fill(W.muted60).frame(height: r.size).offset(y: r.pos).allowsHitTesting(false)
-            }
-            // The month-turn watermark: this column's half on its leading edge, the next
-            // column's on the trailing one, each on a page-coloured chip behind the events.
-            if let turn { MonthTurn(label: turn).alignmentGuide(.leading) { d in d.width / 2 }.padding(.top, 8) }
-            if let nextTurn {
-                Color.clear.overlay(alignment: .topTrailing) { MonthTurn(label: nextTurn).alignmentGuide(.trailing) { d in d.width / 2 }.padding(.top, 8) }
-            }
-            ForEach(Array(rest.enumerated()), id: \.element.id) { i, e in
-                let top = placed[i].top
-                let height = placed[i].height
-                EventBlock(event: e, height: height, floor: WeekGeom.floor, column: layout[i].column, columns: layout[i].columns, timeFormat: store.prefs.timeFormat, space: space, onPhoto: photo,
-                           onTap: { onSetCursor(date); onEvent(e) },
-                           onToggleDone: { toggleDone(e) },
+            // Press to set the cursor; drag down the column to draw out a new event; a plain
+            // click makes a half hour at the snapped time.
+            Color.clear
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0).onChanged { v in
+                    if sketch == nil {
+                        onSetCursor(day)
+                        let from = msAt(v.startLocation.y)
+                        sketch = (from, from + 30 * 60_000)
+                    }
+                    if v.translation != .zero { sketch = (sketch!.from, msAt(v.location.y)) }
+                }.onEnded { _ in
+                    guard let s = sketch else { return }
+                    sketch = nil
+                    let a = min(s.from, s.to), b = max(s.from, s.to)
+                    onCreate(a, b - a < EventDrag.minEventMs ? a + 30 * 60_000 : b)
+                })
+            ForEach(Array(events.enumerated()), id: \.element.id) { i, e in
+                EventBlock(event: e, top: placed[i].top, height: placed[i].height, column: layout[i].column, columns: layout[i].columns, colW: colW, format: format, space: space,
+                           onTap: { onSetCursor(day); onEvent(e) },
                            onDrag: { mode, p0, p1, ended in onDrag(e, mode, p0, p1, ended) })
-                    .offset(y: top)
-                    // Later events sit on top, so a short one keeps its title line.
-                    .zIndex(Double(20 + min(i, 40)))
+                    .zIndex(Double(20 + i))
             }
             if let g = ghost {
-                let top = posOf(max(g.startsAt, dayStart))
-                EventBlock(event: g, height: posOf(min(g.endsAt, dayEnd)) - top, floor: WeekGeom.floor, timeFormat: store.prefs.timeFormat, space: space, dragging: true, onPhoto: photo, onTap: { onEvent(g) })
-                    .offset(y: top)
+                let top = y(max(g.startsAt, dayStart))
+                EventBlock(event: g, top: top, height: y(min(g.endsAt, dayEnd)) - top, colW: colW, format: format, space: space, dragging: true, onTap: {})
                     .zIndex(90)
             }
             if let sketch {
-                let a = posOf(min(sketch.from, sketch.to)), b = posOf(max(sketch.from, sketch.to))
-                RoundedRectangle(cornerRadius: 3, style: .continuous).fill(W.foreground.opacity(0.05))
-                    .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(W.foreground.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [3])))
-                    .frame(height: max(b - a, 8)).padding(.horizontal, 2).offset(y: a).allowsHitTesting(false).zIndex(95)
-            }
-            if today && nowMs >= dayStart && nowMs < dayEnd {
-                ZStack(alignment: .topLeading) {
-                    Rectangle().stroke(CalUI.red, style: StrokeStyle(lineWidth: 1, dash: [1, 1])).frame(height: 1).frame(maxWidth: .infinity)
-                    Text(CalUI.heyTime(nowMs, store.prefs.timeFormat, cal)).font(W.font(9)).monospacedDigit().foregroundStyle(CalUI.red)
-                        .webLine(9, 9).padding(.trailing, 4).background(W.background.opacity(0.8)).offset(y: -7)
-                }
-                .offset(y: posOf(nowMs))
-                .allowsHitTesting(false)
-                .zIndex(100)
-            }
-            }
-            .frame(width: box.size.width, height: ribbon.length, alignment: .top)
-            .contentShape(Rectangle())
-            // Press to set the cursor; drag down the column to draw out a new event; a plain
-            // click makes a half hour.
-            .gesture(DragGesture(minimumDistance: 0).onChanged { v in
-                if sketch == nil {
-                    onSetCursor(date)
-                    let from = msAtY(v.startLocation.y)
-                    sketch = (from, from + 30 * 60_000)
-                }
-                if v.translation != .zero { sketch = (sketch!.from, msAtY(v.location.y)) }
-            }.onEnded { _ in
-                guard let s = sketch else { return }
-                sketch = nil
-                let a = min(s.from, s.to), b = max(s.from, s.to)
-                onCreate(a, b == a ? a + 30 * 60_000 : b)
-            })
-            .background(ScrollHook(controller: ctl))
-            }
-            .scrollIndicators(.hidden)
-            }
-            // All-day things sit on the floor of the day — the ground it stands on, not a banner.
-            if !pills.isEmpty {
-                VStack(spacing: 2) {
-                    ForEach(pills.prefix(WeekGeom.allDayMax)) { e in
-                        AllDayPill(event: e, dragging: preview?.id == e.id, onTap: { onSetCursor(date); onEvent(e) },
-                                   onDrag: { p0, p1, ended in onDrag(e, .move, p0, p1, ended) }, space: space)
-                    }
-                    if extra > 0 {
-                        Text("+\(extra) more").font(W.font(10)).foregroundStyle(W.tertiary).padding(.horizontal, 8).frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                .padding(.horizontal, 4).padding(.bottom, 4)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                .zIndex(80)
+                let a = y(min(sketch.from, sketch.to)), b = y(max(sketch.from, sketch.to))
+                RoundedRectangle(cornerRadius: 4, style: .continuous).fill(W.foreground.opacity(0.05))
+                    .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(W.foreground.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [3])))
+                    .frame(width: colW - 4, height: max(b - a, 4))
+                    .offset(x: 2, y: a)
+                    .allowsHitTesting(false)
+                    .zIndex(95)
             }
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: WeekGeom.body, alignment: .top)
-        .clipped()
-        // The seven columns and the gutter scroll as one: this box follows the row's hour and
-        // reports its own scrolling back.
-        .onAppear {
-            ctl.onScroll = { if abs(ctl.offset.y - hour.y) > 0.5 { hour.y = ctl.offset.y } }
-        }
-        .onChange(of: ctl.viewport.height) { _, h in if h > 0, abs(ctl.offset.y - hour.y) > 0.5 { ctl.scrollTo(y: hour.y, animated: false) } }
-        .onChange(of: hour.y) { _, y in if abs(ctl.offset.y - y) > 0.5 { ctl.scrollTo(y: y, animated: false) } }
-        .task(id: today) {
-            guard today else { return }
-            while !Task.isCancelled { try? await Task.sleep(for: .seconds(60)); now = Date() }
-        }
-    }
-
-    private func toggleDone(_ e: CalEventFull) {
-        Task {
-            do { _ = try await CalendarAPI.setDone(id: e.id, done: !e.done, date: date); CalendarBus.shared.changed() }
-            catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
-        }
     }
 }
 
-/// "MARCH 2026" standing on its side on a page-coloured chip: `text-[12px] uppercase
-/// tracking-[0.08em] text-foreground/25 bg-background px-[3px] py-1`, at most 190 tall.
-private struct MonthTurn: View {
-    let label: String
-    var body: some View {
-        let font = Geist.nsFont(size: 12, weight: 400)
-        let w = ceil((label as NSString).size(withAttributes: [.font: font, .kern: 0.96]).width)
-        let box = w + 8
-        Text(label).font(W.font(12)).tracking(0.96).foregroundStyle(W.foreground.opacity(0.25)).lineLimit(1).fixedSize()
-            .frame(width: w, height: 16)
-            .padding(.horizontal, 4).padding(.vertical, 3)
-            .background(W.background)
-            .rotationEffect(.degrees(90))
-            .frame(width: 22, height: box)
-            .frame(height: min(box, 190), alignment: .top)
-            .clipped()
-            .allowsHitTesting(false)
-    }
-}
-
-// MARK: - Event surfaces (`colors.ts`, `EventBlock.tsx`)
-
-/// `eventColors`: the calendar's colour as a solid fill, the text flipped to whichever of
-/// near-white or near-black actually contrasts.
-struct EventSurface {
-    let fill: Color
-    let ink: Color
-    static let defaultFill = "#1f1f1f"
-
-    init(hex: String) {
-        let hex = Self.normalize(hex) ?? Self.defaultFill
-        let v = UInt32(hex.dropFirst(), radix: 16) ?? 0x1f1f1f
-        let r = Double((v >> 16) & 0xff) / 255, g = Double((v >> 8) & 0xff) / 255, b = Double(v & 0xff) / 255
-        let lin: (Double) -> Double = { $0 <= 0.04045 ? $0 / 12.92 : pow(($0 + 0.055) / 1.055, 2.4) }
-        let L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
-        fill = Color(hex: hex)
-        ink = Color(hex: 1.05 / (L + 0.05) >= (L + 0.05) / 0.05 ? "#fbfbfa" : "#131313")
-    }
-
-    private init(fill: Color, ink: Color) { self.fill = fill; self.ink = ink }
-
-    /// `surface(e)`: a maybe is drawn without colour — white, hatched, in ink.
-    init(_ e: CalEventFull) {
-        if EventSurface.isMaybe(e) { self.init(fill: Color(hex: "#ffffff"), ink: Color(hex: "#131313")) }
-        else { self.init(hex: e.calendarColor) }
-    }
-
-    static func isMaybe(_ e: CalEventFull) -> Bool { e.isTentative || e.rsvp == .tentative }
-
-    static func normalize(_ hex: String) -> String? {
-        let v = hex.trimmingCharacters(in: .whitespaces)
-        if v.range(of: "^#[0-9a-fA-F]{6}$", options: .regularExpression) != nil { return v.lowercased() }
-        if v.range(of: "^#[0-9a-fA-F]{3}$", options: .regularExpression) != nil {
-            let c = Array(v.dropFirst())
-            return "#\(c[0])\(c[0])\(c[1])\(c[1])\(c[2])\(c[2])".lowercased()
-        }
-        return nil
-    }
-}
-
-/// `HATCH`: `repeating-linear-gradient(45deg, rgba(0,0,0,0.09) 0 3px, transparent 3px 7px)`.
-struct Hatch: Shape {
-    func path(in rect: CGRect) -> Path {
-        var p = Path()
-        let period: CGFloat = 7 * 2.0.squareRoot()
-        let h = rect.height, w = rect.width
-        var k = -Int(ceil(h / period)) - 1
-        while CGFloat(k) * period < w + h {
-            let x = CGFloat(k) * period
-            p.move(to: CGPoint(x: rect.minX + x, y: rect.minY))
-            p.addLine(to: CGPoint(x: rect.minX + x + h, y: rect.minY + h))
-            k += 1
-        }
-        return p
-    }
-}
-
-/// `InkCircle.tsx`: the ring you draw round something on a paper calendar — an imperfect
-/// ellipse that overshoots itself, drawn beyond the event's edges. Ink, not the calendar's colour.
-struct InkCircle: View {
-    static let overshoot: CGFloat = 7
-    var body: some View {
-        InkLoop().stroke(W.foreground.opacity(0.75), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-            .padding(-Self.overshoot)
-            .allowsHitTesting(false)
-    }
-}
-
-private struct InkLoop: Shape {
-    func path(in rect: CGRect) -> Path {
-        let sx = rect.width / 100, sy = rect.height / 100
-        func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: rect.minX + x * sx, y: rect.minY + y * sy) }
-        var p = Path()
-        p.move(to: pt(52, 7))
-        p.addCurve(to: pt(6, 51), control1: pt(22, 7), control2: pt(6, 27))
-        p.addCurve(to: pt(52, 95), control1: pt(6, 75), control2: pt(24, 96))
-        p.addCurve(to: pt(95, 49), control1: pt(79, 94), control2: pt(96, 73))
-        p.addCurve(to: pt(46, 7), control1: pt(94, 27), control2: pt(75, 6))
-        p.addCurve(to: pt(8, 39), control1: pt(28, 7.5), control2: pt(12, 19))
-        return p
-    }
-}
-
-/// `AllDayPill`: a fully rounded stadium pill, solid in the calendar's colour, on the floor
-/// of the column. All-day things move by whole days only.
-struct AllDayPill: View {
-    let event: CalEventFull
-    var dragging = false
-    var onTap: () -> Void
-    var onDrag: ((CGPoint, CGPoint, Bool) -> Void)? = nil
-    var space = "week"
-    @State private var hovering = false
-
-    var body: some View {
-        let s = EventSurface(event)
-        let maybe = EventSurface.isMaybe(event)
-        let declined = event.rsvp == .declined
-        let title = event.title.isEmpty ? "(no title)" : event.title
-        HStack(spacing: 4) {
-            if !event.emoji.isEmpty { Text(event.emoji).font(W.font(11, 500)).fixedSize() }
-            Text(title).font(maybe ? Hand.font(11) : W.font(11, 500)).strikethrough(event.done || declined).truncate()
-            if event.recurring { Spacer(minLength: 0); Icon("repeat", size: 9).opacity(0.6) }
-        }
-        .foregroundStyle(s.ink)
-        .padding(.horizontal, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: 18)
-        .background(s.fill)
-        .overlay { if maybe { Capsule().strokeBorder(W.foreground.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3])) } }
-        .clipShape(Capsule())
-        .overlay { if dragging { Capsule().strokeBorder(W.foreground.opacity(0.4), lineWidth: 1) } }
-        .opacity(dragging ? 1 : (declined ? 0.45 : (hovering ? 0.85 : 1)))
-        .shadow(color: .black.opacity(dragging ? 0.2 : 0), radius: 8, y: 4)
-        .contentShape(Capsule())
-        .onHover { hovering = $0 }
-        .onTapGesture(perform: onTap)
-        .highPriorityGesture(DragGesture(minimumDistance: EventDrag.slop, coordinateSpace: .named(space)).onChanged { v in
-            guard let onDrag, event.writable else { return }
-            onDrag(v.startLocation, v.location, false)
-        }.onEnded { v in
-            guard let onDrag, event.writable else { return }
-            onDrag(v.startLocation, v.location, true)
-        })
-        .help(title)
-    }
-}
-
-/// `EventBlock` (timed): a proportional box in its calendar's colour, the title flipped to
-/// contrast. Under 13pt it is a bare bar of colour; under 34pt the time and the title share
-/// one line; taller blocks carry the range over the title, and from 64pt the small icons
-/// along the floor. Overlapping neighbours split the column between them.
+/// A timed event: `rounded-[5px]`, the calendar colour at 22% with a 3px bar at full strength
+/// down the left, the title in the event ink and — from 34 tall — the time under it.
 struct EventBlock: View {
     let event: CalEventFull
-    var height: CGFloat
-    /// The shortest this view ever draws a block.
-    var floor: CGFloat = 22
+    let top: CGFloat
+    let height: CGFloat
     var column = 0
     var columns = 1
-    var timeFormat = "12"
-    /// The coordinate space the drag reports in: the week's grid, so a move can cross columns.
-    var space = "week"
+    let colW: CGFloat
+    let format: String
+    /// The coordinate space the drag reports in: the whole grid, so a move can cross columns.
+    let space: String
     var dragging = false
-    /// Sitting over a day's photo: keep the fill opaque and ring it in white, the way HEY does.
-    var onPhoto = false
     var onTap: () -> Void
-    var onToggleDone: (() -> Void)? = nil
     /// (mode, point at press, point now, ended) — nil for a block that cannot be dragged.
     var onDrag: ((EventDrag.Mode, CGPoint, CGPoint, Bool) -> Void)? = nil
     @State private var mode: EventDrag.Mode?
-    @State private var blockTop: CGFloat = 0
     @State private var hovering = false
-
-    /// Never shorter than one line of type (16), and 2pt of air is left under every block.
-    private var h: CGFloat { max(height, floor, 16) }
-    private var drawn: CGFloat { max(h - 2, 14) }
-    private var bare: Bool { false }
-    private var oneLine: Bool { h < 34 }
-    private var roomy: Bool { h >= 64 }
-    private var titleLines: Int { max(1, min(3, Int((h - 6 - 12) / 14))) }
-    private var declined: Bool { event.rsvp == .declined }
-    private var maybe: Bool { EventSurface.isMaybe(event) }
 
     var body: some View {
         let s = EventSurface(event)
-        let icons = roomy && (!event.conferenceURL.isEmpty || !event.attendees.isEmpty || event.recurring || !event.writable)
-        GeometryReader { g in
-            let n = CGFloat(max(columns, 1))
-            let width = (g.size.width - 4) / n - (n > 1 ? 1 : 0)
-            let left = (g.size.width - 4) / n * CGFloat(column) + 2
-            let grab = EventDrag.handle(h)
-            Group {
-                VStack(alignment: .leading, spacing: 0) {
-                    if bare {
-                        EmptyView()
-                    } else if oneLine {
-                        // One line: the time and the title share a baseline — "5:30PM- 6PM  Weekly Call…"
-                        HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            if event.isTodo { DoneBox(done: event.done, action: onToggleDone) }
-                            Text(dragging ? CalUI.heyRange(event.startsAt, event.endsAt, timeFormat) : CalUI.heyTime(event.startsAt, timeFormat))
-                                .font(W.font(9.5)).monospacedDigit().opacity(0.7).fixedSize()
-                            Text(titleText).font(maybe ? Hand.font(11) : W.font(11, 600)).strikethrough(event.done || declined).lineLimit(1)
-                        }
-                        .frame(maxHeight: .infinity, alignment: .center)
-                    } else {
-                        Text(CalUI.heyRange(event.startsAt, event.endsAt, timeFormat)).font(W.font(9.5)).monospacedDigit().opacity(0.7).lineLimit(1).frame(height: 12)
-                        HStack(alignment: .top, spacing: 4) {
-                            if event.isTodo { DoneBox(done: event.done, action: onToggleDone) }
-                            Text(titleText).font(maybe ? Hand.font(12) : W.font(12, 600)).strikethrough(event.done || declined).lineLimit(titleLines).webLine(12, 14, weight: 600)
-                        }
-                    }
-                    if icons {
-                        Spacer(minLength: 0)
-                        HStack(spacing: 4) {
-                            if !event.conferenceURL.isEmpty { Icon("video", size: 10) }
-                            if !event.attendees.isEmpty { Icon("users", size: 10) }
-                            if event.recurring { Icon("repeat", size: 10) }
-                            if !event.writable { Icon("lock", size: 10) }
-                        }
-                        .opacity(0.65).padding(.top, 2)
-                    }
-                }
-                .foregroundStyle(s.ink)
-                .padding(.horizontal, 6).padding(.vertical, oneLine ? 0 : 3)
-                .frame(width: width, height: drawn, alignment: .topLeading)
-                .background { ZStack { s.fill; if maybe { Hatch().stroke(Color.black.opacity(0.09), lineWidth: 3) } } }
-                .clipped()
-                .overlay { if maybe { RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(W.foreground.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [3])) } }
-                .rounded(3)
-                .opacity(dragging ? 1 : (declined ? 0.45 : (hovering ? 0.9 : 1)))
-                .overlay { if onPhoto { RoundedRectangle(cornerRadius: 3, style: .continuous).inset(by: -1).stroke(Color.white, lineWidth: 2) } }
-                .overlay { if dragging { RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(W.foreground.opacity(0.4), lineWidth: 1) } }
-                .shadow(color: .black.opacity(dragging ? 0.2 : 0), radius: 8, y: 4)
-                .overlay { if event.circled { InkCircle().zIndex(30) } }
-                .contentShape(Rectangle())
+        let n = CGFloat(max(columns, 1))
+        let width = max((colW - 4) / n - 1, 8)
+        let left = (colW - 4) / n * CGFloat(column) + 2
+        let h = max(height, 16)
+        let showTime = h >= 34
+        let declined = event.isDeclined
+        let tentative = event.isTentative || event.rsvp == .tentative
+        let struck = declined || (event.isTodo && event.done)
+        let grab = EventDrag.handle(h)
+        let cal = CalDate.cal
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 4) {
+                Text(event.displayTitle).font(W.font(12, 600)).strikethrough(struck).lineLimit(1)
+                if event.recurring && width >= 90 { Spacer(minLength: 0); Icon("repeat", size: 10).padding(.top, 1) }
             }
+            if showTime {
+                Text(CalUI.rangeLabel(event.startsAt, event.endsAt, format, cal)).font(W.font(11)).opacity(0.8).lineLimit(1)
+            }
+        }
+        .foregroundStyle(s.ink)
+        .padding(.leading, 3 + 6).padding(.trailing, 6).padding(.vertical, 3)
+        .frame(width: width, height: h, alignment: .topLeading)
+        .background(EventSurface.eventFill(s.hex, alpha: (hovering && !dragging ? 0.30 : 0.22) * (tentative ? 0.6 : 1)))
+        .overlay(alignment: .leading) { Rectangle().fill(s.bar).frame(width: 3) }
+        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        .overlay { if tentative { RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(s.bar, style: StrokeStyle(lineWidth: 1, dash: [3])) } }
+        .opacity(declined ? 0.45 : 1)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture(perform: onTap)
+        // Press the block to move it, or either end (6px) to take that edge with you.
+        .highPriorityGesture(DragGesture(minimumDistance: EventDrag.slop, coordinateSpace: .named(space)).onChanged { v in
+            guard let onDrag, event.writable else { return }
+            if mode == nil {
+                let yIn = v.startLocation.y - top
+                mode = yIn < grab ? .start : (yIn > h - grab ? .end : .move)
+            }
+            onDrag(mode!, v.startLocation, v.location, false)
+        }.onEnded { v in
+            guard let onDrag, let m = mode else { return }
+            mode = nil
+            onDrag(m, v.startLocation, v.location, true)
+        })
+        .offset(x: left, y: top)
+        .help("\(event.displayTitle)\(event.location.isEmpty ? "" : " · \(event.location)") · \(CalUI.rangeLabel(event.startsAt, event.endsAt, format, cal))")
+    }
+}
+
+/// An all-day pill: 20 tall, radius 4, `text-[11px] font-medium` in the ink on the 22% fill,
+/// a 3px bar at the left unless the pill continues from before the visible range.
+struct AllDayPill: View {
+    let event: CalEventFull
+    var bar = true
+    var dragging = false
+    var space = "grid"
+    var onTap: () -> Void
+    var onDrag: ((CGPoint, CGPoint, Bool) -> Void)? = nil
+    @State private var hovering = false
+
+    var body: some View {
+        let s = EventSurface(event)
+        let declined = event.isDeclined
+        Text(event.displayTitle)
+            .font(W.font(11, 500))
+            .strikethrough(declined || (event.isTodo && event.done))
+            .lineLimit(1)
+            .foregroundStyle(s.ink)
+            .padding(.leading, (bar ? 3 : 0) + 6).padding(.trailing, 6)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .background(EventSurface.eventFill(s.hex, alpha: hovering && !dragging ? 0.30 : 0.22))
+            .overlay(alignment: .leading) { if bar { RoundedRectangle(cornerRadius: 2, style: .continuous).fill(s.bar).frame(width: 3) } }
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .opacity(declined ? 0.45 : 1)
+            .contentShape(Rectangle())
             .onHover { hovering = $0 }
             .onTapGesture(perform: onTap)
-            // Press the block to move it, or either end to take that edge with you.
             .highPriorityGesture(DragGesture(minimumDistance: EventDrag.slop, coordinateSpace: .named(space)).onChanged { v in
                 guard let onDrag, event.writable else { return }
-                if mode == nil {
-                    let atTop = (v.startLocation.y - blockTop) < grab
-                    let atBottom = (blockTop + h - v.startLocation.y) < grab
-                    mode = atTop ? .start : (atBottom ? .end : .move)
-                }
-                onDrag(mode!, v.startLocation, v.location, false)
+                onDrag(v.startLocation, v.location, false)
             }.onEnded { v in
-                guard let onDrag, let m = mode else { return }
-                mode = nil
-                onDrag(m, v.startLocation, v.location, true)
+                guard let onDrag, event.writable else { return }
+                onDrag(v.startLocation, v.location, true)
             })
-            .offset(x: left)
-            .background(GeometryReader { bg in Color.clear.onAppear { blockTop = bg.frame(in: .named(space)).minY }.onChange(of: bg.frame(in: .named(space)).minY) { _, y in blockTop = y } })
-        }
-        .frame(height: h)
-        .help("\(titleText)\(event.location.isEmpty ? "" : " · \(event.location)") · \(CalUI.heyRange(event.startsAt, event.endsAt, timeFormat))")
-    }
-
-    private var titleText: String { (event.emoji.isEmpty ? "" : "\(event.emoji) ") + (event.title.isEmpty ? "(no title)" : event.title) }
-}
-
-/// A repeating todo carries its own tick, and ticking it must not open the editor.
-private struct DoneBox: View {
-    let done: Bool
-    var action: (() -> Void)?
-    @State private var hovering = false
-    var body: some View {
-        Button { action?() } label: {
-            Icon(done ? "checkCircle2" : "circle", size: 11).padding(.top, 1).opacity(hovering ? 1 : 0.8).contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
+            .help(event.displayTitle)
     }
 }
 
-// MARK: - Day photos (`DayPhoto.tsx`)
+// MARK: - Week
 
-/// The day's photo at full strength — no scrim, no dim, no blur. Legibility comes from what
-/// sits on top of it.
-struct DayPhotoBackdrop: View {
-    let day: CalDay?
-    @State private var image: NSImage?
-
-    var body: some View {
-        GeometryReader { g in
-            if let image, let day {
-                let pos = CalUI.objectPosition(day.coverPosition.isEmpty ? "50% 50%" : day.coverPosition)
-                let iw = max(image.size.width, 1), ih = max(image.size.height, 1)
-                let scale = max(g.size.width / iw, g.size.height / ih)
-                let sw = iw * scale, sh = ih * scale
-                Image(nsImage: image).resizable()
-                    .frame(width: sw, height: sh)
-                    .offset(x: (g.size.width - sw) * pos.x, y: (g.size.height - sh) * pos.y)
-            }
-        }
-        .clipped()
-        .allowsHitTesting(false)
-        .task(id: day?.coverURL ?? "") {
-            guard let url = day?.coverImageURL else { image = nil; return }
-            image = await ImageCache.shared.image(for: url, maxPixel: 1800)
-        }
-    }
-}
-
-/// The picker: exactly two affordances — upload, and remove once there is one — reached from
-/// a photo icon in the day's corner.
-struct DayPhotoButton: View {
+/// Seven columns from the owner's first weekday.
+struct WeekView: View {
     let store: CalendarStore
-    let date: String
-    let day: CalDay?
-    @Environment(PopLayerState.self) private var pops
-    @State private var hovering = false
-
-    private var id: String { "day-photo-\(date)" }
-
-    var body: some View {
-        let has = !(day?.coverURL.isEmpty ?? true)
-        Button {
-            pops.toggle(id, side: .bottom, align: .start) { DayPhotoPicker(store: store, date: date, day: day) }
-        } label: {
-            Icon("images", size: 13)
-                .foregroundStyle(hovering ? W.foreground : W.foreground.opacity(0.7))
-                .padding(4)
-                .background(hovering ? W.background : W.background.opacity(0.85))
-                .rounded(5)
-                .shadow(color: .black.opacity(0.18), radius: 1.5, y: 1)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help(has ? "Change this day's photo" : "Give this day a background")
-        .popAnchor(id)
-    }
-}
-
-/// `PopoverContent align="start" className="w-64 p-4"`.
-private struct DayPhotoPicker: View {
-    let store: CalendarStore
-    let date: String
-    let day: CalDay?
-    @Environment(PopLayerState.self) private var pops
-    @State private var busy = false
-    @State private var error: String?
-    @State private var hoverUpload = false
-    @State private var hoverRemove = false
-
-    private var has: Bool { !(day?.coverURL.isEmpty ?? true) }
+    let cursor: String
+    let revealAt: RevealAt
+    let scroll: ScrollController
+    var onEvent: (CalEventFull) -> Void
+    var onCreate: (Double, Double) -> Void
+    var onSetCursor: (String) -> Void
+    var onRefresh: () async -> Void
 
     var body: some View {
-        PopCard(width: 256, padding: 16) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("GIVE THIS DAY A BACKGROUND").font(W.font(11, 600)).tracking(0.77).foregroundStyle(W.mutedForeground)
-                Button(action: pick) {
-                    HStack(spacing: 6) {
-                        if busy { Spinner(size: 13) }
-                        Text(busy ? "Uploading…" : has ? "Upload a different image" : "Upload an image").font(W.font(13, 600))
-                    }
-                    .foregroundStyle(hoverUpload && !busy ? W.background : W.foreground)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 36)
-                    .background(hoverUpload && !busy ? W.foreground : Color.clear)
-                    .overlay(Capsule().strokeBorder(W.foreground, lineWidth: 2))
-                    .clipShape(Capsule())
-                    .contentShape(Capsule())
-                    .opacity(busy ? 0.6 : 1)
-                }
-                .buttonStyle(.plain)
-                .disabled(busy)
-                .onHover { hoverUpload = $0 }
-                .padding(.top, 12)
-                if has {
-                    Button {
-                        Task {
-                            do { store.adoptOrInsert(day: try await CalendarAPI.updateDay(date, coverID: .some(nil), coverURL: "")) }
-                            catch { Toasts.shared.error((error as? APIError)?.errorDescription ?? error.localizedDescription) }
-                        }
-                        pops.close("day-photo-\(date)")
-                    } label: {
-                        Text("Remove background").font(W.font(12)).underline().foregroundStyle(hoverRemove ? W.foreground : W.mutedForeground).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { hoverRemove = $0 }
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 12)
-                }
-                if let error {
-                    Text(error).font(W.font(11.5)).foregroundStyle(W.mutedForeground).fixedSize(horizontal: false, vertical: true).padding(.top, 12)
-                }
-            }
-        }
-    }
-
-    private func pick() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.image]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        error = nil
-        busy = true
-        Task {
-            defer { busy = false }
-            do {
-                let prepared = try CoverImage.prepare(url)
-                let cover = try await CalendarAPI.uploadCover(prepared.data, mime: prepared.mime, width: prepared.width, height: prepared.height, name: prepared.name)
-                store.adoptOrInsert(day: try await CalendarAPI.updateDay(date, coverID: .some(cover.id)))
-                pops.close("day-photo-\(date)")
-            } catch {
-                self.error = (error as? APIError)?.errorDescription ?? (error.localizedDescription.isEmpty ? "That didn't upload." : error.localizedDescription)
-            }
-        }
-    }
-}
-
-/// `prepareCover` in lib/image.ts: downscale to 1800 on the long side and re-encode, stepping
-/// the quality down until it fits 1.4 MB. Small GIFs pass through untouched.
-enum CoverImage {
-    static let maxEdge: CGFloat = 1800
-    static let maxBytes = 1_400_000
-    struct Prepared { let data: Data; let mime: String; let width: Int; let height: Int; let name: String }
-    struct NotAnImage: LocalizedError { var errorDescription: String? { "That file isn't an image." } }
-    struct CannotCompress: LocalizedError { var errorDescription: String? { "Couldn't compress that image." } }
-
-    static func prepare(_ url: URL) throws -> Prepared {
-        let raw = try Data(contentsOf: url)
-        let name = String(url.lastPathComponent.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)?.prefix(120) ?? "image")
-        guard let source = CGImageSourceCreateWithData(raw as CFData, nil), let type = CGImageSourceGetType(source) as String? else { throw NotAnImage() }
-        if type == "com.compuserve.gif", raw.count <= maxBytes, let cg = CGImageSourceCreateImageAtIndex(source, 0, nil) {
-            return Prepared(data: raw, mime: "image/gif", width: cg.width, height: cg.height, name: name)
-        }
-        guard let cg = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCache: false] as CFDictionary) else { throw NotAnImage() }
-        let scale = min(1, maxEdge / CGFloat(max(cg.width, cg.height)))
-        let width = max(1, Int((CGFloat(cg.width) * scale).rounded())), height = max(1, Int((CGFloat(cg.height) * scale).rounded()))
-        let hasAlpha = [CGImageAlphaInfo.first, .last, .premultipliedFirst, .premultipliedLast].contains(cg.alphaInfo) && ["public.png", "org.webmproject.webp", "public.avif"].contains(type)
-        guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
-                                  bitmapInfo: (hasAlpha ? CGImageAlphaInfo.premultipliedLast : CGImageAlphaInfo.noneSkipLast).rawValue) else { throw CannotCompress() }
-        ctx.interpolationQuality = .high
-        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
-        guard let scaled = ctx.makeImage() else { throw CannotCompress() }
-        let rep = NSBitmapImageRep(cgImage: scaled)
-        if hasAlpha, let png = rep.representation(using: .png, properties: [:]) {
-            return Prepared(data: png, mime: "image/png", width: width, height: height, name: name)
-        }
-        for q in [0.82, 0.72, 0.62, 0.5] {
-            if let jpeg = rep.representation(using: .jpeg, properties: [.compressionFactor: q]), jpeg.count <= maxBytes || q == 0.5 {
-                return Prepared(data: jpeg, mime: "image/jpeg", width: width, height: height, name: name)
-            }
-        }
-        throw CannotCompress()
+        let cal = store.calendar
+        let ws = CalUI.weekStart(cursor, cal)
+        TimeGrid(store: store, days: (0..<7).map { CalDate.addingDays($0, toKey: ws, in: cal) }, style: .week, cursor: cursor, revealAt: revealAt, scroll: scroll,
+                 onEvent: onEvent, onCreate: onCreate, onSetCursor: onSetCursor, onRefresh: onRefresh)
     }
 }

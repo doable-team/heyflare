@@ -139,12 +139,18 @@ enum DebugTour {
         let saved = (try? await CalendarAPI.journal(date: day))?.journalHTML ?? ""
         check("journal autosaved", saved.contains("Written by the tour"), dir)
         _ = try? await CalendarAPI.saveJournal(date: day, html: "")
-        // The calendar's day view: the horizontal ribbon.
+        // The calendar's other views: the day, the month and the year.
         router.go(.calendar(nil))
         await pause(2)
         KeyBus.shared.simulate("d")
         await pause(2)
         await snap("11b-calendar-day", dir)
+        KeyBus.shared.simulate("m")
+        await pause(2)
+        await snap("11c-calendar-month", dir)
+        KeyBus.shared.simulate("y")
+        await pause(2)
+        await snap("11d-calendar-year", dir)
         KeyBus.shared.simulate("w")
         router.go(.imbox)
         await pause(1)

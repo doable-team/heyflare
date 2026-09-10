@@ -10,7 +10,9 @@
  */
 import {
   addDays as dfAddDays,
+  addMonths as dfAddMonths,
   differenceInCalendarDays,
+  endOfMonth,
   format,
   isWeekend as dfIsWeekend,
   parseISO,
@@ -89,6 +91,16 @@ export function monthStartOf(key: string): string {
   return dateKey(startOfMonth(keyToDate(key)).getTime());
 }
 
+/** The last day of the month containing `key`. */
+export function monthEndOf(key: string): string {
+  return dateKey(endOfMonth(keyToDate(key)).getTime());
+}
+
+/** `key` shifted by `n` calendar months; the 31st lands on the last day of a shorter month. */
+export function addMonths(key: string, n: number): string {
+  return dateKey(dfAddMonths(keyToDate(key), n).getTime());
+}
+
 // ---------- Predicates ----------
 
 export function isToday(key: string): boolean {
@@ -140,6 +152,16 @@ export function dayNumber(key: string): string {
   return format(keyToDate(key), "d");
 }
 
+/** "September" */
+export function monthName(key: string): string {
+  return format(keyToDate(key), "MMMM");
+}
+
+/** "Sep" */
+export function monthShort(key: string): string {
+  return format(keyToDate(key), "MMM");
+}
+
 /** "Thursday, 15 January 2026" — for headers and tooltips. */
 export function longDayLabel(key: string): string {
   return format(keyToDate(key), "EEEE, d MMMM yyyy");
@@ -167,6 +189,37 @@ export function fmtTimeRange(startMs: number, endMs: number, allDay: boolean, fo
     if (sm === end.slice(-2) && dateKey(startMs) === dateKey(endMs)) return `${start.slice(0, -3)} – ${end}`;
   }
   return `${start} – ${end}`;
+}
+
+/**
+ * The hour gutter's label: `1 AM` … `Noon` … `11 PM`, or `01:00` … `23:00` in 24-hour mode.
+ * Midnight is `12 AM` / `00:00`; the top of the grid leaves it out.
+ */
+export function hourLabel(hour: number, format12: "12" | "24"): string {
+  if (format12 === "24") return `${String(hour).padStart(2, "0")}:00`;
+  if (hour === 0) return "12 AM";
+  if (hour === 12) return "Noon";
+  return hour < 12 ? `${hour} AM` : `${hour - 12} PM`;
+}
+
+/** "9 AM", "2:30 PM" (minutes only when there are any) or "09:00", "14:30". */
+export function shortTime(ms: number, format12: "12" | "24"): string {
+  const d = new Date(ms);
+  if (format12 === "24") return format(d, "HH:mm");
+  return format(d, d.getMinutes() === 0 ? "h a" : "h:mm a");
+}
+
+/** "9 – 10 AM", "9:30 – 10:15 AM", "11:30 AM – 1 PM" or "09:00 – 10:00" — the line under a block's title. */
+export function shortRange(startMs: number, endMs: number, format12: "12" | "24"): string {
+  const a = shortTime(startMs, format12);
+  const b = shortTime(endMs, format12);
+  if (format12 === "12" && a.slice(-2) === b.slice(-2) && dateKey(startMs) === dateKey(endMs)) return `${a.slice(0, -3)} – ${b}`;
+  return `${a} – ${b}`;
+}
+
+/** "9:21" or "09:21" — the now line's pill. */
+export function clockTime(ms: number, format12: "12" | "24"): string {
+  return format(new Date(ms), format12 === "24" ? "HH:mm" : "h:mm");
 }
 
 /** "1h 30m", "45m", "2h", "1d 4h". */

@@ -4,61 +4,65 @@ import type { CalendarView } from "@shared/types";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Kbd } from "@/components/ui/kbd";
 import { useCalendar } from "./CalendarContext";
 import { useCalendarSourceMutations } from "../api";
-import { addDays, monthLabel, msAt, weekStartOf } from "../lib/caldate";
+import { addDays, addMonths, keyToDate, monthLabel, msAt, weekDays } from "../lib/caldate";
 
 const VIEWS: { id: CalendarView; label: string; key: string }[] = [
   { id: "days", label: "Day", key: "d" },
   { id: "week", label: "Week", key: "w" },
+  { id: "month", label: "Month", key: "m" },
   { id: "year", label: "Year", key: "y" },
 ];
 
 /** Step size for ‹ › in each view. */
-export function step(view: CalendarView, date: string, delta: number, weekStart: number): string {
-  if (view === "week") return addDays(weekStartOf(date, weekStart), delta * 7);
-  if (view === "year") return `${Number(date.slice(0, 4)) + delta}${date.slice(4)}`;
+export function step(view: CalendarView, date: string, delta: number): string {
+  if (view === "week") return addDays(date, delta * 7);
+  if (view === "month") return addMonths(date, delta);
+  if (view === "year") return addMonths(date, delta * 12);
   return addDays(date, delta);
 }
 
+/** The month and year of what is on screen: the week's Thursday names the week. */
+export function periodTitle(view: CalendarView, cursor: string, weekStart: number): string {
+  if (view === "year") return cursor.slice(0, 4);
+  if (view === "week") return monthLabel(weekDays(cursor, weekStart).find((d) => keyToDate(d).getDay() === 4) ?? cursor);
+  return monthLabel(cursor);
+}
+
 export function CalendarToolbar() {
-  const { view, setView, cursor, setCursor, today, settings, calendars, createEvent, loading, reveal, visibleMonth } = useCalendar();
+  const { view, setView, cursor, today, settings, calendars, createEvent, loading, reveal } = useCalendar();
   const { update, syncAll } = useCalendarSourceMutations();
   const nav = useNavigate();
-  // The title follows what you are actually looking at: scrolling the week stack past a month
-  // boundary should rename the header, even though the cursor has not moved.
-  const title = view === "year" ? cursor.slice(0, 4) : monthLabel(`${visibleMonth}-01`);
   const syncing = calendars.some((c) => c.sync_status === "syncing");
   const broken = calendars.filter((c) => c.sync_status === "error");
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 pb-2">
+    <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border">
       <div className="flex items-center">
-        <Button variant="ghost" size="icon-sm" onClick={() => reveal(step(view, cursor, -1, settings.week_start))} aria-label="Previous">
+        <Button variant="ghost" size="icon-sm" onClick={() => reveal(step(view, cursor, -1))} aria-label="Previous">
           <ChevronLeft />
         </Button>
-        <Button variant="ghost" size="icon-sm" onClick={() => reveal(step(view, cursor, 1, settings.week_start))} aria-label="Next">
+        <Button variant="ghost" size="icon-sm" onClick={() => reveal(step(view, cursor, 1))} aria-label="Next">
           <ChevronRight />
         </Button>
       </div>
-      {/* `reveal`, not `setCursor`: you can scroll away without moving the cursor, and Today has to
-          bring you back even when the cursor is already sitting on it. */}
-      <Button variant="ghost" size="sm" className="h-7 px-2 text-sm" onClick={() => reveal(today)}>
+      {/* `reveal`, not `setCursor`: Today has to bring you back even when the cursor already sits on it. */}
+      <Button variant="ghost" size="sm" onClick={() => reveal(today)}>
         Today
       </Button>
-      <h1 className="ml-1 text-sm font-medium tnum">{title}</h1>
+      <h1 className="text-[15px] font-semibold text-foreground tnum">{periodTitle(view, cursor, settings.week_start)}</h1>
 
       <span className="flex-1" />
 
-      <div className="flex items-center rounded-md border border-border p-0.5">
+      <div className="flex items-center rounded-[6px] bg-muted p-0.5">
         {VIEWS.map((v) => (
           <button
             key={v.id}
             type="button"
             onClick={() => setView(v.id)}
             title={`${v.label}  ${v.key}`}
-            className={cn("h-6 rounded-[4px] px-2 text-xs transition-colors", view === v.id ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground")}
+            className={cn("h-7 rounded-[4px] px-3 text-[13px] transition-colors", view === v.id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}
           >
             {v.label}
           </button>
@@ -101,14 +105,9 @@ export function CalendarToolbar() {
         </PopoverContent>
       </Popover>
 
-      <Button
-        size="sm"
-        className="h-7 gap-1.5 px-2.5 text-xs"
-        onClick={() => createEvent({ starts_at: msAt(cursor, nextHalfHour()), ends_at: msAt(cursor, nextHalfHour() + 60) })}
-      >
+      <Button className="h-8 px-3 text-[13px]" onClick={() => createEvent({ starts_at: msAt(cursor, nextHalfHour()), ends_at: msAt(cursor, nextHalfHour() + 60) })}>
         <Plus />
         New
-        <Kbd className="ml-0.5 border-background/30 text-background/70">n</Kbd>
       </Button>
       {(loading || syncing) && <span className="size-3 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-foreground" aria-label="Syncing" />}
     </div>

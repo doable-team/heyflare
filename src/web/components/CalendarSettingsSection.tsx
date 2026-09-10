@@ -37,8 +37,8 @@ const RAMP = [
   "#6c3d47", "#6c4b3d", "#6c633d", "#3d686c",
 ];
 
-const VIEW_LABEL: Record<CalendarView, string> = { days: "Day", week: "Week", year: "Year" };
-const VIEWS: CalendarView[] = ["days", "week", "year"];
+const VIEW_LABEL: Record<CalendarView, string> = { days: "Day", week: "Week", month: "Month", year: "Year" };
+const VIEWS: CalendarView[] = ["days", "week", "month", "year"];
 
 /* ---------- colour ---------- */
 

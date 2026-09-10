@@ -1,14 +1,16 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { CalendarProvider, useCalendar } from "../calendar/CalendarContext";
-import { CalendarToolbar, step } from "../calendar/CalendarToolbar";
+import { CalendarToolbar } from "../calendar/CalendarToolbar";
 import { WeekView } from "../calendar/WeekView";
-import { DayRibbon } from "../calendar/DayRibbon";
+import { DayView } from "../calendar/DayView";
+import { MonthView } from "../calendar/MonthView";
 import { YearView } from "../calendar/YearView";
 import { EventSheet } from "../calendar/EventSheet";
+import type { GridPager } from "../calendar/TimeGrid";
 import { useKeys } from "../lib/keys";
-import { overlayOpen, useFocusRegion } from "../lib/focusStore";
-import { addDays, msAt } from "../lib/caldate";
+import { arrows, overlayOpen, useFocusRegion } from "../lib/focusStore";
+import { addDays, addMonths, msAt } from "../lib/caldate";
 
 export default function CalendarPage() {
   return (
@@ -19,9 +21,10 @@ export default function CalendarPage() {
 }
 
 function CalendarInner() {
-  const { view, setView, cursor, setCursor, today, settings, createEvent, editor, reveal } = useCalendar();
+  const { view, setView, cursor, setCursor, today, createEvent, editor, reveal } = useCalendar();
   const nav = useNavigate();
   const loc = useLocation();
+  const pager: GridPager = useRef(null);
 
   // "Create event" on an email lands here with a prefill in router state. Consume it once, then
   // clear it so a refresh or a Back doesn't reopen the composer.
@@ -33,47 +36,46 @@ function CalendarInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loc.state]);
 
-  // Opening the calendar lands on today. The cursor already defaults to today, but the view may
-  // have been scrolled a long way from it, so this asks to be shown it rather than merely set to
-  // it. A URL that names a date — the Imbox snapshot, a pick out of the year — is left alone.
+  // Opening the calendar lands on today. A URL that names a date is left alone.
   useEffect(() => {
     if (!new URLSearchParams(loc.search).get("d")) reveal(today);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ↑ ↓ walk the calendar; ← → keep their meaning everywhere else in the app — out to the sidebar
-  // and over to the assistant — so the calendar deliberately does not claim them.
-  //
-  // The region check matters: while focus is in the sidebar its own ↑ ↓ walk the nav, and both
-  // listeners sit on the window, so without this the calendar moved a week for every nav step.
+  // The calendar walks days with ← →, which would otherwise step out to the sidebar and over to
+  // the assistant; claiming them keeps the shell's hands off while focus is in the content.
+  useEffect(() => arrows.claim(), []);
+
+  // While focus is in the sidebar its own ↑ ↓ walk the nav, and both listeners sit on the window,
+  // so the movement keys check where focus is.
   const region = useFocusRegion();
   const ok = () => !overlayOpen() && !editor;
-  // The arrows are the only keys the sidebar also wants, so they alone check where focus is.
-  const arrowOk = () => ok() && region === "content";
+  const moveOk = () => ok() && region === "content";
+  const grid = view === "week" || view === "days";
   useKeys({
-    ArrowUp: () => arrowOk() && setCursor(step(view, cursor, -1, settings.week_start)),
-    ArrowDown: () => arrowOk() && setCursor(step(view, cursor, 1, settings.week_start)),
+    ArrowLeft: () => moveOk() && setCursor(addDays(cursor, -1)),
+    ArrowRight: () => moveOk() && setCursor(addDays(cursor, 1)),
+    ArrowUp: () => moveOk() && setCursor(addDays(cursor, -7)),
+    ArrowDown: () => moveOk() && setCursor(addDays(cursor, 7)),
+    PageUp: () => moveOk() && (grid ? pager.current?.(-1) : setCursor(addMonths(cursor, view === "year" ? -12 : -1))),
+    PageDown: () => moveOk() && (grid ? pager.current?.(1) : setCursor(addMonths(cursor, view === "year" ? 12 : 1))),
+    Enter: () => moveOk() && !grid && setView("days"),
     t: () => ok() && reveal(today),
     d: () => ok() && setView("days"),
     w: () => ok() && setView("week"),
+    m: () => ok() && setView("month"),
     y: () => ok() && setView("year"),
     n: () => ok() && createEvent({ starts_at: msAt(cursor, 9 * 60), ends_at: msAt(cursor, 10 * 60) }),
     j: () => ok() && nav(`/journal/${cursor}`),
     b: () => ok() && nav("/habits"),
-    PageUp: () => arrowOk() && setCursor(addDays(cursor, -7)),
-    PageDown: () => arrowOk() && setCursor(addDays(cursor, 7)),
   });
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <CalendarToolbar />
-      {view === "year" ? (
-        <YearView />
-      ) : view === "days" ? (
-        <div className="flex min-h-0 flex-1"><DayRibbon full /></div>
-      ) : (
-        <div className="flex min-h-0 flex-1"><WeekView /></div>
-      )}
+      <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-background">
+        {view === "year" ? <YearView /> : view === "month" ? <MonthView /> : view === "days" ? <DayView pager={pager} /> : <WeekView pager={pager} />}
+      </div>
       <EventSheet />
     </div>
   );

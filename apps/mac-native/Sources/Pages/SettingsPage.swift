@@ -1659,7 +1659,7 @@ private struct CalendarPreferencesSection: View {
                     WToggleGroup(options: [ToggleOption(id: "12", label: "12-hour"), ToggleOption(id: "24", label: "24-hour")], value: Binding(get: { s.timeFormat.isEmpty ? "12" : s.timeFormat }, set: { v in save(["time_format": v]) { $0.timeFormat = v } }))
                 }
                 SettingsRow(label: "Default view") {
-                    WSelect(id: "cal-view", options: [WSelectOption("days", "Day"), WSelectOption("week", "Week"), WSelectOption("year", "Year")], value: Binding(get: { s.defaultView }, set: { v in save(["default_view": v]) { $0.defaultView = v } }), size: .sm, minWidth: 144, align: .end)
+                    WSelect(id: "cal-view", options: [WSelectOption("days", "Day"), WSelectOption("week", "Week"), WSelectOption("month", "Month"), WSelectOption("year", "Year")], value: Binding(get: { s.defaultView }, set: { v in save(["default_view": v]) { $0.defaultView = v } }), size: .sm, minWidth: 144, align: .end)
                 }
                 SettingsRow(label: "Collapse the night", hint: "Folds the sleeping hours into one band you can click open.") {
                     WSwitch(on: Binding(get: { s.collapseNight }, set: { v in save(["collapse_night": v]) { $0.collapseNight = v } }))

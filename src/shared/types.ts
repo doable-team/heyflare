@@ -316,8 +316,8 @@ export interface AiDraftCard {
 export type CalendarSource = "local" | "google" | "ics";
 export type EventKind = "event" | "birthday" | "anniversary" | "todo";
 export type Rsvp = "" | "needsAction" | "accepted" | "declined" | "tentative";
-/** HEY has three: a day, a week, a year. No month grid, no agenda list. */
-export type CalendarView = "days" | "week" | "year";
+/** Apple-style: a day, a week, a month, a year. */
+export type CalendarView = "days" | "week" | "month" | "year";
 
 export interface Calendar {
   id: string;

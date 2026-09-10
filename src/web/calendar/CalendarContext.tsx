@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { useSearchParams } from "react-router-dom";
 import type { CalEvent, Calendar, CalendarRange, CalendarSettings, CalendarView } from "@shared/types";
 import { useCalendarRange, useCalendarSettings, useCalendarSources } from "../api";
-import { addDays, daysBetween, minutesOfDay, todayKey, weekStartOf } from "../lib/caldate";
+import { addDays, addMonths, daysBetween, minutesOfDay, monthEndOf, monthStartOf, todayKey } from "../lib/caldate";
 import { fitWindow, makeScale, type TimeScale } from "./scale";
 
 /** What the event editor is currently holding: an existing occurrence, or a blank to fill in. */
@@ -15,17 +15,16 @@ interface CalendarCtx {
   calendars: Calendar[];
   view: CalendarView;
   setView: (v: CalendarView) => void;
-  /** The day everything is anchored to. Changing it scrolls the strip. */
+  /** The day everything is anchored to. */
   cursor: string;
   setCursor: (d: string) => void;
   today: string;
-  /** The loaded window, wider than what's on screen so scrolling stays quiet. */
+  /** The loaded window: the cursor's month and its neighbours, or the whole year in the year view. */
   from: string;
   to: string;
-  extend: (side: "start" | "end", days: number) => void;
   range: CalendarRange | undefined;
   loading: boolean;
-  /** Timeline geometry, shared by every day column so the hour rules line up. */
+  /** Timeline geometry for the mobile day, which still draws the fitted, night-folded scale. */
   scale: TimeScale;
   nightOpen: boolean;
   setNightOpen: (b: boolean) => void;
@@ -36,7 +35,7 @@ interface CalendarCtx {
    */
   reveal: (date: string) => void;
   revealAt: { date: string; nonce: number };
-  /** The month a view is actually showing, so the toolbar title follows the scroll, not the cursor. */
+  /** The month a view is showing, `YYYY-MM`. */
   visibleMonth: string;
   reportVisibleMonth: (month: string) => void;
   editor: EditorTarget | null;
@@ -61,24 +60,12 @@ export const DEFAULT_SETTINGS: CalendarSettings = {
   cover_art: false,
 };
 
-const VIEWS: CalendarView[] = ["days", "week", "year"];
+const VIEWS: CalendarView[] = ["days", "week", "month", "year"];
 
-/** The window a view needs loaded around a date. Day and week grow as you scroll; the year snaps. */
-function windowFor(view: CalendarView, date: string, weekStart: number): [string, string] {
-  switch (view) {
-    case "year":
-      return [`${date.slice(0, 4)}-01-01`, `${date.slice(0, 4)}-12-31`];
-    case "week": {
-      // The week view is a stack of week rows that scrolls on forever, so it needs weeks either
-      // side of the one you are pointed at — five back, ten forward — and grows from there.
-      const ws = weekStartOf(date, weekStart);
-      return [addDays(ws, -35), addDays(ws, 70)];
-    }
-    default:
-      // The day view is a continuous ribbon that scrolls through midnight, so it needs its
-      // neighbours loaded on both sides.
-      return [addDays(date, -3), addDays(date, 4)];
-  }
+/** The window a view needs loaded around a date: the date's month and one either side, or its year. */
+function windowFor(view: CalendarView, date: string): [string, string] {
+  if (view === "year") return [`${date.slice(0, 4)}-01-01`, `${date.slice(0, 4)}-12-31`];
+  return [monthStartOf(addMonths(date, -1)), monthEndOf(addMonths(date, 1))];
 }
 
 export function CalendarProvider({ children }: { children: ReactNode }) {
@@ -103,14 +90,10 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     if (!viewTouched && settingsQ.data && VIEWS.includes(settingsQ.data.default_view)) setViewState(settingsQ.data.default_view);
   }, [settingsQ.data, viewTouched]);
 
-  // The loaded window is kept in state rather than derived from the cursor: walking one day at a
-  // time must not re-slice the strip under the scroll position. It only moves when you near an edge.
-  const [win, setWin] = useState<[string, string]>(() => windowFor(view, cursor, settings.week_start));
-  useEffect(() => {
-    setWin(windowFor(view, cursor, settings.week_start));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, settings.week_start, view === "year" ? cursor.slice(0, 4) : ""]);
-  const [from, to] = win;
+  // The window only changes when the cursor leaves the month (or, in the year, the year), so a
+  // walk through a week never re-asks for the same three months.
+  const period = view === "year" ? cursor.slice(0, 4) : cursor.slice(0, 7);
+  const [from, to] = useMemo(() => windowFor(view, cursor), [view, period]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const rangeQ = useCalendarRange(from, to);
 
@@ -118,17 +101,7 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     (d: string) => {
       setCursorState(d);
       setVisibleMonth(d.slice(0, 7));
-      setWin(([a, b]) => {
-        if (daysBetween(a, d) < 7) return [addDays(d, -21), b];
-        if (daysBetween(d, b) < 7) return [a, addDays(d, 45)];
-        return [a, b];
-      });
-      setParams((p) => {
-        const next = new URLSearchParams(p);
-        if (d === todayKey()) next.delete("d");
-        else next.set("d", d);
-        return next;
-      }, { replace: true });
+      setParams(withParam("d", d === todayKey() ? null : d), { replace: true });
     },
     [setParams],
   );
@@ -144,26 +117,16 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     (v: CalendarView) => {
       setViewState(v);
       setViewTouched(true);
-      setParams((p) => {
-        const next = new URLSearchParams(p);
-        if (v === "days") next.delete("v");
-        else next.set("v", v);
-        return next;
-      }, { replace: true });
+      setParams(withParam("v", v), { replace: true });
     },
     [setParams],
   );
-  const extend = useCallback((side: "start" | "end", days: number) => {
-    setWin(([a, b]) => (side === "start" ? [addDays(a, -days), b] : [a, addDays(b, days)]));
-  }, []);
 
-  // The timeline is fitted to the hours the loaded events actually occupy and stretched to fill the
-  // space on screen, so a day reads as a full day rather than a few boxes adrift in a 24-hour chart.
-  const [timelineHeight, setTimelineHeight] = useState(0);
+  // The mobile day's timeline: fitted to the hours the loaded events occupy, night folded.
   const fitted = useMemo(() => fitWindow(rangeQ.data?.events ?? [], minutesOfDay), [rangeQ.data]);
   const scale = useMemo(
-    () => makeScale({ from: fitted.from, to: fitted.to, collapse: settings.collapse_night && !nightOpen, fit: timelineHeight || undefined }),
-    [fitted, settings.collapse_night, nightOpen, timelineHeight],
+    () => makeScale({ from: fitted.from, to: fitted.to, collapse: settings.collapse_night && !nightOpen }),
+    [fitted, settings.collapse_night, nightOpen],
   );
 
   // One pass over the window's events, bucketed by day, so a column render is a lookup.
@@ -184,6 +147,7 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
         for (let i = 0; i <= span; i++) bucket(map, addDays(startKey, i)).timed.push(e);
       }
     }
+    for (const d of map.values()) d.timed.sort((a, b) => a.starts_at - b.starts_at || b.ends_at - a.ends_at);
     return map;
   }, [rangeQ.data]);
 
@@ -199,7 +163,6 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     today,
     from,
     to,
-    extend,
     range: rangeQ.data,
     loading: rangeQ.isLoading || settingsQ.isLoading,
     scale,
@@ -225,6 +188,18 @@ export function useCalendar(): CalendarCtx {
 }
 
 const EMPTY_DAY = { allDay: [] as CalEvent[], timed: [] as CalEvent[] };
+
+/**
+ * The URL with one param changed, read from the address bar rather than from the hook: two key
+ * presses can land before React re-renders, and the second would otherwise rebuild the query
+ * from the first's stale snapshot and undo it.
+ */
+function withParam(key: string, value: string | null): URLSearchParams {
+  const next = new URLSearchParams(window.location.search);
+  if (value === null) next.delete(key);
+  else next.set(key, value);
+  return next;
+}
 
 function bucket(map: Map<string, { allDay: CalEvent[]; timed: CalEvent[] }>, date: string) {
   let d = map.get(date);
