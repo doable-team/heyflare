@@ -30,6 +30,15 @@ export class ImapError extends Error {
   }
 }
 
+/**
+ * True when a failed LOGIN was the server rejecting the credentials, as opposed to a socket that
+ * timed out or dropped. Only the tagged NO/BAD reply is permanent — retiring an account over a
+ * transient timeout takes it out of the cron query (`sync_status <> 'disconnected'`) for good.
+ */
+export function isLoginRejected(message: string): boolean {
+  return /^imap_login_failed:/.test(message);
+}
+
 const READ_TIMEOUT_MS = 20_000;
 
 function timeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
@@ -204,7 +213,10 @@ async function open(cfg: ImapConfig) {
     } catch {
       /* already gone */
     }
-    if (e instanceof ImapError && /login/.test(e.message)) throw new ImapError(e.message, { auth: true });
+    // Only a tagged NO/BAD reply from the server rejects the credentials. A timeout or a dropped
+    // socket is transient, and marking it as auth retires the account for good (the cron skips
+    // `disconnected` rows forever) — so match the reply, not the word "login" in the message.
+    if (e instanceof ImapError && isLoginRejected(e.message)) throw new ImapError(e.message, { auth: true });
     throw e;
   }
   return { socket, session };

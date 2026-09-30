@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { literalSize, quote, parseSearchUids, parseSelect, parseFetchUid, ImapError } from "../src/worker/imap";
+import { literalSize, quote, parseSearchUids, parseSelect, parseFetchUid, isLoginRejected, ImapError } from "../src/worker/imap";
 
 describe("literalSize", () => {
   it("reads a trailing literal marker", () => {
@@ -72,5 +72,21 @@ describe("ImapError", () => {
 
   it("treats anything else as transient and worth retrying", () => {
     expect(new ImapError("imap_timeout: greeting").auth).toBe(false);
+  });
+});
+
+describe("isLoginRejected", () => {
+  it("accepts the tag reply that actually rejects the credentials", () => {
+    expect(isLoginRejected("imap_login_failed: NO [AUTHENTICATIONFAILED] Login fail")).toBe(true);
+  });
+
+  it("rejects a timeout waiting for the LOGIN reply", () => {
+    // The regression: this message contains "login", and matching on that word retired the account
+    // permanently, so a one-off network stall took the mailbox out of the cron query for eight days.
+    expect(isLoginRejected("imap_timeout: login")).toBe(false);
+  });
+
+  it("rejects a socket closed during LOGIN", () => {
+    expect(isLoginRejected("imap_closed: login")).toBe(false);
   });
 });
